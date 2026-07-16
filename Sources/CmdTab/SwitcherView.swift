@@ -19,6 +19,8 @@ struct Metrics: Equatable {
     static let corner: CGFloat = 16
     /// The switcher never grows past this share of the screen before it wraps to a new row.
     static let maxScreenFraction: CGFloat = 0.86
+    /// The frosted border around the tiles, on every side — this is padding *inside* the glass.
+    static let panelPadding: CGFloat = 10
 
     /// Room for two wrapped lines of 10pt title in window mode.
     private static let titleHeight: CGFloat = 26
@@ -27,28 +29,24 @@ struct Metrics: Equatable {
 
     static let iconSizeRange: ClosedRange<CGFloat> = 32...128
     static let iconSpacingRange: ClosedRange<CGFloat> = 0...48
-    static let panelPaddingRange: ClosedRange<CGFloat> = 0...36
     static let titleSpacingRange: ClosedRange<CGFloat> = 0...28
 
     static let `default` = Metrics(
-        iconSize: 64, iconSpacing: 18, panelPadding: 10, titleSpacing: 2)
+        iconSize: 64, iconSpacing: 18, titleSpacing: 2)
 
     /// Icon edge length in app mode.
     let iconSize: CGFloat
     /// Slack around each icon, inside its highlight. Sets how far apart neighbouring icons sit,
     /// and at the edges it stacks with `panelPadding` to set the distance to the glass.
     let iconSpacing: CGFloat
-    /// The frosted border around the tiles, on every side — this is padding *inside* the glass.
-    let panelPadding: CGFloat
     /// Gap between an icon and its label: the caption in app mode, the in-tile title in window
     /// mode.
     let titleSpacing: CGFloat
 
-    init(iconSize: CGFloat, iconSpacing: CGFloat, panelPadding: CGFloat, titleSpacing: CGFloat) {
+    init(iconSize: CGFloat, iconSpacing: CGFloat, titleSpacing: CGFloat) {
         // Values can arrive from a hand-edited defaults plist, so clamp rather than trust.
         self.iconSize = iconSize.clamped(to: Self.iconSizeRange)
         self.iconSpacing = iconSpacing.clamped(to: Self.iconSpacingRange)
-        self.panelPadding = panelPadding.clamped(to: Self.panelPaddingRange)
         self.titleSpacing = titleSpacing.clamped(to: Self.titleSpacingRange)
     }
 
@@ -100,7 +98,7 @@ struct SwitcherView: View {
             }
             caption
         }
-        .padding(metrics.panelPadding)
+        .padding(Metrics.panelPadding)
         .background(VisualEffectBackground())
         .clipShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
         .overlay(
@@ -188,7 +186,7 @@ private struct TargetTile: View {
             if let number {
                 // Lifted up the icon's trailing edge rather than left hanging off the corner.
                 NumberBadge(number: number)
-                    .offset(x: 4, y: -6)
+                    .offset(x: 4, y: 9)
             }
         }
     }

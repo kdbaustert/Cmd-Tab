@@ -10,7 +10,6 @@ final class AppearanceStore: ObservableObject {
     private enum Key {
         static let iconSize = "iconSize"
         static let iconSpacing = "iconSpacing"
-        static let panelPadding = "panelPadding"
         static let titleSpacing = "titleSpacing"
     }
 
@@ -23,9 +22,6 @@ final class AppearanceStore: ObservableObject {
     @Published var iconSpacing: CGFloat = Metrics.default.iconSpacing {
         didSet { store(iconSpacing, was: oldValue, at: Key.iconSpacing) }
     }
-    @Published var panelPadding: CGFloat = Metrics.default.panelPadding {
-        didSet { store(panelPadding, was: oldValue, at: Key.panelPadding) }
-    }
     @Published var titleSpacing: CGFloat = Metrics.default.titleSpacing {
         didSet { store(titleSpacing, was: oldValue, at: Key.titleSpacing) }
     }
@@ -34,7 +30,6 @@ final class AppearanceStore: ObservableObject {
         Metrics(
             iconSize: iconSize,
             iconSpacing: iconSpacing,
-            panelPadding: panelPadding,
             titleSpacing: titleSpacing)
     }
 
@@ -51,14 +46,12 @@ final class AppearanceStore: ObservableObject {
         }
         iconSize = read(Key.iconSize, Metrics.default.iconSize)
         iconSpacing = read(Key.iconSpacing, Metrics.default.iconSpacing)
-        panelPadding = read(Key.panelPadding, Metrics.default.panelPadding)
         titleSpacing = read(Key.titleSpacing, Metrics.default.titleSpacing)
     }
 
     func reset() {
         iconSize = Metrics.default.iconSize
         iconSpacing = Metrics.default.iconSpacing
-        panelPadding = Metrics.default.panelPadding
         titleSpacing = Metrics.default.titleSpacing
     }
 

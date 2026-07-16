@@ -79,7 +79,7 @@ final class SwitcherPanel: NSPanel {
         let metrics = model.metrics
         let tileWidth = metrics.tile(for: model.mode).width + Metrics.tileGap
         let available = screen.visibleFrame.width * Metrics.maxScreenFraction
-            - metrics.panelPadding * 2
+            - Metrics.panelPadding * 2
         let fits = max(Int(available / tileWidth), 1)
         return min(count, fits)
     }

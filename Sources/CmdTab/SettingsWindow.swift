@@ -115,12 +115,6 @@ struct AppearanceSettings: View {
                         range: Metrics.iconSpacingRange,
                         step: 2)
                     SliderRow(
-                        title: "Panel padding",
-                        help: "The frosted border above, below and beside the tiles.",
-                        value: $appearance.panelPadding,
-                        range: Metrics.panelPaddingRange,
-                        step: 2)
-                    SliderRow(
                         title: "Title spacing",
                         help: "Gap between an icon and its name.",
                         value: $appearance.titleSpacing,
@@ -163,7 +157,7 @@ struct AppearanceSettings: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
             }
-            .padding(metrics.panelPadding)
+            .padding(Metrics.panelPadding)
             .background(VisualEffectBackground())
             .clipShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
             .overlay(

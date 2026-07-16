@@ -9,7 +9,7 @@ enum Migration {
     private static let oldDomain = "com.overtab.Overtab"
     private static let doneKey = "migratedFromOvertab"
     private static let keys = [
-        "mode", "iconSize", "iconSpacing", "panelPadding", "titleSpacing", "excludedBundleIDs",
+        "mode", "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs",
     ]
 
     /// Must run before anything reads a setting.
