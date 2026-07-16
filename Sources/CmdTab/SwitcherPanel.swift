@@ -9,6 +9,15 @@ final class SwitcherPanel: NSPanel {
     private let model: SwitcherModel
     private var host: NSHostingView<SwitcherView>?
 
+    // Geometry from the last layout, so the mouse can be mapped back to a tile without asking
+    // SwiftUI. Kept in sync by `layout()`.
+    private var laidOutColumns = 1
+    private var laidOutTile = CGSize.zero
+
+    // Fires while another app is frontmost — the panel never becomes key, so SwiftUI's own hover
+    // tracking stays dormant and we drive the highlight from the raw cursor position instead.
+    private var hoverMonitor: Any?
+
     init(model: SwitcherModel) {
         self.model = model
         super.init(
@@ -34,16 +43,68 @@ final class SwitcherPanel: NSPanel {
     func show() {
         layout()
         orderFrontRegardless()
+        startHoverTracking()
     }
 
     func hide() {
+        stopHoverTracking()
         orderOut(nil)
+    }
+
+    // MARK: - Hover
+
+    private func startHoverTracking() {
+        guard hoverMonitor == nil else { return }
+        // Global (not local) because the switch happens while another app owns the keyboard and
+        // mouse. Global monitors observe those events read-only, which is all we need. Mouse-moved
+        // monitoring needs no Accessibility grant of its own.
+        hoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) {
+            [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let index = self.tileIndex(at: NSEvent.mouseLocation) else { return }
+                if self.model.selection != index { self.model.selection = index }
+            }
+        }
+    }
+
+    private func stopHoverTracking() {
+        if let hoverMonitor {
+            NSEvent.removeMonitor(hoverMonitor)
+            self.hoverMonitor = nil
+        }
+    }
+
+    /// Maps a screen point to the tile under it, or nil if the cursor is off the grid (gaps, the
+    /// caption strip, or outside the panel). Mirrors the `LazyVGrid` layout in `SwitcherView`:
+    /// `panelPadding` inset, `tileGap` between tiles, rows filled left-to-right.
+    private func tileIndex(at screenPoint: NSPoint) -> Int? {
+        let count = model.targets.count
+        guard count > 0, laidOutTile.width > 0, laidOutTile.height > 0 else { return nil }
+
+        // Panel coordinates are bottom-up; flip to top-left to match the grid's reading order.
+        let x = screenPoint.x - frame.minX - Metrics.panelPadding
+        let y = frame.maxY - screenPoint.y - Metrics.panelPadding
+        guard x >= 0, y >= 0 else { return nil }
+
+        let colStride = laidOutTile.width + Metrics.tileGap
+        let rowStride = laidOutTile.height + Metrics.tileGap
+        let col = Int(x / colStride)
+        let row = Int(y / rowStride)
+        guard col < laidOutColumns else { return nil }
+        // Reject the gaps between tiles so the highlight doesn't jump while crossing them.
+        guard x - CGFloat(col) * colStride <= laidOutTile.width,
+              y - CGFloat(row) * rowStride <= laidOutTile.height else { return nil }
+
+        let index = row * laidOutColumns + col
+        return index < count ? index : nil
     }
 
     /// Rebuilds the content at the size the current target list needs, then recenters.
     func layout() {
         let screen = targetScreen()
         let columns = Self.columns(for: model, on: screen)
+        laidOutColumns = columns
+        laidOutTile = model.metrics.tile(for: model.mode)
         let view = SwitcherView(model: model, columns: columns)
 
         if let host {

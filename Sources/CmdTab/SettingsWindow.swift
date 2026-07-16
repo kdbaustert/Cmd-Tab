@@ -79,6 +79,8 @@ final class AppListModel: ObservableObject {
 struct SettingsView: View {
     var body: some View {
         TabView {
+            GeneralSettings(loginItem: .shared)
+                .tabItem { Label("General", systemImage: "gearshape") }
             AppearanceSettings(appearance: .shared)
                 .tabItem { Label("Appearance", systemImage: "slider.horizontal.3") }
             ExcludedAppsSettings(store: .shared)
@@ -86,6 +88,29 @@ struct SettingsView: View {
         }
         .padding(12)
         .frame(width: 470, height: 620)
+    }
+}
+
+struct GeneralSettings: View {
+    @ObservedObject var loginItem: LoginItemStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(
+                "Start at login",
+                isOn: Binding(
+                    get: { loginItem.startAtLogin },
+                    set: { loginItem.setStartAtLogin($0) }))
+                .toggleStyle(.checkbox)
+            Text("Launch Cmd-Tab automatically when you log in to your Mac.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // The item can be flipped from System Settings behind our back; re-read when shown.
+        .onAppear { loginItem.refresh() }
     }
 }
 
