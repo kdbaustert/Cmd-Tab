@@ -110,16 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
-        for mode: SwitcherMode in [.apps, .windows] {
-            let item = action(mode.title, #selector(selectMode(_:)))
-            item.representedObject = mode.rawValue
-            item.state = controller.mode == mode ? .on : .off
-            menu.addItem(item)
-        }
-
-        menu.addItem(.separator())
+        menu.addItem(action("About Cmd-Tab", #selector(showAbout)))
         menu.addItem(action("Settings…", #selector(openSettingsWindow)))
-        menu.addItem(action("Restore System ⌘-Tab", #selector(restoreNative)))
         menu.addItem(action("Quit Cmd-Tab", #selector(quit)))
     }
 
@@ -135,14 +127,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func selectMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let mode = SwitcherMode(rawValue: raw) else { return }
-        controller.mode = mode
-        UserDefaults.standard.set(raw, forKey: Defaults.mode)
-        refreshMenu()
-    }
-
     @objc private func openSettings() {
         Permissions.openAccessibilitySettings()
     }
@@ -151,9 +135,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.show()
     }
 
-    @objc private func restoreNative() {
-        SystemSwitcher.restoreNativeIfNeeded()
-        refreshMenu()
+    @objc private func showAbout() {
+        // LSUIElement apps aren't active by default; without this the panel opens behind other windows.
+        NSApp.activate(ignoringOtherApps: true)
+        // An agent app has no Dock icon, so applicationIconImage defaults to a generic placeholder in
+        // the About panel. Point it at our bundled AppIcon so the real icon shows.
+        if let icon = NSImage(named: "AppIcon") {
+            NSApp.applicationIconImage = icon
+        }
+        let credits = NSAttributedString(
+            string: "A ⌘-Tab replacement for macOS. Switches between applications or individual "
+                + "windows, toggleable from the menu bar.",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Cmd-Tab",
+            .credits: credits,
+        ])
     }
 
     @objc private func quit() {

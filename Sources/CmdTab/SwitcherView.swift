@@ -186,7 +186,7 @@ private struct TargetTile: View {
             if let number {
                 // Lifted up the icon's trailing edge rather than left hanging off the corner.
                 NumberBadge(number: number)
-                    .offset(x: 4, y: 9)
+                    .offset(x: 4, y: 4)
             }
         }
     }
