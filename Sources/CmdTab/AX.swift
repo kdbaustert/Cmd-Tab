@@ -27,9 +27,26 @@ enum AX {
         return windows
     }
 
-    /// Drops palettes, sheets and toolbars; only real windows are switchable.
-    static func isStandardWindow(_ window: AXUIElement) -> Bool {
-        copyString(window, kAXSubroleAttribute) == (kAXStandardWindowSubrole as String)
+    /// A window as opposed to the other things that turn up in `AXWindows` — Finder puts the
+    /// desktop in there as an `AXScrollArea`.
+    static func isWindow(_ element: AXUIElement) -> Bool {
+        copyString(element, kAXRoleAttribute) == (kAXWindowRole as String)
+    }
+
+    /// A real window the user could switch to, as opposed to a palette, sheet or toolbar.
+    ///
+    /// This cannot be a subrole check alone. **macOS reports a window's subrole as `AXDialog`
+    /// while it is minimized**: the same window flips `AXStandardWindow` → `AXDialog` on minimize
+    /// and back on restore (verified on macOS 26.5 with TextEdit). Filtering on
+    /// `AXStandardWindow` therefore drops every minimized window on the floor — silently, since
+    /// an empty list looks exactly like an app with no windows.
+    static func isSwitchableWindow(_ window: AXUIElement) -> Bool {
+        guard isWindow(window) else { return false }
+        if copyString(window, kAXSubroleAttribute) == (kAXStandardWindowSubrole as String) {
+            return true
+        }
+        // Minimized: it is sitting in the Dock and is switchable whatever it now calls itself.
+        return isMinimized(window)
     }
 
     /// A window that does not answer is treated as not minimized: the fallback should be to leave

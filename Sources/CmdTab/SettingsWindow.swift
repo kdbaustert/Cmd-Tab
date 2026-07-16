@@ -384,7 +384,7 @@ final class SettingsWindowController: NSObject {
         if window == nil {
             let window = NSWindow(
                 contentViewController: NSHostingController(rootView: SettingsView()))
-            window.title = "Overtab Settings"
+            window.title = "Cmd-Tab Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
             window.center()

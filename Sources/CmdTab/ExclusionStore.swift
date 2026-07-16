@@ -4,7 +4,7 @@ import SwiftUI
 /// The apps the user has chosen to keep out of the switcher.
 ///
 /// Keyed by bundle identifier, not pid: an exclusion has to survive the app quitting, coming
-/// back under a new pid, and Overtab itself restarting.
+/// back under a new pid, and Cmd-Tab itself restarting.
 @MainActor
 final class ExclusionStore: ObservableObject {
     static let shared = ExclusionStore()

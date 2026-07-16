@@ -219,9 +219,9 @@ private struct NumberBadge: View {
 
     var body: some View {
         Text("\(number)")
-            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .font(.system(size: 15, weight: .bold, design: .rounded))
             .foregroundStyle(Self.foreground)
-            .frame(width: 20, height: 20)
+            .frame(width: 25, height: 25)
             .background(Circle().fill(Self.background))
     }
 }

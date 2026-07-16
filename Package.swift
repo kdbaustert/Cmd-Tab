@@ -1,13 +1,15 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+// The product is "Cmd-Tab"; the target is CmdTab because a Swift module name cannot contain a
+// hyphen. The bundle carries the hyphenated name.
 let package = Package(
-    name: "Overtab",
+    name: "CmdTab",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "Overtab",
-            path: "Sources/Overtab",
+            name: "CmdTab",
+            path: "Sources/CmdTab",
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]

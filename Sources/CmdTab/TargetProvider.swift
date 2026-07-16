@@ -12,7 +12,7 @@ import ApplicationServices
 final class TargetProvider {
     private var mru: [pid_t] = []
     private var cache: [SwitchTarget] = []
-    private let axQueue = DispatchQueue(label: "com.overtab.accessibility", qos: .userInteractive)
+    private let axQueue = DispatchQueue(label: "com.cmdtab.accessibility", qos: .userInteractive)
 
     var mode: SwitcherMode = .apps
 
@@ -154,7 +154,7 @@ final class TargetProvider {
             let windows = AX.windows(of: AX.application(app.pid))
 
             return windows.enumerated().compactMap { index, window in
-                guard AX.isStandardWindow(window) else { return nil }
+                guard AX.isSwitchableWindow(window) else { return nil }
 
                 let title = AX.copyString(window, kAXTitleAttribute) ?? ""
                 let minimized = AX.isMinimized(window)

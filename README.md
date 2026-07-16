@@ -1,4 +1,4 @@
-# Overtab
+# Cmd-Tab
 
 A ⌘-Tab replacement for macOS, in the spirit of Command-Tab Plus 2. Switches between
 **applications** or between **individual windows**, toggleable from the menu bar.
@@ -6,7 +6,7 @@ A ⌘-Tab replacement for macOS, in the spirit of Command-Tab Plus 2. Switches b
 ## Build
 
 ```sh
-./build.sh            # produces build/Overtab.app
+./build.sh            # produces build/Cmd-Tab.app
 ./build.sh --install  # also copies to /Applications and launches it
 ```
 
@@ -14,7 +14,7 @@ Requires Xcode. Built and tested against macOS 26.5 with Swift 6.3.
 
 ## First run
 
-Grant **System Settings → Privacy & Security → Accessibility → Overtab**. Nothing happens
+Grant **System Settings → Privacy & Security → Accessibility → Cmd-Tab**. Nothing happens
 until you do — the app polls for the permission and stays inert meanwhile. It needs it twice
 over: the event tap cannot receive keystrokes without it, and window mode cannot enumerate or
 raise windows without it.
@@ -77,11 +77,48 @@ appear in the switcher in either mode — excluding an app also removes all of i
 window mode.
 
 Exclusions are keyed by bundle identifier, not pid, so they survive the app quitting, relaunching
-under a new pid, and Overtab restarting. They persist in `UserDefaults` under `excludedBundleIDs`.
+under a new pid, and Cmd-Tab restarting. They persist in `UserDefaults` under `excludedBundleIDs`.
 
 Excluded apps stay in the settings list even once they quit, so an exclusion can always be undone.
 **Add App…** picks an app that isn't running, since by definition it can't be in the list. An app
 with no bundle identifier can never be excluded — there is nothing stable to key it on.
+
+## Switching to an app whose windows are all minimized
+
+Activating an app whose windows are *all* minimized leaves you looking at its menu bar and an
+empty desktop, so app mode restores one window on the way in. If anything of the app's is already
+on screen, its arrangement is left alone. Window mode does not need this — there the specific
+window is unminimized by name.
+
+The restore runs off the main thread. `focus()` is called from inside the event tap callback, and
+every Accessibility call is IPC that can block on a wedged app; the system kills a tap that
+stalls. It also gets its own queue rather than `TargetProvider`'s, which can be busy enumerating
+every window on the system — a restore stuck behind a full refresh would land visibly late.
+
+### The AXDialog trap
+
+**macOS reports a window's subrole as `AXDialog` while it is minimized.** The same window flips
+`AXStandardWindow` → `AXDialog` on minimize and back on restore (verified on macOS 26.5 with
+TextEdit):
+
+| State | `AXRole` | `AXSubrole` | `AXMinimized` |
+| --- | --- | --- | --- |
+| Up | `AXWindow` | `AXStandardWindow` | `false` |
+| Minimized | `AXWindow` | `AXDialog` | `true` |
+
+So filtering windows on `AXSubrole == AXStandardWindow` silently drops every minimized window —
+silently because an empty list is indistinguishable from an app that has no windows. That filter
+is why minimized windows never used to appear in window mode at all, which in turn made the
+minimized badge in `SwitcherView` unreachable.
+
+`AX.isSwitchableWindow` therefore accepts a window that is either standard *or* minimized.
+`AX.isWindow` is the broader role-only check, used when deciding whether anything of an app's is
+on screen: an app showing only a dialog still has something up, and restoring a minimized window
+over it would be wrong. The role check is also what keeps Finder's desktop — an `AXScrollArea`
+that turns up in `AXWindows` — out of the list.
+
+Note that Finder's own browser windows report `AXDialog` even while up, so they are still missed
+in window mode. Unchanged from before, and not yet fixed.
 
 ## How the ⌘-Tab takeover works
 
@@ -102,17 +139,20 @@ state is tracked in-process rather than queried back.
 
 The state lives in the window server's memory and is never written to
 `com.apple.symbolichotkeys`, so **logging out always restores it**, even after a crash. Short of
-that: quit Overtab, or use **Restore System ⌘-Tab** in the menu bar. Quit, SIGTERM, SIGINT and
+that: quit Cmd-Tab, or use **Restore System ⌘-Tab** in the menu bar. Quit, SIGTERM, SIGINT and
 SIGHUP all restore it on the way out. SIGKILL and hard crashes cannot — log out.
 
 ## Signing
 
-`build.sh` signs with a self-signed certificate called **Overtab Local**, which is what keeps the
-Accessibility grant alive across rebuilds. macOS keys the permission to the app's *designated
-requirement*; signed with a certificate, that requirement is
+`build.sh` signs with a self-signed certificate called **Overtab Local** — the name is left over
+from before the app was renamed, and is only a keychain label. Replacing it would change the
+designated requirement and cost an Accessibility re-grant for no gain.
+
+The certificate is what keeps the Accessibility grant alive across rebuilds. macOS keys the
+permission to the app's *designated requirement*; signed with a certificate, that requirement is
 
 ```
-identifier "com.overtab.Overtab" and certificate leaf = H"<cert hash>"
+identifier "com.cmdtab.CmdTab" and certificate leaf = H"<cert hash>"
 ```
 
 — no code hash, so recompiling does not invalidate it. Ad-hoc signing has no certificate, so the
@@ -132,10 +172,10 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 7300 -nodes \
 # -legacy and a non-empty password are both required; the security tool cannot read
 # OpenSSL 3's default PKCS#12 encryption, and rejects an empty-password MAC.
 openssl pkcs12 -export -legacy -inkey key.pem -in cert.pem \
-  -out overtab.p12 -name "Overtab Local" -passout pass:overtab
+  -out cmdtab.p12 -name "Overtab Local" -passout pass:cmdtab
 
-security import overtab.p12 -k ~/Library/Keychains/login.keychain-db \
-  -P overtab -T /usr/bin/codesign
+security import cmdtab.p12 -k ~/Library/Keychains/login.keychain-db \
+  -P cmdtab -T /usr/bin/codesign
 # Trust is scoped to code signing only; without it codesign reports CSSMERR_TP_NOT_TRUSTED.
 security add-trusted-cert -r trustRoot -p codeSign \
   -k ~/Library/Keychains/login.keychain-db cert.pem
@@ -150,7 +190,7 @@ after that. Remove the identity in Keychain Access to undo it.
 - Windows on other Spaces are listed, and switching to one follows macOS's normal Space-switch
   behavior.
 - No live thumbnails, and no search-by-typing in the switcher itself.
-- The settings window is the one place Overtab activates, so while it is frontmost *we* are the
+- The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
   frontmost app and a ⌘-Tab lands one target further along than usual. Close it and ordering is
   normal again.
 
@@ -165,9 +205,11 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SwitcherPanel.swift` | Non-activating overlay window |
 | `SwitcherView.swift` | SwiftUI tile grid |
 | `SwitchTarget.swift` | An app or window, and how to raise it |
+| `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |
 | `ExclusionStore.swift` | The set of excluded apps, persisted by bundle identifier |
-| `AppearanceStore.swift` | The icon size, persisted |
-| `SettingsWindow.swift` | Settings window — the appearance slider and the exclusion list |
+| `AppearanceStore.swift` | The four appearance values, persisted |
+| `SettingsWindow.swift` | Settings window — the appearance sliders and the exclusion list |
+| `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
 
 ## Design notes
 
@@ -184,3 +226,13 @@ is the only input path.
 
 `flagsChanged` events are never swallowed. Other apps need to track modifier state, and it
 guarantees releasing ⌘ always dismisses the panel even if the state machine gets confused.
+
+## Renamed from Overtab
+
+The app was called Overtab until the bundle identifier changed to `com.cmdtab.CmdTab`. That
+identifier is also the `UserDefaults` domain, so `Migration.swift` copies the old settings across
+on first launch — otherwise every tuned value would silently vanish. It never overwrites a value
+the new build already has, and runs before any store is read.
+
+The project directory is still `Developer/Overtab`, and the Swift target is `CmdTab` because a
+module name cannot contain a hyphen. Only the bundle carries the hyphenated name.

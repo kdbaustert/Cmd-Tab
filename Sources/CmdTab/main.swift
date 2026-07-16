@@ -9,6 +9,6 @@ MainActor.assumeIsolated {
     // Accessory: menu bar only, no Dock tile, and crucially never steals activation.
     app.setActivationPolicy(.accessory)
     // Held for the process lifetime; NSApplication only keeps a weak delegate reference.
-    objc_setAssociatedObject(app, "overtab.delegate", delegate, .OBJC_ASSOCIATION_RETAIN)
+    objc_setAssociatedObject(app, "cmdtab.delegate", delegate, .OBJC_ASSOCIATION_RETAIN)
     app.run()
 }

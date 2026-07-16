@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Before any store is touched: the first read of one is what would bake in the defaults.
+        Migration.run()
+
         // Seeded before the mode is set, so the very first refresh already honours exclusions.
         let store = ExclusionStore.shared
         controller.excludedBundleIDs = store.excluded
@@ -81,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(
-            systemSymbolName: "square.stack.3d.up", accessibilityDescription: "Overtab")
+            systemSymbolName: "square.stack.3d.up", accessibilityDescription: "Cmd-Tab")
         item.menu = NSMenu()
         statusItem = item
         refreshMenu()
@@ -114,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(action("Settings…", #selector(openSettingsWindow)))
         menu.addItem(action("Restore System ⌘-Tab", #selector(restoreNative)))
-        menu.addItem(action("Quit Overtab", #selector(quit)))
+        menu.addItem(action("Quit Cmd-Tab", #selector(quit)))
     }
 
     private func disabled(_ title: String) -> NSMenuItem {
@@ -156,10 +159,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func presentTapFailure() {
         let alert = NSAlert()
-        alert.messageText = "Overtab could not listen for ⌘-Tab"
+        alert.messageText = "Cmd-Tab could not listen for ⌘-Tab"
         alert.informativeText =
             "Creating the event tap failed. This normally means Accessibility access was granted "
-            + "to an older copy of Overtab. Remove Overtab from Privacy & Security → "
+            + "to an older copy of Cmd-Tab. Remove Cmd-Tab from Privacy & Security → "
             + "Accessibility, then add this copy and relaunch."
         alert.addButton(withTitle: "Open Settings…")
         alert.addButton(withTitle: "Later")

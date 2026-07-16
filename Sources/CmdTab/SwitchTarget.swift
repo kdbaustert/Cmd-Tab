@@ -43,7 +43,7 @@ extension SwitchTarget {
     /// one can be busy enumerating every window on the system, and a restore stuck behind a full
     /// refresh would land visibly late.
     private static let focusQueue = DispatchQueue(
-        label: "com.overtab.focus", qos: .userInitiated)
+        label: "com.cmdtab.focus", qos: .userInitiated)
 
     /// Brings the target forward. Unminimizing has to happen before the raise, and the app
     /// activation has to happen after it, or the window comes up behind its own app.
@@ -77,9 +77,12 @@ extension SwitchTarget {
     /// every Accessibility call here is IPC that can block on a wedged app.
     private static func restoreWindowIfAllMinimized(pid: pid_t) {
         focusQueue.async {
-            let windows = AX.windows(of: AX.application(pid)).filter(AX.isStandardWindow)
+            // Every window, not just the switchable ones: an app showing only a dialog still has
+            // something on screen, and restoring a minimized window over it would be wrong. The
+            // role check is what keeps Finder's desktop (an AXScrollArea) out.
+            let windows = AX.windows(of: AX.application(pid)).filter(AX.isWindow)
             guard !windows.isEmpty else { return }
-            // Something is already on screen — leave the user's arrangement alone.
+            // Something is already up — leave the user's arrangement alone.
             guard !windows.contains(where: { !AX.isMinimized($0) }) else { return }
             guard let target = windows.first else { return }
 
