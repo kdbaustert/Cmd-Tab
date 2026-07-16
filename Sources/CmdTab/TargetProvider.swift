@@ -12,9 +12,24 @@ import ApplicationServices
 final class TargetProvider {
     private var mru: [pid_t] = []
     private var cache: [SwitchTarget] = []
+    /// Windows of the frontmost app, kept warm for the window-cycle hotkey so its panel can open
+    /// from cache without enumerating on the event-tap thread.
+    private var cycleCache: [SwitchTarget] = []
     private let axQueue = DispatchQueue(label: "com.cmdtab.accessibility", qos: .userInteractive)
 
     var mode: SwitcherMode = .apps
+
+    /// How tiles are ordered. Recently-used keeps the MRU list; alphabetical ignores it.
+    var sortOrder: SortOrder = .recentlyUsed
+
+    /// Window mode only: drop minimized windows entirely rather than showing them dimmed.
+    var skipMinimized: Bool = false
+
+    /// Window mode only: which Spaces/displays the windows may come from.
+    var windowScope: WindowScope = .allSpaces
+
+    /// App mode only: hide apps that own no on-screen window.
+    var hideEmptyApps: Bool = false
 
     /// Bundle identifiers the user has excluded. Applied in both modes, so excluding an app also
     /// takes all of its windows out of window mode.
@@ -43,6 +58,36 @@ final class TargetProvider {
             touch(app.processIdentifier)
         }
         refresh()
+        // Keep the cycle list warm for whatever app is now frontmost.
+        refreshCycle()
+    }
+
+    /// Whatever we last computed for the frontmost app's windows. Never blocks.
+    func cycleSnapshot() -> [SwitchTarget] { cycleCache }
+
+    /// Rebuilds the frontmost app's window list off-thread. The frontmost app is read now, on the
+    /// main thread, because our panel never activates — so it is still the app the user was in.
+    func refreshCycle(then handler: (([SwitchTarget]) -> Void)? = nil) {
+        let mine = ProcessInfo.processInfo.processIdentifier
+        guard let front = NSWorkspace.shared.frontmostApplication,
+              front.processIdentifier != mine else {
+            cycleCache = []
+            handler?([])
+            return
+        }
+        let info = AppInfo(
+            pid: front.processIdentifier, name: front.localizedName ?? "Unknown",
+            icon: front.icon, isHidden: front.isHidden)
+        let sortOrder = self.sortOrder
+        let skipMinimized = self.skipMinimized
+        axQueue.async { [weak self] in
+            var targets = Self.windowTargets([info], order: [info.pid], sortOrder: sortOrder)
+            if skipMinimized { targets.removeAll { $0.isMinimized } }
+            DispatchQueue.main.async {
+                self?.cycleCache = targets
+                handler?(targets)
+            }
+        }
     }
 
     private func touch(_ pid: pid_t) {
@@ -56,20 +101,109 @@ final class TargetProvider {
     /// Recomputes the list off-thread, then hands the result back on main.
     func refresh(then handler: (([SwitchTarget]) -> Void)? = nil) {
         let mode = self.mode
+        let sortOrder = self.sortOrder
+        let skipMinimized = self.skipMinimized
+        let scope = self.windowScope
+        let hideEmptyApps = self.hideEmptyApps
         let apps = switchableApps()
         let order = mru
+        // NSScreen is main-thread-only, so resolve the active screen's CG rect here and hand it in.
+        let activeScreenCG = Self.activeScreenCGFrame()
 
         axQueue.async { [weak self] in
-            let targets: [SwitchTarget]
+            // On-screen window info: cheap, and needs no Screen Recording (bounds and owners only).
+            // Serves both the empty-app filter and the Space/display scoping.
+            let onScreen = (mode == .windows && scope != .allSpaces) || hideEmptyApps
+                ? Self.onScreenWindows() : ([], [:])
+
+            var targets: [SwitchTarget]
             switch mode {
-            case .apps: targets = Self.appTargets(apps, order: order)
-            case .windows: targets = Self.windowTargets(apps, order: order)
+            case .apps:
+                targets = Self.appTargets(apps, order: order, sortOrder: sortOrder)
+                if hideEmptyApps {
+                    targets.removeAll { !onScreen.0.contains($0.pid) }
+                }
+            case .windows:
+                targets = Self.windowTargets(apps, order: order, sortOrder: sortOrder)
+                if skipMinimized { targets.removeAll { $0.isMinimized } }
+                if scope != .allSpaces {
+                    targets = Self.scoped(
+                        targets, scope: scope, onScreenBounds: onScreen.1, activeScreen: activeScreenCG)
+                }
             }
             DispatchQueue.main.async {
                 self?.cache = targets
                 handler?(targets)
             }
         }
+    }
+
+    // MARK: - Space / display scoping
+
+    /// PIDs and window bounds for everything on screen in the current Space. Layer-0 windows only,
+    /// keyed by `CGWindowID` so callers can match against a target's parsed id.
+    private static func onScreenWindows() -> (Set<pid_t>, [CGWindowID: CGRect]) {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
+        else { return ([], [:]) }
+
+        var pids = Set<pid_t>()
+        var bounds: [CGWindowID: CGRect] = [:]
+        for window in info {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
+            if let pid = window[kCGWindowOwnerPID as String] as? pid_t { pids.insert(pid) }
+            if let number = window[kCGWindowNumber as String] as? CGWindowID,
+               let rect = window[kCGWindowBounds as String] as? [String: CGFloat],
+               let cg = CGRect(dictionaryRepresentation: rect as CFDictionary) {
+                bounds[number] = cg
+            }
+        }
+        return (pids, bounds)
+    }
+
+    /// Filters window targets to the current Space (present in the on-screen list) or the active
+    /// display (bounds centred on it). Minimized windows are always kept — they belong to a Space
+    /// we cannot see, and dropping them would strand them. Windows whose id could not be resolved
+    /// are kept too: better a stray tile than a missing one.
+    private static func scoped(
+        _ targets: [SwitchTarget], scope: WindowScope,
+        onScreenBounds: [CGWindowID: CGRect], activeScreen: CGRect?
+    ) -> [SwitchTarget] {
+        targets.filter { target in
+            if target.isMinimized { return true }
+            guard let id = windowID(fromTargetID: target.id) else { return true }
+            switch scope {
+            case .allSpaces:
+                return true
+            case .currentSpace:
+                return onScreenBounds[id] != nil
+            case .activeDisplay:
+                guard let bounds = onScreenBounds[id], let screen = activeScreen else { return true }
+                let center = CGPoint(x: bounds.midX, y: bounds.midY)
+                return screen.contains(center)
+            }
+        }
+    }
+
+    /// The active screen (the one owning the frontmost window, else under the cursor) in CoreGraphics
+    /// top-left coordinates, to match `CGWindowList` bounds.
+    private static func activeScreenCGFrame() -> CGRect? {
+        let screen = NSScreen.main
+            ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? NSScreen.screens.first
+        guard let screen, let primary = NSScreen.screens.first else { return nil }
+        let f = screen.frame
+        // Flip AppKit (bottom-left) to CG (top-left) using the primary display's height.
+        return CGRect(
+            x: f.origin.x, y: primary.frame.height - f.origin.y - f.height,
+            width: f.width, height: f.height)
+    }
+
+    /// Parses the `CGWindowID` back out of a `"win:<id>"` target id, if it carries one.
+    private static func windowID(fromTargetID id: String) -> CGWindowID? {
+        let parts = id.split(separator: ":")
+        guard parts.count == 2, parts[0] == "win", let value = UInt32(parts[1]) else { return nil }
+        return value
     }
 
     // MARK: - App list
@@ -119,7 +253,14 @@ final class TargetProvider {
         return ordered
     }
 
-    private static func sorted(_ apps: [AppInfo], by order: [pid_t]) -> [AppInfo] {
+    private static func sorted(
+        _ apps: [AppInfo], by order: [pid_t], sortOrder: SortOrder
+    ) -> [AppInfo] {
+        if sortOrder == .alphabetical {
+            return apps.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        }
         // `uniquingKeysWith` rather than `uniqueKeysWithValues`: a duplicate pid should never
         // reach here, but the strict initializer would trap on it, and trapping inside the
         // switcher would take the whole app down mid-⌘-Tab.
@@ -134,8 +275,10 @@ final class TargetProvider {
 
     // MARK: - Target construction
 
-    private static func appTargets(_ apps: [AppInfo], order: [pid_t]) -> [SwitchTarget] {
-        sorted(apps, by: order).map { app in
+    private static func appTargets(
+        _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder
+    ) -> [SwitchTarget] {
+        sorted(apps, by: order, sortOrder: sortOrder).map { app in
             SwitchTarget(
                 id: "app:\(app.pid)",
                 kind: .app(app.pid),
@@ -147,8 +290,10 @@ final class TargetProvider {
         }
     }
 
-    private static func windowTargets(_ apps: [AppInfo], order: [pid_t]) -> [SwitchTarget] {
-        sorted(apps, by: order).flatMap { app -> [SwitchTarget] in
+    private static func windowTargets(
+        _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder
+    ) -> [SwitchTarget] {
+        sorted(apps, by: order, sortOrder: sortOrder).flatMap { app -> [SwitchTarget] in
             // `AX.application` applies the messaging timeout: a wedged app must not wedge the
             // switcher with it.
             let windows = AX.windows(of: AX.application(app.pid))

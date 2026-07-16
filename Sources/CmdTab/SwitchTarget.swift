@@ -104,4 +104,32 @@ extension SwitchTarget {
     func quitApp() {
         NSRunningApplication(processIdentifier: pid)?.terminate()
     }
+
+    func hideApp() {
+        NSRunningApplication(processIdentifier: pid)?.hide()
+    }
+
+    /// Closes a window by pressing its AX close button. In app mode we resolve the app's frontmost
+    /// window first. Runs off the main thread — the same event-tap constraint as `focus()`.
+    func closeWindow() {
+        let kind = self.kind
+        Self.focusQueue.async {
+            let window: AXUIElement?
+            switch kind {
+            case .window(_, let element):
+                window = element
+            case .app(let pid):
+                window = AX.windows(of: AX.application(pid)).first(where: AX.isWindow)
+            }
+            guard let window else { return }
+            var button: CFTypeRef?
+            guard
+                AXUIElementCopyAttributeValue(
+                    window, kAXCloseButtonAttribute as CFString, &button) == .success,
+                let button
+            else { return }
+            // `button` is an AXUIElement; press it exactly as a click on the red dot would.
+            AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+        }
+    }
 }

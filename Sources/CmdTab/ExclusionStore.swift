@@ -37,6 +37,13 @@ final class ExclusionStore: ObservableObject {
         persist()
     }
 
+    /// Re-reads the excluded set from `UserDefaults` after an import or reset, and notifies so the
+    /// switcher rebuilds its list.
+    func reload() {
+        excluded = Set(UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? [])
+        onChange?(excluded)
+    }
+
     private func persist() {
         UserDefaults.standard.set(excluded.sorted(), forKey: Self.defaultsKey)
         Log.general.notice("exclusions: \(self.excluded.count) app(s) excluded")

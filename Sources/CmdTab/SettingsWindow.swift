@@ -79,9 +79,9 @@ final class AppListModel: ObservableObject {
 struct SettingsView: View {
     var body: some View {
         TabView {
-            GeneralSettings(loginItem: .shared)
+            GeneralSettings(loginItem: .shared, behavior: .shared)
                 .tabItem { Label("General", systemImage: "gearshape") }
-            AppearanceSettings(appearance: .shared)
+            AppearanceSettings(appearance: .shared, behavior: .shared)
                 .tabItem { Label("Appearance", systemImage: "slider.horizontal.3") }
             ExcludedAppsSettings(store: .shared)
                 .tabItem { Label("Excluded Apps", systemImage: "eye.slash") }
@@ -93,32 +93,188 @@ struct SettingsView: View {
 
 struct GeneralSettings: View {
     @ObservedObject var loginItem: LoginItemStore
+    @ObservedObject var behavior: BehaviorStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle(
-                "Start at login",
-                isOn: Binding(
-                    get: { loginItem.startAtLogin },
-                    set: { loginItem.setStartAtLogin($0) }))
-                .toggleStyle(.checkbox)
-            Text("Launch Cmd-Tab automatically when you log in to your Mac.")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-            Spacer()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                field("Shortcut", help: "Hold to open the switcher; release to switch.") {
+                    HotkeyRecorder(hotkey: $behavior.hotkey)
+                }
+
+                field("Cycle windows", help: "Opens a switcher over just the front app's windows.") {
+                    HotkeyRecorder(hotkey: $behavior.cycleHotkey)
+                }
+
+                field(
+                    "Show delay",
+                    help: "Wait before drawing the panel; a quick tap switches with no flash. "
+                        + "0 = instant."
+                ) {
+                    HStack(spacing: 8) {
+                        Slider(value: $behavior.showDelay, in: 0...400, step: 25).frame(width: 170)
+                        Text("\(Int(behavior.showDelay)) ms")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 52, alignment: .trailing)
+                    }
+                }
+
+                field("Switch between", help: "Applications, or individual windows.") {
+                    Picker("", selection: $behavior.mode) {
+                        Text("Applications").tag(SwitcherMode.apps)
+                        Text("Windows").tag(SwitcherMode.windows)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+
+                field("Order", help: "How tiles are sorted.") {
+                    Picker("", selection: $behavior.sortOrder) {
+                        ForEach(SortOrder.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+
+                field("Window scope", help: "Which Spaces or displays window mode draws from.") {
+                    Picker("", selection: $behavior.windowScope) {
+                        ForEach(WindowScope.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+
+                Toggle("Skip minimized windows", isOn: $behavior.skipMinimized)
+                    .toggleStyle(.checkbox)
+                    .help("Window mode only: leave minimized windows out of the switcher.")
+                Toggle("Hide apps with no open windows", isOn: $behavior.hideEmptyApps)
+                    .toggleStyle(.checkbox)
+                    .help("App mode only. Note: an app whose windows are all minimized counts as empty.")
+
+                Divider()
+
+                Toggle("Show menu-bar icon", isOn: $behavior.showMenuBarIcon)
+                    .toggleStyle(.checkbox)
+                    .help("Off = no menu bar item. Reopen Cmd-Tab from Finder to get Settings back.")
+                Toggle("Show current mode in the menu bar", isOn: $behavior.reflectMode)
+                    .toggleStyle(.checkbox)
+                    .disabled(!behavior.showMenuBarIcon)
+                Toggle(
+                    "Start at login",
+                    isOn: Binding(
+                        get: { loginItem.startAtLogin },
+                        set: { loginItem.setStartAtLogin($0) }))
+                    .toggleStyle(.checkbox)
+
+                Divider()
+
+                HStack {
+                    Button("Export…", action: exportSettings)
+                    Button("Import…", action: importSettings)
+                    Spacer()
+                    Button("Reset to Defaults", action: resetSettings)
+                }
+
+                Text(
+                    "While the switcher is open: 1–9 jump, ⌘Q quits the app, ⌘W closes the window, "
+                    + "⌘H hides the app, scroll or hover to move, or click a tile.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // The item can be flipped from System Settings behind our back; re-read when shown.
         .onAppear { loginItem.refresh() }
+    }
+
+    private func exportSettings() { SettingsIO.export() }
+    private func importSettings() { SettingsIO.importSettings() }
+
+    private func resetSettings() {
+        let alert = NSAlert()
+        alert.messageText = "Reset all settings to defaults?"
+        alert.informativeText = "This clears every Cmd-Tab preference, including excluded apps."
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        SettingsIO.reset()
+    }
+
+    /// A labelled settings row: caption on the left, control on the right, help underneath.
+    @ViewBuilder
+    private func field(
+        _ title: String, help: String, @ViewBuilder control: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title).font(.system(size: 12, weight: .medium))
+                Spacer()
+                control()
+            }
+            Text(help).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Click, then press a combination to rebind the trigger. A modifier (⌘/⌥/⌃) is required, since the
+/// switcher stays open only while that modifier is held.
+struct HotkeyRecorder: View {
+    @Binding var hotkey: Hotkey
+    @State private var recording = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        Button(recording ? "Press keys…" : hotkey.displayString) {
+            recording ? stop() : start()
+        }
+        .frame(width: 220)
+        .onDisappear(perform: stop)
+    }
+
+    private func start() {
+        recording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            let flags = event.modifierFlags
+            // Ignore Escape so there is a way to abort without binding it.
+            if event.keyCode == 53 { stop(); return nil }
+            let mods = Self.cgFlags(from: flags)
+            // A hold-to-open hotkey needs a non-Shift modifier to hold.
+            guard mods.intersection([.maskCommand, .maskAlternate, .maskControl]) != [] else {
+                return nil
+            }
+            hotkey = Hotkey(keyCode: Int(event.keyCode), modifierRaw: mods.rawValue)
+            stop()
+            return nil
+        }
+    }
+
+    private func stop() {
+        recording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private static func cgFlags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
+        var out: CGEventFlags = []
+        if flags.contains(.command) { out.insert(.maskCommand) }
+        if flags.contains(.option) { out.insert(.maskAlternate) }
+        if flags.contains(.control) { out.insert(.maskControl) }
+        if flags.contains(.shift) { out.insert(.maskShift) }
+        return out
     }
 }
 
 struct AppearanceSettings: View {
     @ObservedObject var appearance: AppearanceStore
+    @ObservedObject var behavior: BehaviorStore
+    @ObservedObject private var themes = ThemeStore.shared
     @StateObject private var apps = AppListModel()
 
     private var metrics: Metrics { appearance.metrics }
+    private static let customLabel = "Custom…"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -127,6 +283,9 @@ struct AppearanceSettings: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    themeBar
+                    Divider()
+
                     SliderRow(
                         title: "Icon size",
                         help: "Window mode uses a smaller icon, and scales in step.",
@@ -145,6 +304,73 @@ struct AppearanceSettings: View {
                         value: $appearance.titleSpacing,
                         range: Metrics.titleSpacingRange,
                         step: 1)
+
+                    Divider()
+
+                    HStack {
+                        Text("Highlight colour").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        ColorPicker("", selection: $behavior.highlightColor, supportsOpacity: false)
+                            .labelsHidden()
+                    }
+                    pickerRow("Appearance", selection: $behavior.panelAppearance) {
+                        ForEach(PanelAppearance.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    pickerRow("Position", selection: $behavior.panelPosition) {
+                        ForEach(PanelPosition.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    pickerRow("Material", selection: $behavior.panelMaterial) {
+                        ForEach(PanelMaterial.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    HStack {
+                        Text("Opacity").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Slider(value: $behavior.panelOpacity, in: 0.3...1.0).frame(width: 160)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Toggle("Custom blur", isOn: $behavior.blurOverride)
+                                .toggleStyle(.checkbox)
+                            Spacer()
+                            Slider(value: $behavior.blurRadius, in: 0...50)
+                                .frame(width: 160)
+                                .disabled(!behavior.blurOverride)
+                        }
+                        Text("Override the material's built-in glass blur. 0 = none, 50 = heavy.")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("Max columns").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Stepper(
+                            behavior.maxColumns == 0 ? "Auto" : "\(behavior.maxColumns)",
+                            value: $behavior.maxColumns, in: 0...20)
+                    }
+
+                    HStack {
+                        Text("Corner radius").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Slider(value: $behavior.tileCorner, in: 0...24, step: 1).frame(width: 160)
+                    }
+                    HStack {
+                        Text("Title size").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Slider(value: $behavior.titleFontSize, in: 8...16, step: 1).frame(width: 160)
+                    }
+                    pickerRow("Title weight", selection: $behavior.titleWeight) {
+                        ForEach(TitleWeight.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    pickerRow("Truncation", selection: $behavior.truncation) {
+                        ForEach(TruncationStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+
+                    Toggle("Show number badges", isOn: $behavior.showNumbers)
+                        .toggleStyle(.checkbox)
+                    Toggle("Always show titles under icons", isOn: $behavior.alwaysShowTitles)
+                        .toggleStyle(.checkbox)
+                        .help("Show each tile's name in app mode too, not just the selected one.")
+                    Toggle("Fade the panel in and out", isOn: $behavior.fade)
+                        .toggleStyle(.checkbox)
                 }
                 .padding(12)
             }
@@ -175,7 +401,8 @@ struct AppearanceSettings: View {
                             icon: entry.icon,
                             tile: tile,
                             iconSize: metrics.iconSize,
-                            isSelected: i == min(1, entries.count - 1))
+                            isSelected: i == min(1, entries.count - 1),
+                            highlightColor: behavior.highlightColor)
                     }
                 }
                 Text(entries.count > 1 ? entries[1].name : "Preview")
@@ -196,6 +423,86 @@ struct AppearanceSettings: View {
         // Fixed, so the window does not jump around as the sliders move.
         .frame(height: 210)
         .background(Color.primary.opacity(0.04))
+    }
+
+    /// Theme picker plus save/rename/delete/share. The picker reflects the current look: it shows
+    /// the matching theme, or "Custom…" once the user has tuned away from every saved one.
+    private var themeBar: some View {
+        let selection = Binding<String>(
+            get: { themes.currentMatch()?.name ?? Self.customLabel },
+            set: { name in
+                if let theme = themes.all.first(where: { $0.name == name }) { themes.apply(theme) }
+            })
+        let match = themes.currentMatch()
+        let isCustomEditable = match != nil && !(match?.builtIn ?? true)
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Theme").font(.system(size: 12, weight: .medium))
+                Spacer()
+                Picker("", selection: selection) {
+                    ForEach(themes.all) { Text($0.name).tag($0.name) }
+                    if match == nil { Text(Self.customLabel).tag(Self.customLabel) }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            }
+            HStack(spacing: 6) {
+                Button("Save as…", action: saveTheme)
+                Button("Rename", action: renameTheme).disabled(!isCustomEditable)
+                Button("Delete", action: deleteTheme).disabled(!isCustomEditable)
+                Spacer()
+                Button("Import…") { themes.importTheme() }
+                Button("Export…", action: exportTheme).disabled(match == nil)
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private func saveTheme() {
+        guard let name = Self.promptName("Save theme as", default: "My Theme") else { return }
+        themes.saveAs(name)
+    }
+
+    private func renameTheme() {
+        guard let theme = themes.currentMatch(),
+              let name = Self.promptName("Rename theme", default: theme.name) else { return }
+        themes.rename(theme, to: name)
+    }
+
+    private func deleteTheme() {
+        if let theme = themes.currentMatch() { themes.delete(theme) }
+    }
+
+    private func exportTheme() {
+        if let theme = themes.currentMatch() { themes.export(theme) }
+    }
+
+    private static func promptName(_ title: String, default def: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = def
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let trimmed = field.stringValue.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// A labelled dropdown row matching the slider rows' caption style.
+    @ViewBuilder
+    private func pickerRow<T: Hashable>(
+        _ title: String, selection: Binding<T>, @ViewBuilder content: () -> some View
+    ) -> some View {
+        HStack {
+            Text(title).font(.system(size: 12, weight: .medium))
+            Spacer()
+            Picker("", selection: selection, content: content)
+                .labelsHidden()
+                .frame(width: 160)
+        }
     }
 }
 
@@ -226,6 +533,7 @@ private struct PreviewTile: View {
     let tile: CGSize
     let iconSize: CGFloat
     let isSelected: Bool
+    let highlightColor: Color
 
     var body: some View {
         Group {
@@ -240,7 +548,7 @@ private struct PreviewTile: View {
         .frame(width: tile.width, height: tile.height)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(isSelected ? 0.16 : 0))
+                .fill(highlightColor.opacity(isSelected ? 0.30 : 0))
         }
     }
 }

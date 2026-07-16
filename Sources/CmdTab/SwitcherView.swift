@@ -57,9 +57,16 @@ struct Metrics: Equatable {
         mode == .windows ? windowIconSize : iconSize
     }
 
-    func tile(for mode: SwitcherMode) -> CGSize {
+    /// `showsTitle` only matters in app mode — window mode always carries a title. When app tiles
+    /// gain a title they are paid for exactly like window tiles are.
+    func tile(for mode: SwitcherMode, showsTitle: Bool = false) -> CGSize {
         switch mode {
         case .apps:
+            if showsTitle {
+                return CGSize(
+                    width: iconSize + iconSpacing + Self.titleWidth,
+                    height: iconSize + iconSpacing + titleSpacing + Self.titleHeight)
+            }
             return CGSize(width: iconSize + iconSpacing, height: iconSize + iconSpacing)
         case .windows:
             // The title lives inside the tile here, so it has to be paid for in both axes.
@@ -75,7 +82,7 @@ struct SwitcherView: View {
     let columns: Int
 
     private var metrics: Metrics { model.metrics }
-    private var tile: CGSize { metrics.tile(for: model.mode) }
+    private var tile: CGSize { metrics.tile(for: model.mode, showsTitle: model.showsTitle) }
 
     var body: some View {
         VStack(spacing: metrics.titleSpacing) {
@@ -91,20 +98,27 @@ struct SwitcherView: View {
                         size: tile,
                         iconSize: metrics.icon(for: model.mode),
                         titleSpacing: metrics.titleSpacing,
-                        showsTitle: model.mode == .windows,
+                        showsTitle: model.showsTitle,
                         isSelected: index == model.selection,
-                        number: index < 9 ? index + 1 : nil)
+                        highlightColor: model.highlightColor,
+                        corner: model.tileCorner,
+                        titleFontSize: model.titleFontSize,
+                        titleWeight: model.titleWeight,
+                        truncation: model.truncation,
+                        number: model.showNumbers && index < 9 ? index + 1 : nil)
                 }
             }
             caption
         }
         .padding(Metrics.panelPadding)
-        .background(VisualEffectBackground())
+        .background(
+            VisualEffectBackground(material: model.material.nsMaterial, blurRadius: model.blurRadius))
         .clipShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
+        .opacity(model.opacity)
         .fixedSize()
     }
 
@@ -134,6 +148,11 @@ private struct TargetTile: View {
     let titleSpacing: CGFloat
     let showsTitle: Bool
     let isSelected: Bool
+    let highlightColor: Color
+    let corner: CGFloat
+    let titleFontSize: CGFloat
+    let titleWeight: Font.Weight
+    let truncation: Text.TruncationMode
     /// 1–9, or nil past the ninth tile, which has no key to jump to it.
     let number: Int?
 
@@ -142,17 +161,18 @@ private struct TargetTile: View {
             icon
             if showsTitle {
                 Text(target.title)
-                    .font(.system(size: 10))
+                    .font(.system(size: titleFontSize, weight: titleWeight))
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(2)
+                    .truncationMode(truncation)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: size.width - 10)
             }
         }
         .frame(width: size.width, height: size.height)
         .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(isSelected ? 0.16 : 0))
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(highlightColor.opacity(isSelected ? 0.30 : 0))
         }
     }
 
@@ -186,7 +206,7 @@ private struct TargetTile: View {
             if let number {
                 // Lifted up the icon's trailing edge rather than left hanging off the corner.
                 NumberBadge(number: number)
-                    .offset(x: 4, y: 4)
+                    .offset(x: -1, y: -1)
             }
         }
     }
@@ -227,13 +247,51 @@ private struct NumberBadge: View {
 /// Not private: the settings preview renders against the same glass, so what the user tunes is
 /// what they get.
 struct VisualEffectBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
+    var material: NSVisualEffectView.Material = .hudWindow
+    /// nil keeps the material's built-in blur; a value retunes the glass's blur radius.
+    var blurRadius: Double?
+
+    func makeNSView(context: Context) -> BlurVisualEffectView {
+        let view = BlurVisualEffectView()
+        view.material = material
         view.blendingMode = .behindWindow
         view.state = .active
+        view.overrideBlurRadius = blurRadius
         return view
     }
 
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ view: BlurVisualEffectView, context: Context) {
+        view.material = material
+        view.overrideBlurRadius = blurRadius
+    }
+}
+
+/// `NSVisualEffectView` bakes a fixed blur into each material. It draws the glass on a private
+/// backdrop sublayer whose existing Gaussian-blur filter carries an `inputRadius`; retuning that
+/// value changes the blur amount. Best-effort — if the private layer is ever restructured, the
+/// material's own blur simply stands, and nothing breaks.
+final class BlurVisualEffectView: NSVisualEffectView {
+    var overrideBlurRadius: Double? {
+        didSet { applyBlurOverride() }
+    }
+
+    override func updateLayer() {
+        super.updateLayer()
+        applyBlurOverride()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        applyBlurOverride()
+    }
+
+    private func applyBlurOverride() {
+        guard let radius = overrideBlurRadius else { return }
+        for sublayer in layer?.sublayers ?? [] {
+            guard let filters = sublayer.filters as? [NSObject] else { continue }
+            for filter in filters where (filter.value(forKey: "name") as? String) == "gaussianBlur" {
+                filter.setValue(radius, forKey: "inputRadius")
+            }
+        }
+    }
 }

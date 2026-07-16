@@ -29,6 +29,9 @@ specifically so that second permission is never needed.
 
 ## Keys
 
+The trigger below is ⌘-Tab by default and rebindable in **Settings → General**. In the table it
+stands in for whatever combination is bound; the held modifier is whatever that combination uses.
+
 | Key | Action |
 | --- | --- |
 | ⌘-Tab | Open the switcher / advance |
@@ -36,8 +39,15 @@ specifically so that second permission is never needed.
 | ⌘-← / ⌘-→ | Move the selection |
 | ⌘-1 … ⌘-9 | Switch straight to that tile |
 | ⌘-Q | Quit the selected app |
+| ⌘-W | Close the selected window (window mode) or the app's front window |
+| ⌘-H | Hide the selected app |
 | Esc | Dismiss without switching |
 | Release ⌘ | Switch to the selection |
+
+The mouse works too: while the switcher is open, **moving over a tile previews it** (the highlight
+and caption follow the cursor) and **clicking a tile switches to it**. Both are driven from a global
+event monitor rather than SwiftUI, because the panel is deliberately non-activating and never
+becomes key.
 
 The first nine tiles carry their number in the bottom-right corner. The number switches
 immediately rather than moving the highlight — waiting for ⌘ to come up would make it slower than
@@ -49,7 +59,20 @@ the keys *labelled* 1–9 on ANSI-style layouts.
 
 ## Settings
 
-**Menu bar → Settings…**, in two tabs.
+**Menu bar → Settings…**, in three tabs.
+
+### General
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
+| Switch between | Applications or individual windows. | Applications |
+| Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
+| Skip minimized windows | Window mode only: leave minimized windows out of the list rather than showing them dimmed. | Off |
+| Start at login | Registers the app as a login item via `SMAppService`. | Off |
+
+Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `mode`, `sortOrder`,
+`skipMinimized`); Start at login lives in the system's Login Items, not our defaults.
 
 ### Appearance
 
@@ -73,6 +96,14 @@ already-open switcher live.
 
 Each value persists in `UserDefaults` (`iconSize`, `iconSpacing`, `panelPadding`, `titleSpacing`)
 and is clamped on read, so a hand-edited plist cannot produce an unusable panel.
+
+Below the sliders are three more controls:
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Highlight colour | The tint of the selected tile. Persists as a hex string (`highlightColorHex`). | System accent |
+| Appearance | Forces the panel Light or Dark, or matches the system. | Match system |
+| Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
 
 ### Excluded apps
 

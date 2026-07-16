@@ -8,6 +8,28 @@ final class SwitcherModel: ObservableObject {
     @Published var mode: SwitcherMode = .apps
     /// Every panel dimension; see `Metrics`.
     @Published var metrics: Metrics = .default
+    /// Tint of the selected tile's highlight.
+    @Published var highlightColor: Color = .accentColor
+    /// Show the ⌘-number badge on the first nine tiles.
+    @Published var showNumbers: Bool = true
+    /// Show each tile's title, even in app mode.
+    @Published var alwaysShowTitles: Bool = false
+    /// The frosted material behind the tiles.
+    @Published var material: PanelMaterial = .hud
+    /// Panel translucency, 0.3–1.0.
+    @Published var opacity: Double = 1.0
+    /// Blur radius override for the glass, or nil to use the material's built-in blur.
+    @Published var blurRadius: Double?
+    /// Corner radius of a tile's highlight.
+    @Published var tileCorner: CGFloat = 12
+    /// Point size and weight of tile titles.
+    @Published var titleFontSize: CGFloat = 10
+    @Published var titleWeight: Font.Weight = .regular
+    /// How over-long titles are shortened.
+    @Published var truncation: Text.TruncationMode = .tail
+
+    /// Whether tiles carry a title in the current mode.
+    var showsTitle: Bool { mode == .windows || alwaysShowTitles }
 
     var selected: SwitchTarget? {
         targets.indices.contains(selection) ? targets[selection] : nil

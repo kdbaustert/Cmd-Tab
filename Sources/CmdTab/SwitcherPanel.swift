@@ -17,6 +17,21 @@ final class SwitcherPanel: NSPanel {
     // Fires while another app is frontmost — the panel never becomes key, so SwiftUI's own hover
     // tracking stays dormant and we drive the highlight from the raw cursor position instead.
     private var hoverMonitor: Any?
+    private var scrollMonitor: Any?
+    private var scrollAccumulator: CGFloat = 0
+
+    /// Forced appearance and placement, driven from settings.
+    var appearanceMode: PanelAppearance = .system
+    var positionMode: PanelPosition = .center
+    /// 0 = automatic (wrap at the screen-fraction limit); otherwise a hard cap on columns.
+    var maxColumns = 0
+    /// Fade the panel in and out instead of appearing instantly.
+    var fade = false
+
+    /// Invoked when a tile is clicked, with its index. Set by the controller to commit the pick.
+    var onPick: ((Int) -> Void)?
+    /// Invoked with a step (+1/-1) when the scroll wheel moves over the panel.
+    var onScroll: ((Int) -> Void)?
 
     init(model: SwitcherModel) {
         self.model = model
@@ -40,18 +55,51 @@ final class SwitcherPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    /// A non-activating panel still receives mouse clicks without bringing our app forward, so a
+    /// click on a tile can be turned straight into a pick. Handled here rather than in SwiftUI:
+    /// the panel is never key, so SwiftUI's own gesture recognisers stay dormant (the same reason
+    /// hover is driven from a global monitor).
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, let index = tileIndex(at: NSEvent.mouseLocation) {
+            onPick?(index)
+            return
+        }
+        super.sendEvent(event)
+    }
+
     func show() {
         layout()
-        orderFrontRegardless()
+        if fade {
+            alphaValue = 0
+            orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                animator().alphaValue = 1
+            }
+        } else {
+            alphaValue = 1
+            orderFrontRegardless()
+        }
         startHoverTracking()
     }
 
     func hide() {
         stopHoverTracking()
-        orderOut(nil)
+        // A fade-out has to keep the window up until the animation finishes, so order out in the
+        // completion; the instant path just drops it.
+        if fade && alphaValue > 0 {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.10
+                animator().alphaValue = 0
+            } completionHandler: { [weak self] in
+                self?.orderOut(nil)
+            }
+        } else {
+            orderOut(nil)
+        }
     }
 
-    // MARK: - Hover
+    // MARK: - Hover & scroll
 
     private func startHoverTracking() {
         guard hoverMonitor == nil else { return }
@@ -65,12 +113,34 @@ final class SwitcherPanel: NSPanel {
                 if self.model.selection != index { self.model.selection = index }
             }
         }
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) {
+            [weak self] event in
+            MainActor.assumeIsolated { self?.handleScroll(event) }
+        }
     }
 
     private func stopHoverTracking() {
-        if let hoverMonitor {
-            NSEvent.removeMonitor(hoverMonitor)
-            self.hoverMonitor = nil
+        for monitor in [hoverMonitor, scrollMonitor] {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+        hoverMonitor = nil
+        scrollMonitor = nil
+        scrollAccumulator = 0
+    }
+
+    /// Turns accumulated scroll travel into discrete selection steps. The threshold keeps a single
+    /// flick of an inertial trackpad from racing through the whole list.
+    private func handleScroll(_ event: NSEvent) {
+        let delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.scrollingDeltaX
+        scrollAccumulator += delta
+        let threshold: CGFloat = 6
+        while scrollAccumulator <= -threshold {
+            scrollAccumulator += threshold
+            onScroll?(1)
+        }
+        while scrollAccumulator >= threshold {
+            scrollAccumulator -= threshold
+            onScroll?(-1)
         }
     }
 
@@ -102,9 +172,9 @@ final class SwitcherPanel: NSPanel {
     /// Rebuilds the content at the size the current target list needs, then recenters.
     func layout() {
         let screen = targetScreen()
-        let columns = Self.columns(for: model, on: screen)
+        let columns = Self.columns(for: model, on: screen, cap: maxColumns)
         laidOutColumns = columns
-        laidOutTile = model.metrics.tile(for: model.mode)
+        laidOutTile = model.metrics.tile(for: model.mode, showsTitle: model.showsTitle)
         let view = SwitcherView(model: model, columns: columns)
 
         if let host {
@@ -115,33 +185,55 @@ final class SwitcherPanel: NSPanel {
             contentView = host
         }
 
+        appearance = appearanceMode.nsAppearance
+
         guard let host else { return }
         host.layoutSubtreeIfNeeded()
         let size = host.fittingSize
         setContentSize(size)
+        setFrameOrigin(origin(for: size, on: screen))
+    }
 
-        let frame = screen.visibleFrame
-        setFrameOrigin(
-            NSPoint(
-                x: frame.midX - size.width / 2,
-                y: frame.midY - size.height / 2))
+    /// Where the panel's bottom-left corner goes, per the position setting. "Near cursor" keeps the
+    /// whole panel on the screen it opened on rather than letting it spill off an edge.
+    private func origin(for size: CGSize, on screen: NSScreen) -> NSPoint {
+        let visible = screen.visibleFrame
+        switch positionMode {
+        case .center, .activeScreen:
+            // Both centre on a screen; `targetScreen()` already chose active-vs-cursor for us.
+            return NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
+        case .cursor:
+            let mouse = NSEvent.mouseLocation
+            let x = (mouse.x - size.width / 2)
+                .clamped(to: visible.minX...(visible.maxX - size.width))
+            let y = (mouse.y - size.height / 2)
+                .clamped(to: visible.minY...(visible.maxY - size.height))
+            return NSPoint(x: x, y: y)
+        }
     }
 
     private func targetScreen() -> NSScreen {
+        // "Active screen" follows the frontmost app's screen (NSScreen.main); the others follow
+        // the cursor's screen.
+        if positionMode == .activeScreen, let main = NSScreen.main {
+            return main
+        }
         let mouse = NSEvent.mouseLocation
         return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
             ?? NSScreen.main
             ?? NSScreen.screens[0]
     }
 
-    private static func columns(for model: SwitcherModel, on screen: NSScreen) -> Int {
+    private static func columns(for model: SwitcherModel, on screen: NSScreen, cap: Int) -> Int {
         let count = model.targets.count
         guard count > 0 else { return 1 }
         let metrics = model.metrics
-        let tileWidth = metrics.tile(for: model.mode).width + Metrics.tileGap
+        let tileWidth = metrics.tile(for: model.mode, showsTitle: model.showsTitle).width
+            + Metrics.tileGap
         let available = screen.visibleFrame.width * Metrics.maxScreenFraction
             - Metrics.panelPadding * 2
-        let fits = max(Int(available / tileWidth), 1)
+        var fits = max(Int(available / tileWidth), 1)
+        if cap > 0 { fits = min(fits, cap) }
         return min(count, fits)
     }
 }

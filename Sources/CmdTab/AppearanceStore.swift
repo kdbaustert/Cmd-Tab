@@ -55,6 +55,18 @@ final class AppearanceStore: ObservableObject {
         titleSpacing = Metrics.default.titleSpacing
     }
 
+    /// Re-reads the sliders from `UserDefaults` after an import or reset.
+    func reload() {
+        let defaults = UserDefaults.standard
+        func read(_ key: String, _ fallback: CGFloat) -> CGFloat {
+            defaults.object(forKey: key) != nil
+                ? CGFloat(defaults.double(forKey: key)) : fallback
+        }
+        iconSize = read(Key.iconSize, Metrics.default.iconSize)
+        iconSpacing = read(Key.iconSpacing, Metrics.default.iconSpacing)
+        titleSpacing = read(Key.titleSpacing, Metrics.default.titleSpacing)
+    }
+
     private func store(_ new: CGFloat, was old: CGFloat, at key: String) {
         guard new != old else { return }
         UserDefaults.standard.set(Double(new), forKey: key)

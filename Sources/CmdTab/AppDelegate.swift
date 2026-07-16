@@ -7,10 +7,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var signalSources: [DispatchSourceSignal] = []
 
-    private enum Defaults {
-        static let mode = "mode"
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Before any store is touched: the first read of one is what would bake in the defaults.
         Migration.run()
@@ -28,11 +24,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.metrics = metrics
         }
 
-        controller.mode =
-            UserDefaults.standard.string(forKey: Defaults.mode)
-            .flatMap(SwitcherMode.init(rawValue:)) ?? .apps
+        let behavior = BehaviorStore.shared
+        applyBehavior(behavior)
+        behavior.onChange = { [weak self] in
+            self?.applyBehavior(behavior)
+        }
 
-        installStatusItem()
         installSignalHandlers()
 
         Log.general.notice(
@@ -53,6 +50,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         controller.stop()
+    }
+
+    /// Relaunching from Finder (or `open`) while already running opens Settings. This is the way
+    /// back when the menu-bar icon has been hidden — otherwise there would be no visible affordance.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        settings.show()
+        return true
+    }
+
+    /// Pushes every tunable in `BehaviorStore` onto the running switcher. Cheap enough to run
+    /// wholesale on any change rather than tracking which field moved.
+    private func applyBehavior(_ behavior: BehaviorStore) {
+        controller.mode = behavior.mode
+        controller.sortOrder = behavior.sortOrder
+        controller.skipMinimized = behavior.skipMinimized
+        controller.windowScope = behavior.windowScope
+        controller.hideEmptyApps = behavior.hideEmptyApps
+        controller.panelAppearance = behavior.panelAppearance
+        controller.panelPosition = behavior.panelPosition
+        controller.highlightColor = behavior.highlightColor
+        controller.showNumbers = behavior.showNumbers
+        controller.alwaysShowTitles = behavior.alwaysShowTitles
+        controller.tileCorner = behavior.tileCorner
+        controller.titleFontSize = behavior.titleFontSize
+        controller.titleWeight = behavior.titleWeight.fontWeight
+        controller.truncation = behavior.truncation.mode
+        controller.fade = behavior.fade
+        controller.panelMaterial = behavior.panelMaterial
+        controller.panelOpacity = behavior.panelOpacity
+        controller.panelBlur = behavior.blurOverride ? behavior.blurRadius : nil
+        controller.maxColumns = behavior.maxColumns
+        controller.showDelay = behavior.showDelay / 1000
+        controller.hotkey = behavior.hotkey
+        controller.cycleHotkey = behavior.cycleHotkey
+        updateStatusItem(behavior)
     }
 
     private func startController() {
@@ -81,14 +113,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu bar
 
-    private func installStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    /// Creates, removes, or restyles the menu-bar item to match settings. Hidden entirely when the
+    /// user turns it off; the app is then reachable only through the shortcut (reopening it from
+    /// Finder brings the settings window back — see `applicationShouldHandleReopen`).
+    private func updateStatusItem(_ behavior: BehaviorStore) {
+        guard behavior.showMenuBarIcon else {
+            if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+            statusItem = nil
+            return
+        }
+        let item = statusItem
+            ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // Template PNGs (cmdtabTemplate.png + @2x/@3x) ship loose in the bundle Resources; AppKit
         // resolves the scale variants by name. Marked as a template so it tints for light/dark menu bars.
         let icon = NSImage(named: "cmdtabTemplate")
         icon?.isTemplate = true
         item.button?.image = icon
-        item.menu = NSMenu()
+        // Optionally spell out the current mode next to the icon.
+        item.button?.title = behavior.reflectMode ? (behavior.mode == .apps ? " A" : " W") : ""
+        item.button?.imagePosition = behavior.reflectMode ? .imageLeading : .imageOnly
+        if item.menu == nil { item.menu = NSMenu() }
         statusItem = item
         refreshMenu()
     }
