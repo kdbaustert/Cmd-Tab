@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.png" alt="Cmd-Tab app icon" width="160" height="160">
+</p>
+
 # Cmd-Tab
 
 A ⌘-Tab replacement for macOS, in the spirit of Command-Tab Plus 2. Switches between

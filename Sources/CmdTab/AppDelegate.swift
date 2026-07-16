@@ -83,8 +83,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "square.stack.3d.up", accessibilityDescription: "Cmd-Tab")
+        // Template PNGs (cmdtabTemplate.png + @2x/@3x) ship loose in the bundle Resources; AppKit
+        // resolves the scale variants by name. Marked as a template so it tints for light/dark menu bars.
+        let icon = NSImage(named: "cmdtabTemplate")
+        icon?.isTemplate = true
+        item.button?.image = icon
         item.menu = NSMenu()
         statusItem = item
         refreshMenu()
