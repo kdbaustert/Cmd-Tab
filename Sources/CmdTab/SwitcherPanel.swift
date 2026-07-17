@@ -35,6 +35,15 @@ final class SwitcherPanel: NSPanel {
     /// Invoked with a step (+1/-1) when the scroll wheel moves over the panel.
     var onScroll: ((Int) -> Void)?
 
+    /// App-mode window previews: whether the hover thumbnails are enabled at all.
+    var windowPreviewEnabled = false
+    /// Fires when the hovered app tile changes: the app's pid and the tile's screen rect, or nil pid
+    /// when the cursor leaves the grid. Only emitted in app mode with previews on.
+    var onHoverPreview: ((_ pid: pid_t?, _ tileRect: NSRect) -> Void)?
+    /// The last tile a preview was requested for, so it is not re-requested on every mouse-move.
+    /// nil means the cursor is off the grid (or nothing hovered yet), matching "no preview".
+    private var lastHoverPreviewIndex: Int?
+
     init(model: SwitcherModel) {
         self.model = model
         super.init(
@@ -119,8 +128,10 @@ final class SwitcherPanel: NSPanel {
         hoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) {
             [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, let index = self.tileIndex(at: NSEvent.mouseLocation) else { return }
-                if self.model.selection != index { self.model.selection = index }
+                guard let self else { return }
+                let index = self.tileIndex(at: NSEvent.mouseLocation)
+                if let index, self.model.selection != index { self.model.selection = index }
+                self.updateHoverPreview(index)
             }
         }
         scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) {
@@ -136,6 +147,36 @@ final class SwitcherPanel: NSPanel {
         hoverMonitor = nil
         scrollMonitor = nil
         scrollAccumulator = 0
+        // Dismiss any live preview and reset so the next session starts clean.
+        if lastHoverPreviewIndex != nil { onHoverPreview?(nil, .zero) }
+        lastHoverPreviewIndex = nil
+    }
+
+    /// Requests a window preview when the hovered app tile changes, and a dismissal when the cursor
+    /// leaves the grid. Debounced to tile changes so it is not re-fired on every mouse-moved event.
+    private func updateHoverPreview(_ index: Int?) {
+        guard windowPreviewEnabled, model.mode == .apps else { return }
+        guard index != lastHoverPreviewIndex else { return }
+        lastHoverPreviewIndex = index
+        if let index, model.targets.indices.contains(index) {
+            onHoverPreview?(model.targets[index].pid, tileScreenRect(for: index) ?? .zero)
+        } else {
+            onHoverPreview?(nil, .zero)
+        }
+    }
+
+    /// The screen rect of tile `index` — the inverse of `tileIndex(at:)`, in bottom-up screen
+    /// coordinates. Mirrors the same `LazyVGrid` layout.
+    private func tileScreenRect(for index: Int) -> NSRect? {
+        guard laidOutColumns > 0, laidOutTile.width > 0, laidOutTile.height > 0 else { return nil }
+        let row = index / laidOutColumns
+        let col = index % laidOutColumns
+        let colStride = laidOutTile.width + Metrics.tileGap
+        let rowStride = laidOutTile.height + Metrics.tileGap
+        let left = frame.minX + Metrics.panelPadding + CGFloat(col) * colStride
+        let top = frame.maxY - Metrics.panelPadding - CGFloat(row) * rowStride
+        return NSRect(
+            x: left, y: top - laidOutTile.height, width: laidOutTile.width, height: laidOutTile.height)
     }
 
     /// Turns accumulated scroll travel into discrete selection steps. The threshold keeps a single

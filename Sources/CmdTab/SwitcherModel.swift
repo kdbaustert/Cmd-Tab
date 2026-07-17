@@ -22,9 +22,8 @@ final class SwitcherModel: ObservableObject {
     @Published var blurRadius: Double?
     /// Corner radius of a tile's highlight.
     @Published var tileCorner: CGFloat = 12
-    /// Point size and weight of tile titles.
+    /// Point size of tile titles.
     @Published var titleFontSize: CGFloat = 10
-    @Published var titleWeight: Font.Weight = .regular
 
     /// Whether tiles carry a title in the current mode.
     var showsTitle: Bool { mode == .windows || alwaysShowTitles }

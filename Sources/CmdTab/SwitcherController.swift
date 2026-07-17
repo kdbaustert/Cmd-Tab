@@ -32,6 +32,9 @@ final class SwitcherController {
     private let model = SwitcherModel()
     private let provider = TargetProvider()
     private lazy var panel = SwitcherPanel(model: model)
+    private lazy var previewPanel = WindowPreviewPanel()
+    private var previewWork: DispatchWorkItem?
+    private var previewTask: Task<Void, Never>?
     private var tap: EventTap?
     private var isVisible = false
 
@@ -153,11 +156,6 @@ final class SwitcherController {
         }
     }
 
-    var titleWeight: Font.Weight {
-        get { model.titleWeight }
-        set { model.titleWeight = newValue }
-    }
-
     var fade: Bool {
         get { panel.fade }
         set { panel.fade = newValue }
@@ -197,6 +195,12 @@ final class SwitcherController {
     /// straight to the previous target with no panel flash. 0 keeps the panel instant.
     var showDelay: TimeInterval = 0
 
+    /// App mode: float live window thumbnails when a tile is hovered.
+    var windowPreview: Bool {
+        get { panel.windowPreviewEnabled }
+        set { panel.windowPreviewEnabled = newValue }
+    }
+
     /// The combination that opens the switcher. Changing it re-syncs the system ⌘-Tab: the native
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
     var hotkey: Hotkey = .commandTab {
@@ -228,6 +232,9 @@ final class SwitcherController {
             guard let self, self.isVisible else { return }
             self.model.step(step)
             self.panel.layout()
+        }
+        panel.onHoverPreview = { [weak self] pid, rect in
+            self?.hoverPreview(pid: pid, tileRect: rect)
         }
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
         // hotkey leaves the native switcher alone.
@@ -470,5 +477,43 @@ final class SwitcherController {
         guard isVisible, model.targets.indices.contains(index) else { return }
         model.selection = index
         commit()
+    }
+
+    // MARK: - Window preview
+
+    /// The hovered app tile changed. Debounce briefly so a cursor sweeping across the grid does not
+    /// fire a capture per tile, then grab and float the thumbnails. A nil pid — the cursor left the
+    /// grid, or the panel closed — just tears the preview down.
+    private func hoverPreview(pid: pid_t?, tileRect: NSRect) {
+        previewWork?.cancel()
+        previewWork = nil
+        previewTask?.cancel()
+        previewTask = nil
+        guard let pid else {
+            previewPanel.dismiss()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.capturePreview(pid: pid, tileRect: tileRect) }
+        }
+        previewWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    /// Captures the app's windows off the main thread, then floats them if the switcher is still up
+    /// and the capture was not superseded. Empty (no permission, or nothing to show) hides the strip.
+    private func capturePreview(pid: pid_t, tileRect: NSRect) {
+        let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
+        previewTask = Task { [weak self] in
+            let thumbs = await WindowCapture.thumbnails(for: pid)
+            guard !Task.isCancelled, let self, self.isVisible else { return }
+            if thumbs.isEmpty {
+                self.previewPanel.dismiss()
+            } else {
+                self.previewPanel.present(
+                    thumbs: thumbs, appName: appName, over: tileRect,
+                    appearance: self.panel.effectiveAppearance)
+            }
+        }
     }
 }

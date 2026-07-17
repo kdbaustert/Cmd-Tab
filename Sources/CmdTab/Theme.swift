@@ -16,7 +16,6 @@ struct Theme: Codable, Identifiable, Equatable {
     var alwaysShowTitles: Bool
     var tileCorner: Double
     var titleFontSize: Double
-    var titleWeight: String
     var fade: Bool
     var iconSize: Double
     var iconSpacing: Double
@@ -78,7 +77,6 @@ final class ThemeStore: ObservableObject {
             alwaysShowTitles: b.alwaysShowTitles,
             tileCorner: b.tileCorner,
             titleFontSize: b.titleFontSize,
-            titleWeight: b.titleWeight.rawValue,
             fade: b.fade,
             iconSize: a.iconSize,
             iconSpacing: a.iconSpacing,
@@ -101,7 +99,6 @@ final class ThemeStore: ObservableObject {
             b.alwaysShowTitles = theme.alwaysShowTitles
             b.tileCorner = theme.tileCorner
             b.titleFontSize = theme.titleFontSize
-            b.titleWeight = TitleWeight(rawValue: theme.titleWeight) ?? .regular
             b.fade = theme.fade
         }
 
@@ -193,31 +190,31 @@ final class ThemeStore: ObservableObject {
         Theme(
             name: "Classic", highlightHex: "#8A8A8E", appearance: "system", material: "hud",
             opacity: 1.0, blurOverride: false, blurRadius: 20, showNumbers: true,
-            alwaysShowTitles: false, tileCorner: 12, titleFontSize: 10, titleWeight: "regular",
+            alwaysShowTitles: false, tileCorner: 12, titleFontSize: 10,
             fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Vibrant", highlightHex: "#0A84FF", appearance: "system", material: "hud",
             opacity: 1.0, blurOverride: true, blurRadius: 42, showNumbers: true,
-            alwaysShowTitles: false, tileCorner: 16, titleFontSize: 11, titleWeight: "medium",
+            alwaysShowTitles: false, tileCorner: 16, titleFontSize: 11,
             fade: true, iconSize: 72, iconSpacing: 20, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Minimal", highlightHex: "#8A8A8E", appearance: "system", material: "sidebar",
             opacity: 0.96, blurOverride: false, blurRadius: 20, showNumbers: false,
-            alwaysShowTitles: false, tileCorner: 8, titleFontSize: 10, titleWeight: "regular",
+            alwaysShowTitles: false, tileCorner: 8, titleFontSize: 10,
             fade: true, iconSize: 56, iconSpacing: 12, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Midnight", highlightHex: "#BF5AF2", appearance: "dark", material: "hud",
             opacity: 0.86, blurOverride: true, blurRadius: 30, showNumbers: true,
-            alwaysShowTitles: false, tileCorner: 14, titleFontSize: 10, titleWeight: "regular",
+            alwaysShowTitles: false, tileCorner: 14, titleFontSize: 10,
             fade: true, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Daylight", highlightHex: "#0A84FF", appearance: "light", material: "window",
             opacity: 1.0, blurOverride: false, blurRadius: 20, showNumbers: true,
-            alwaysShowTitles: true, tileCorner: 12, titleFontSize: 10, titleWeight: "medium",
+            alwaysShowTitles: true, tileCorner: 12, titleFontSize: 10,
             fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 3,
             builtIn: true),
     ]

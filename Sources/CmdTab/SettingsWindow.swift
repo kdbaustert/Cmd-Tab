@@ -353,14 +353,19 @@ struct AppearanceSettings: View {
                         Spacer()
                         Slider(value: $behavior.titleFontSize, in: 8...16, step: 1).frame(width: 160)
                     }
-                    pickerRow("Title weight", selection: $behavior.titleWeight) {
-                        ForEach(TitleWeight.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
                     Toggle("Show number badges", isOn: $behavior.showNumbers)
                         .toggleStyle(.checkbox)
                     Toggle("Always show titles under icons", isOn: $behavior.alwaysShowTitles)
                         .toggleStyle(.checkbox)
                         .help("Show each tile's name in app mode too, not just the selected one.")
+                    Toggle("Preview windows on hover", isOn: $behavior.windowPreview)
+                        .toggleStyle(.checkbox)
+                        .help(
+                            "App mode: hover a tile to float live thumbnails of that app's windows. "
+                                + "Needs Screen Recording permission.")
+                        .onChange(of: behavior.windowPreview) {
+                            if behavior.windowPreview { Permissions.requestScreenCapture() }
+                        }
                     Toggle("Fade the panel in and out", isOn: $behavior.fade)
                         .toggleStyle(.checkbox)
                 }

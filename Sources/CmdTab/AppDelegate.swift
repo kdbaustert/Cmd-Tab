@@ -76,13 +76,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.alwaysShowTitles = behavior.alwaysShowTitles
         controller.tileCorner = behavior.tileCorner
         controller.titleFontSize = behavior.titleFontSize
-        controller.titleWeight = behavior.titleWeight.fontWeight
         controller.fade = behavior.fade
         controller.panelMaterial = behavior.panelMaterial
         controller.panelOpacity = behavior.panelOpacity
         controller.panelBlur = behavior.blurOverride ? behavior.blurRadius : nil
         controller.maxColumns = behavior.maxColumns
         controller.showDelay = behavior.showDelay / 1000
+        controller.windowPreview = behavior.windowPreview
         controller.hotkey = behavior.hotkey
         updateStatusItem(behavior)
     }

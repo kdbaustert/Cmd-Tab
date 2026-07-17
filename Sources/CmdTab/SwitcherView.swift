@@ -103,7 +103,6 @@ struct SwitcherView: View {
                         highlightColor: model.highlightColor,
                         corner: model.tileCorner,
                         titleFontSize: model.titleFontSize,
-                        titleWeight: model.titleWeight,
                         number: model.showNumbers && index < 9 ? index + 1 : nil)
                 }
             }
@@ -153,7 +152,6 @@ private struct TargetTile: View {
     let highlightColor: Color
     let corner: CGFloat
     let titleFontSize: CGFloat
-    let titleWeight: Font.Weight
     /// 1–9, or nil past the ninth tile, which has no key to jump to it.
     let number: Int?
 
@@ -162,7 +160,7 @@ private struct TargetTile: View {
             icon
             if showsTitle {
                 Text(target.title)
-                    .font(.system(size: titleFontSize, weight: titleWeight))
+                    .font(.system(size: titleFontSize))
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)

@@ -89,19 +89,6 @@ enum PanelMaterial: String, CaseIterable {
     }
 }
 
-/// Weight of the tile title text.
-enum TitleWeight: String, CaseIterable {
-    case regular, medium, semibold
-    var title: String { rawValue.capitalized }
-    var fontWeight: Font.Weight {
-        switch self {
-        case .regular: return .regular
-        case .medium: return .medium
-        case .semibold: return .semibold
-        }
-    }
-}
-
 /// Where the panel places itself when it opens.
 enum PanelPosition: String, CaseIterable {
     case center
@@ -193,10 +180,10 @@ final class BehaviorStore: ObservableObject {
         static let alwaysShowTitles = "alwaysShowTitles"
         static let tileCorner = "tileCorner"
         static let titleFontSize = "titleFontSize"
-        static let titleWeight = "titleWeight"
         static let fade = "fadeAnimation"
         static let showMenuBarIcon = "showMenuBarIcon"
         static let reflectMode = "reflectModeInMenuBar"
+        static let windowPreview = "windowPreviewOnHover"
     }
 
     /// The keys we own, for export/import/reset.
@@ -205,9 +192,9 @@ final class BehaviorStore: ObservableObject {
         "highlightColorHex", "hotkeyKeyCode", "hotkeyModifiers",
         "showDelayMs", "windowScope", "hideEmptyApps", "maxColumns",
         "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
-        "alwaysShowTitles", "tileCorner", "titleFontSize", "titleWeight",
-        "fadeAnimation", "showMenuBarIcon", "reflectModeInMenuBar", "iconSize", "iconSpacing",
-        "titleSpacing", "excludedBundleIDs",
+        "alwaysShowTitles", "tileCorner", "titleFontSize",
+        "fadeAnimation", "showMenuBarIcon", "reflectModeInMenuBar", "windowPreviewOnHover",
+        "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs",
     ]
 
     /// Fired after any change so the app can reconfigure the running switcher.
@@ -270,9 +257,6 @@ final class BehaviorStore: ObservableObject {
     @Published var titleFontSize: Double {
         didSet { store(titleFontSize, Key.titleFontSize, oldValue != titleFontSize) }
     }
-    @Published var titleWeight: TitleWeight {
-        didSet { store(titleWeight.rawValue, Key.titleWeight, oldValue != titleWeight) }
-    }
     @Published var fade: Bool {
         didSet { store(fade, Key.fade, oldValue != fade) }
     }
@@ -281,6 +265,10 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var reflectMode: Bool {
         didSet { store(reflectMode, Key.reflectMode, oldValue != reflectMode) }
+    }
+    /// App mode: hovering a tile shows live thumbnails of that app's windows. Needs Screen Recording.
+    @Published var windowPreview: Bool {
+        didSet { store(windowPreview, Key.windowPreview, oldValue != windowPreview) }
     }
 
     static let defaultHighlight = Color.accentColor
@@ -311,11 +299,11 @@ final class BehaviorStore: ObservableObject {
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
-        titleWeight = d.string(forKey: Key.titleWeight).flatMap(TitleWeight.init) ?? .regular
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true
         reflectMode = d.bool(forKey: Key.reflectMode)
+        windowPreview = d.bool(forKey: Key.windowPreview)
     }
 
     /// Re-reads every field from `UserDefaults`. Used after an import or reset so the live values
@@ -350,11 +338,11 @@ final class BehaviorStore: ObservableObject {
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
-        titleWeight = d.string(forKey: Key.titleWeight).flatMap(TitleWeight.init) ?? .regular
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true
         reflectMode = d.bool(forKey: Key.reflectMode)
+        windowPreview = d.bool(forKey: Key.windowPreview)
     }
 
     private static func loadHotkey(
