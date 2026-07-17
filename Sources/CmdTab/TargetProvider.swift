@@ -378,7 +378,8 @@ final class TargetProvider {
     }
 
     /// Every display's full frame in Quartz (top-left) coordinates, to match AX window positions.
-    private static func screenCGFrames() -> [CGRect] {
+    /// Shared with the window move so the two never disagree about a display's bounds.
+    static func screenCGFrames() -> [CGRect] {
         let primaryHeight =
             (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
         return NSScreen.screens.map { screen in
@@ -411,7 +412,9 @@ final class TargetProvider {
         return nil
     }()
 
-    private static func windowID(_ window: AXUIElement) -> CGWindowID? {
+    /// The `CGWindowID` for an AX window element (via the private `_AXUIElementGetWindow`). Internal
+    /// so the Space move can turn a resolved window element into a window number.
+    static func windowID(_ window: AXUIElement) -> CGWindowID? {
         guard let getWindow else { return nil }
         var id: CGWindowID = 0
         guard getWindow(window, &id) == .success, id != 0 else { return nil }

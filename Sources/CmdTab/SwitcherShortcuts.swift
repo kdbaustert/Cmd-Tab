@@ -6,7 +6,8 @@ import SwiftUI
 /// is pressed on top of it. An extra modifier is required (⌥ or ⌃) so an action key can't be
 /// mistaken for type-to-filter input.
 enum SwitcherAction: String, CaseIterable, Identifiable {
-    case quit, forceQuit, close, hide, hideOthers, minimize, zoom, moveDisplayPrev, moveDisplayNext
+    case quit, forceQuit, close, hide, hideOthers, minimize, zoom
+    case moveDesktopPrev, moveDesktopNext, moveDisplayPrev, moveDisplayNext
 
     var id: String { rawValue }
 
@@ -19,12 +20,15 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .hideOthers: return "Hide other apps"
         case .minimize: return "Minimize window"
         case .zoom: return "Zoom window"
+        case .moveDesktopPrev: return "Move to previous desktop"
+        case .moveDesktopNext: return "Move to next desktop"
         case .moveDisplayPrev: return "Move to previous display"
         case .moveDisplayNext: return "Move to next display"
         }
     }
 
-    /// Default binding, matching what the actions shipped with (⌥ combos, ⇧ for the heavier variants).
+    /// Default binding. Desktop (Space) move is on ⌥←/→; display move on ⌥⇧←/→ so the two don't
+    /// collide on the arrow keys.
     var defaultShortcut: ActionShortcut {
         let option = CGEventFlags.maskAlternate.rawValue
         let optionShift = (CGEventFlags.maskAlternate.union(.maskShift)).rawValue
@@ -36,8 +40,10 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .hideOthers: return ActionShortcut(keyCode: 4, modifierRaw: optionShift)
         case .minimize: return ActionShortcut(keyCode: 46, modifierRaw: option)  // M
         case .zoom: return ActionShortcut(keyCode: 3, modifierRaw: option)  // F
-        case .moveDisplayPrev: return ActionShortcut(keyCode: 123, modifierRaw: option)  // ←
-        case .moveDisplayNext: return ActionShortcut(keyCode: 124, modifierRaw: option)  // →
+        case .moveDesktopPrev: return ActionShortcut(keyCode: 123, modifierRaw: option)  // ←
+        case .moveDesktopNext: return ActionShortcut(keyCode: 124, modifierRaw: option)  // →
+        case .moveDisplayPrev: return ActionShortcut(keyCode: 123, modifierRaw: optionShift)  // ⇧←
+        case .moveDisplayNext: return ActionShortcut(keyCode: 124, modifierRaw: optionShift)  // ⇧→
         }
     }
 }
@@ -74,9 +80,10 @@ struct SwitcherShortcuts: Equatable {
         bindings: Dictionary(uniqueKeysWithValues: SwitcherAction.allCases.map { ($0, $0.defaultShortcut) }))
 
     /// The action a keypress fires, if any. Exact modifier match keeps ⌥Q (quit) distinct from
-    /// ⌥⇧Q (force-quit).
+    /// ⌥⇧Q (force-quit). Iterates in declared case order so that if two actions are bound to the same
+    /// combo, the same one wins every time rather than depending on dictionary ordering.
     func action(code: Int, extra: CGEventFlags) -> SwitcherAction? {
-        bindings.first { $0.value.matches(code: code, extra: extra) }?.key
+        SwitcherAction.allCases.first { bindings[$0]?.matches(code: code, extra: extra) == true }
     }
 }
 
@@ -112,7 +119,12 @@ final class SwitcherShortcutsStore: ObservableObject {
     private static func load() -> SwitcherShortcuts {
         var result = SwitcherShortcuts.defaults
         guard let raw = UserDefaults.standard.dictionary(forKey: defaultsKey) else { return result }
+        // A config saved before the desktop move existed has move-to-display at its old ⌥←/→ default,
+        // which now collides with move-to-desktop. Drop those stale display bindings so they take the
+        // new ⌥⇧←/→ default instead of shadowing the desktop move.
+        let preDesktop = raw["moveDesktopNext"] == nil && raw["moveDesktopPrev"] == nil
         for action in SwitcherAction.allCases {
+            if preDesktop, action == .moveDisplayPrev || action == .moveDisplayNext { continue }
             guard let pair = raw[action.rawValue] as? [Int], pair.count == 2 else { continue }
             result.bindings[action] = ActionShortcut(
                 keyCode: pair[0], modifierRaw: UInt64(bitPattern: Int64(pair[1])))

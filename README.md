@@ -49,7 +49,8 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | ⌘-⌥-⇧-H | Hide every other app |
 | ⌘-⌥-M | Minimize the selected window |
 | ⌘-⌥-F | Zoom (maximize / restore) the selected window |
-| ⌘-⌥-← / ⌘-⌥-→ | Move the selected window to the previous / next display |
+| ⌘-⌥-← / ⌘-⌥-→ | Move the selected window to the previous / next **desktop** (Space) |
+| ⌘-⌥-⇧-← / ⌘-⌥-⇧-→ | Move the selected window to the previous / next **display** |
 | Esc | Clear the filter, or dismiss the switcher when there is none |
 | Release ⌘ | Switch to the selection |
 
@@ -288,9 +289,10 @@ after that. Remove the identity in Keychain Access to undo it.
 - Windows on other Spaces are listed, and switching to one follows macOS's normal Space-switch
   behavior. The hover preview shows them too — only *minimized* windows can't be previewed, since
   they have no live surface to capture.
-- Moving a window to another display is on ⌘-⌥-←/→. Moving to another *Space* is implemented too
-  (`SpaceMover`, a private SkyLight call like the ⌘-Tab takeover) but is currently unbound — the
-  keystroke was removed in favour of the simpler display-only move.
+- Moving a window to another **desktop** (Space) is on ⌘-⌥-←/→ and uses a private SkyLight call
+  (`SpaceMover`) — there is no public API, so like the ⌘-Tab takeover it is resolved at runtime and
+  no-ops if a future macOS drops the symbol. Moving to another **display** is on ⌘-⌥-⇧-←/→ and
+  raises + activates the window on arrival so it lands in front rather than behind existing windows.
 - Live window thumbnails appear only in the optional hover preview (app mode); tiles themselves are
   app icons.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the

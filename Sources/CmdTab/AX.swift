@@ -88,7 +88,7 @@ enum AX {
         var button: CFTypeRef?
         guard
             AXUIElementCopyAttributeValue(element, attribute as CFString, &button) == .success,
-            let button
+            let button, CFGetTypeID(button) == AXUIElementGetTypeID()
         else { return }
         AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
     }

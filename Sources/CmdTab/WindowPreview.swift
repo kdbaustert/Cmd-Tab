@@ -15,6 +15,8 @@ struct WindowThumb: Identifiable {
     let id: CGWindowID
     let image: NSImage
     let title: String
+    /// The owning app's pid, so a clicked thumbnail can be raised and activated.
+    let pid: pid_t
 }
 
 /// Captures thumbnails of an app's windows through ScreenCaptureKit. This is the only place in the
@@ -74,7 +76,7 @@ actor WindowCapture {
                         index,
                         WindowThumb(
                             id: window.windowID, image: NSImage(cgImage: image, size: size),
-                            title: window.title ?? ""))
+                            title: window.title ?? "", pid: pid))
                 }
             }
             var out: [(Int, WindowThumb)] = []
@@ -150,10 +152,27 @@ final class WindowPreviewModel: ObservableObject {
     @Published var thumbs: [WindowThumb] = []
     /// The app whose windows are shown, as a heading over the strip.
     @Published var appName: String = ""
+    /// Each thumbnail's frame in the panel's content coordinates (top-left origin), reported by the
+    /// view so the panel can hit-test a click against it. Not `@Published` — it only feeds the panel.
+    var thumbFrames: [CGWindowID: CGRect] = [:]
+}
+
+/// Reports each thumbnail's laid-out frame up to the panel for click hit-testing.
+private struct ThumbFrameKey: PreferenceKey {
+    static let defaultValue: [CGWindowID: CGRect] = [:]
+    static func reduce(
+        value: inout [CGWindowID: CGRect], nextValue: () -> [CGWindowID: CGRect]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { first, _ in first })
+    }
 }
 
 private struct WindowPreviewView: View {
     @ObservedObject var model: WindowPreviewModel
+
+    /// Name of the coordinate space the reported thumbnail frames are measured in — the panel's
+    /// content, so a screen click maps straight onto them after flipping.
+    static let space = "windowPreview"
 
     /// How many thumbnails sit in a row before wrapping, so a many-window app grows downward rather
     /// than off the side of the screen.
@@ -190,6 +209,8 @@ private struct WindowPreviewView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
         .fixedSize()
+        .coordinateSpace(name: Self.space)
+        .onPreferenceChange(ThumbFrameKey.self) { model.thumbFrames = $0 }
     }
 
     @ViewBuilder
@@ -211,18 +232,28 @@ private struct WindowPreviewView: View {
                     .frame(maxWidth: 160)
             }
         }
+        // Report the whole cell's frame (image + title) so a click anywhere on it selects the window.
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: ThumbFrameKey.self,
+                    value: [thumb.id: geo.frame(in: .named(Self.space))])
+            })
     }
 }
 
 /// A small non-activating panel that floats a strip of window thumbnails next to the hovered tile.
-/// Purely informational — it never takes the mouse or keyboard, so it cannot become the switch
-/// target the way the tile behind it can.
+/// It never takes the keyboard or becomes key, but a click on a thumbnail is turned into a pick, the
+/// same way the switcher panel handles a tile click.
 @MainActor
 final class WindowPreviewPanel: NSPanel {
     private let content = WindowPreviewModel()
     private var host: NSHostingView<WindowPreviewView>?
     /// Gap between the hovered tile and the preview strip.
     private let gap: CGFloat = 10
+
+    /// Invoked when a thumbnail is clicked. The controller focuses that window and dismisses.
+    var onPick: ((WindowThumb) -> Void)?
 
     init() {
         super.init(
@@ -238,12 +269,37 @@ final class WindowPreviewPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         isMovable = false
-        ignoresMouseEvents = true
         animationBehavior = .none
     }
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    /// A non-activating panel receives clicks without bringing our app forward, so a click on a
+    /// thumbnail becomes a pick — like the switcher panel, and for the same reason (never key, so
+    /// SwiftUI's own gesture recognisers stay dormant).
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, let thumb = thumb(at: NSEvent.mouseLocation) {
+            onPick?(thumb)
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    /// The thumbnail under a screen point, using the frames the view reported in content coordinates.
+    private func thumb(at screenPoint: NSPoint) -> WindowThumb? {
+        // Content coordinates are top-left origin; flip the bottom-up screen point into them.
+        let point = CGPoint(x: screenPoint.x - frame.minX, y: frame.maxY - screenPoint.y)
+        guard let id = content.thumbFrames.first(where: { $0.value.contains(point) })?.key
+        else { return nil }
+        return content.thumbs.first { $0.id == id }
+    }
+
+    /// Whether the panel is up and the point is within it — used by hover tracking to keep the
+    /// preview alive while the cursor is over it (so its thumbnails can be reached and clicked).
+    func isShowing(_ screenPoint: NSPoint) -> Bool {
+        isVisible && frame.contains(screenPoint)
+    }
 
     /// Shows `thumbs` for `appName`, centred over `tileRect` (screen coordinates) and preferring the
     /// space above it, dropping below when there is no room. Matches the switcher's forced appearance.

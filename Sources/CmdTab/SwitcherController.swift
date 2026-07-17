@@ -33,6 +33,8 @@ final class SwitcherController {
     private lazy var previewPanel = WindowPreviewPanel()
     private var previewWork: DispatchWorkItem?
     private var previewTask: Task<Void, Never>?
+    /// Grace-period teardown of the preview, cancelled if the cursor reaches the preview or a tile.
+    private var previewDismissWork: DispatchWorkItem?
     private var tap: EventTap?
     private var isVisible = false
 
@@ -241,8 +243,11 @@ final class SwitcherController {
             guard let self, self.isVisible else { return }
             self.advance(step)
         }
-        panel.onHoverPreview = { [weak self] pid, rect in
-            self?.hoverPreview(pid: pid, tileRect: rect)
+        panel.onPreviewHover = { [weak self] target in self?.previewHover(target) }
+        panel.isOverPreview = { [weak self] point in self?.previewPanel.isShowing(point) ?? false }
+        previewPanel.onPick = { [weak self] thumb in
+            SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
+            self?.cancel()
         }
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
         // hotkey leaves the native switcher alone.
@@ -330,16 +335,14 @@ final class SwitcherController {
             return true
         }
         // Configurable window actions. Each is bound to a key plus *extra* modifiers on top of the
-        // held trigger; ⌥/⌃ keep the action keys clear of the type-to-filter query.
+        // held trigger; ⌥/⌃ keep the action keys clear of the type-to-filter query. Subtract the
+        // trigger's own modifiers so a trigger that itself uses ⌥/⌃ (e.g. ⌘⌥-Tab) doesn't make every
+        // key look like an action and swallow the query.
         let extra = flags.intersection([.maskAlternate, .maskShift, .maskControl])
-        if !extra.isEmpty {
-            let matched = shortcuts.action(code: code, extra: extra)
-            Log.tap.notice(
-                "visibleKey code=\(code) extra=\(extra.rawValue) matched=\(matched?.rawValue ?? "nil", privacy: .public)")
-            if let action = matched {
-                perform(action)
-                return true
-            }
+            .subtracting(activeHeld)
+        if !extra.isEmpty, let action = shortcuts.action(code: code, extra: extra) {
+            perform(action)
+            return true
         }
         // Navigation and editing keys.
         switch code {
@@ -541,8 +544,11 @@ final class SwitcherController {
         }
     }
 
-    /// Dispatches a bound window action to its handler.
+    /// Dispatches a bound window action to its handler. A not-running favourite (launch tile) has no
+    /// window or process to act on — and every such tile shares the -1 pid sentinel, so letting an
+    /// action through would hit *all* of them (or, for hide-others, hide the entire session).
     private func perform(_ action: SwitcherAction) {
+        guard model.selected?.isLaunchable == false else { return }
         switch action {
         case .quit: quitSelected()
         case .forceQuit: forceQuitSelected()
@@ -551,6 +557,8 @@ final class SwitcherController {
         case .hideOthers: hideOthers()
         case .minimize: minimizeSelected()
         case .zoom: zoomSelected()
+        case .moveDesktopPrev: model.selected?.moveToSpace(-1)
+        case .moveDesktopNext: model.selected?.moveToSpace(1)
         case .moveDisplayPrev: moveSelectedWindow(acrossDisplays: -1)
         case .moveDisplayNext: moveSelectedWindow(acrossDisplays: 1)
         }
@@ -578,7 +586,8 @@ final class SwitcherController {
 
     /// Moves the selected window to the next/previous display, wrapping around.
     private func moveSelectedWindow(acrossDisplays delta: Int) {
-        model.selected?.moveWindow(acrossDisplays: delta, screenFramesCG: Self.screenFramesCG())
+        model.selected?.moveWindow(
+            acrossDisplays: delta, screenFramesCG: TargetProvider.screenCGFrames())
     }
 
     /// Hides every other regular app, leaving the selected one (and Cmd-Tab) alone.
@@ -592,24 +601,6 @@ final class SwitcherController {
         }
     }
 
-    /// The displays' *full* frames in Quartz (top-left) coordinates, to match AX window positions.
-    /// Full frames (not visible frames) so a window always falls inside exactly one — using the
-    /// menu-bar-inset visible frame shifted the origin and could fail to locate the source display,
-    /// leaving the move stuck. Relative placement then keeps the window's menu-bar gap on arrival.
-    /// Must run on the main thread — `NSScreen` is main-thread-only.
-    private static func screenFramesCG() -> [CGRect] {
-        // Flip AppKit's bottom-left origin to Quartz's top-left using the primary display's height —
-        // the primary is the screen at AppKit origin (0,0), not merely the first in the array.
-        let primaryHeight =
-            (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
-        return NSScreen.screens.map { screen in
-            let f = screen.frame
-            return CGRect(
-                x: f.origin.x, y: primaryHeight - f.origin.y - f.height,
-                width: f.width, height: f.height)
-        }
-    }
-
     /// A tile was clicked: select and commit it in one go.
     private func pick(_ index: Int) {
         guard isVisible, model.targets.indices.contains(index) else { return }
@@ -619,23 +610,37 @@ final class SwitcherController {
 
     // MARK: - Window preview
 
-    /// The hovered app tile changed. Debounce briefly so a cursor sweeping across the grid does not
-    /// fire a capture per tile, then grab and float the thumbnails. A nil pid — the cursor left the
-    /// grid, or the panel closed — just tears the preview down.
-    private func hoverPreview(pid: pid_t?, tileRect: NSRect) {
-        previewWork?.cancel()
-        previewWork = nil
-        previewTask?.cancel()
-        previewTask = nil
-        guard let pid else {
-            previewPanel.dismiss()
-            return
+    /// Reacts to what the cursor points at. A tile (re)captures its preview after a short debounce;
+    /// sitting on the preview cancels any teardown so its thumbnails can be clicked; leaving both
+    /// schedules a *grace-delayed* dismissal so the cursor can cross the gap from tile to preview
+    /// without the strip vanishing mid-move.
+    private func previewHover(_ target: PreviewHoverTarget) {
+        previewDismissWork?.cancel()
+        previewDismissWork = nil
+        switch target {
+        case .tile(let pid, let rect):
+            previewWork?.cancel()
+            previewWork = nil
+            previewTask?.cancel()
+            previewTask = nil
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.capturePreview(pid: pid, tileRect: rect) }
+            }
+            previewWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        case .overPreview:
+            // Keep what's shown; just stop any pending new capture.
+            previewWork?.cancel()
+            previewWork = nil
+        case .away:
+            previewWork?.cancel()
+            previewWork = nil
+            previewTask?.cancel()
+            previewTask = nil
+            let work = DispatchWorkItem { [weak self] in self?.previewPanel.dismiss() }
+            previewDismissWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
         }
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.capturePreview(pid: pid, tileRect: tileRect) }
-        }
-        previewWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     /// Captures the app's windows off the main thread, then floats them if the switcher is still up

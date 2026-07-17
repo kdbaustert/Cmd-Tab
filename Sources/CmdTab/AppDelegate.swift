@@ -46,16 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Log.general.notice(
             "launched: pid=\(ProcessInfo.processInfo.processIdentifier) trusted=\(Permissions.isTrusted) path=\(Bundle.main.bundlePath)")
-        // TEMP: verify shortcut binding + matching that ⌘⌥Q etc. rely on.
-        let sc = SwitcherShortcutsStore.shared.shortcuts
-        for (code, extra, label) in [
-            (12, CGEventFlags.maskAlternate, "optQ"),
-            (13, CGEventFlags.maskAlternate, "optW"),
-            (12, CGEventFlags.maskAlternate.union(.maskShift), "optShiftQ"),
-        ] {
-            Log.general.notice(
-                "shortcuttest: \(label, privacy: .public) → \(sc.action(code: code, extra: extra)?.rawValue ?? "nil", privacy: .public)")
-        }
 
         if Permissions.isTrusted {
             startController()

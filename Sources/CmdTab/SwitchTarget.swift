@@ -133,6 +133,28 @@ extension SwitchTarget {
         }
     }
 
+    /// Focuses a specific window of an app by its `CGWindowID` — used when a hover-preview thumbnail
+    /// is clicked, so app mode can jump straight to that window. Raises and mains the matching AX
+    /// window when it can be found; for apps whose AX window list is empty (Electron/Catalyst) it
+    /// falls back to just activating the app.
+    static func focusWindow(id: CGWindowID, pid: pid_t) {
+        focusQueue.async {
+            if let window = AX.windows(of: AX.application(pid))
+                .first(where: { TargetProvider.windowID($0) == id }) {
+                AXUIElementSetAttributeValue(
+                    window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
+                AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                AXUIElementSetAttributeValue(
+                    window, kAXMainAttribute as CFString, true as CFTypeRef)
+            }
+            DispatchQueue.main.async {
+                let app = NSRunningApplication(processIdentifier: pid)
+                if app?.isHidden == true { app?.unhide() }
+                app?.activate()
+            }
+        }
+    }
+
     func quitApp() {
         NSRunningApplication(processIdentifier: pid)?.terminate()
     }
@@ -152,10 +174,11 @@ extension SwitchTarget {
         case .window(_, let element): return element
         case .app(let pid):
             let app = AX.application(pid)
-            // Prefer the app's main/focused window directly — more reliable than filtering the whole
-            // `AXWindows` list, which can come back empty or role-less for some apps.
-            return AX.copyElement(app, kAXMainWindowAttribute as String)
-                ?? AX.copyElement(app, kAXFocusedWindowAttribute as String)
+            // The focused window is the one the user sees frontmost; fall back to main, then to the
+            // first AX window. Reading these attributes directly is also more reliable than filtering
+            // the whole `AXWindows` list, which comes back empty for some apps (Electron/Catalyst).
+            return AX.copyElement(app, kAXFocusedWindowAttribute as String)
+                ?? AX.copyElement(app, kAXMainWindowAttribute as String)
                 ?? AX.windows(of: app).first(where: AX.isWindow)
         case .launch: return nil
         }
@@ -196,12 +219,10 @@ extension SwitchTarget {
         let kind = self.kind
         let parsedWindowID = windowID
         Self.focusQueue.async {
-            let id: CGWindowID?
-            switch kind {
-            case .window: id = parsedWindowID
-            case .app(let pid): id = TargetProvider.switchableWindowIDs(for: pid).first
-            case .launch: return
-            }
+            if case .launch = kind { return }
+            // Resolve the window's number from its element (robust for the Electron apps whose
+            // AXWindows list is empty), falling back to the id parsed from a window target.
+            let id = Self.resolveWindow(kind).flatMap(TargetProvider.windowID) ?? parsedWindowID
             guard let id else { return }
             SpaceMover.move(window: id, bySpaces: delta)
         }
