@@ -23,9 +23,11 @@ until you do — the app polls for the permission and stays inert meanwhile. It 
 over: the event tap cannot receive keystrokes without it, and window mode cannot enumerate or
 raise windows without it.
 
-There is no Screen Recording prompt, because tiles are app icons rather than live window
-thumbnails. Window *titles* come from the Accessibility API, not from `CGWindowListCopyWindowInfo`,
-specifically so that second permission is never needed.
+The switcher itself never needs Screen Recording: tiles are app icons, and window *titles* come
+from the Accessibility API rather than `CGWindowListCopyWindowInfo`. The one exception is the
+optional **window preview on hover** (Settings → Appearance) — its live thumbnails are captured
+with ScreenCaptureKit, so turning it on prompts for Screen Recording. Leave it off and that second
+permission is never touched.
 
 ## Keys
 
@@ -44,10 +46,14 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | Esc | Dismiss without switching |
 | Release ⌘ | Switch to the selection |
 
-The mouse works too: while the switcher is open, **moving over a tile previews it** (the highlight
-and caption follow the cursor) and **clicking a tile switches to it**. Both are driven from a global
-event monitor rather than SwiftUI, because the panel is deliberately non-activating and never
-becomes key.
+The mouse works too: while the switcher is open, **moving over a tile highlights it** (the highlight
+and caption follow the cursor) and **clicking a tile switches to it**. Neither goes through SwiftUI,
+because the panel is deliberately non-activating and never becomes key: the highlight is driven by
+polling the cursor position on a timer, and clicks are caught in the panel's `sendEvent`. The poll
+is used rather than a global mouse-moved monitor because such a monitor only sees events bound for
+*other* apps — so whenever Cmd-Tab itself is frontmost the highlight would stop following the cursor.
+With **Preview windows on hover** enabled, pausing over an app tile also floats live thumbnails of
+that app's windows beside it — see [Appearance](#appearance).
 
 The first nine tiles carry their number in the bottom-right corner. The number switches
 immediately rather than moving the highlight — waiting for ⌘ to come up would make it slower than
@@ -104,6 +110,30 @@ Below the sliders are three more controls:
 | Highlight colour | The tint of the selected tile. Persists as a hex string (`highlightColorHex`). | System accent |
 | Appearance | Forces the panel Light or Dark, or matches the system. | Match system |
 | Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
+
+### Window preview on hover
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Preview windows on hover | App mode only: pausing over a tile floats live thumbnails of that app's windows beside it. Persists as `windowPreviewOnHover`. | Off |
+
+This is the one feature that uses Screen Recording. Thumbnails are captured with ScreenCaptureKit
+into a second non-activating panel that never takes the mouse or keyboard, so the tile behind it —
+not the preview — stays the switch target. Turning the setting on prompts for the permission; a
+previous denial is routed to System Settings instead, since macOS only shows the prompt once. The
+grant takes effect on the next launch, which is standard for Screen Recording.
+
+The window list is enumerated with `onScreenWindowsOnly: false`, so windows on **other Spaces** are
+included — ScreenCaptureKit captures a window's backing surface even when its Space isn't frontmost,
+which is exactly what you want when previewing an app you aren't currently looking at. Ordering
+follows the switcher's own Accessibility window list (the same order window mode shows) when the
+window IDs resolve, and falls back to a size filter otherwise. Every capture then passes a
+blank-content check — a downsampled alpha test — and anything essentially transparent is dropped.
+That check is what removes the Electron/Catalyst *phantom* backing windows those apps expose (a
+hidden second "window" with no real content) without needing to special-case them. The one kind of
+window that can't be shown is a **minimized** one: it has no live surface, so it captures blank and
+is dropped. Captures are debounced per hovered tile, run concurrently, and reuse a briefly cached
+window list so a cursor sweeping across tiles does not re-enumerate the system each time.
 
 ### Excluded apps
 
@@ -223,8 +253,10 @@ after that. Remove the identity in Keychain Access to undo it.
 - Window ordering within an app follows Accessibility's z-order, not a true per-window MRU.
   Cross-app ordering *is* real MRU, tracked from activation notifications.
 - Windows on other Spaces are listed, and switching to one follows macOS's normal Space-switch
-  behavior.
-- No live thumbnails, and no search-by-typing in the switcher itself.
+  behavior. The hover preview shows them too — only *minimized* windows can't be previewed, since
+  they have no live surface to capture.
+- Live window thumbnails appear only in the optional hover preview (app mode); tiles themselves are
+  app icons. There is no search-by-typing in the switcher.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
   frontmost app and a ⌘-Tab lands one target further along than usual. Close it and ordering is
   normal again.
@@ -239,6 +271,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |
 | `SwitcherPanel.swift` | Non-activating overlay window |
 | `SwitcherView.swift` | SwiftUI tile grid |
+| `WindowPreview.swift` | Hover window-preview capture (ScreenCaptureKit) and its floating panel |
 | `SwitchTarget.swift` | An app or window, and how to raise it |
 | `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |
 | `ExclusionStore.swift` | The set of excluded apps, persisted by bundle identifier |

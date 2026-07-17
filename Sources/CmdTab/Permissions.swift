@@ -34,6 +34,31 @@ enum Permissions {
         NSWorkspace.shared.open(url)
     }
 
+    /// Called when the hover-preview setting is switched on. macOS only shows the Screen Recording
+    /// prompt once ever, so this distinguishes the two cases: a first-time user gets the system
+    /// prompt (and the app is registered in the Screen Recording list); a user who already
+    /// decided — and was denied — is instead routed to System Settings, since no prompt will
+    /// reappear and the feature would otherwise look silently broken.
+    static func ensureScreenCaptureForPreview() {
+        guard !canCaptureScreen else { return }
+        let askedKey = "didRequestScreenCapture"
+        if !UserDefaults.standard.bool(forKey: askedKey) {
+            UserDefaults.standard.set(true, forKey: askedKey)
+            requestScreenCapture()  // grant only applies on next launch
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Enable Screen Recording for window previews"
+        alert.informativeText =
+            "Cmd-Tab needs Screen Recording access to show live window previews. Enable Cmd-Tab under "
+            + "System Settings → Privacy & Security → Screen Recording, then relaunch Cmd-Tab."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openScreenRecordingSettings()
+        }
+    }
+
     /// Polls until the user flips the switch. There is no notification for this, so polling is
     /// the only option; the interval is slow enough to be free.
     static func waitForTrust(interval: TimeInterval = 1.0, then handler: @escaping () -> Void) {

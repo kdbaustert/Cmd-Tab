@@ -381,7 +381,12 @@ final class SwitcherController {
         let fold: ([SwitchTarget]) -> Void = { [weak self] fresh in
             guard let self, self.isVisible else { return }
             self.model.update(targets: fresh)
-            if self.model.isEmpty { self.cancel() } else { self.panel.layout() }
+            if self.model.isEmpty {
+                self.cancel()
+            } else {
+                self.panel.layout()
+                self.panel.refreshHoverPreview()
+            }
         }
         provider.refresh(then: fold)
     }
@@ -442,7 +447,13 @@ final class SwitcherController {
         var remaining = model.targets
         remaining.removeAll { $0.pid == target.pid }
         model.update(targets: remaining)
-        if model.isEmpty { cancel() } else { panel.layout() }
+        if model.isEmpty {
+            cancel()
+        } else {
+            panel.layout()
+            // The tile grid shifted under a possibly-stationary cursor; follow it with the preview.
+            panel.refreshHoverPreview()
+        }
     }
 
     /// Closes the highlighted window (window mode) or the frontmost window of the highlighted app
@@ -459,7 +470,13 @@ final class SwitcherController {
         var remaining = model.targets
         remaining.removeAll { $0.id == target.id }
         model.update(targets: remaining)
-        if model.isEmpty { cancel() } else { panel.layout() }
+        if model.isEmpty {
+            cancel()
+        } else {
+            panel.layout()
+            // The tile grid shifted under a possibly-stationary cursor; follow it with the preview.
+            panel.refreshHoverPreview()
+        }
     }
 
     /// Hides the highlighted app and takes it (and any of its windows) out of the list.
@@ -469,7 +486,13 @@ final class SwitcherController {
         var remaining = model.targets
         remaining.removeAll { $0.pid == target.pid }
         model.update(targets: remaining)
-        if model.isEmpty { cancel() } else { panel.layout() }
+        if model.isEmpty {
+            cancel()
+        } else {
+            panel.layout()
+            // The tile grid shifted under a possibly-stationary cursor; follow it with the preview.
+            panel.refreshHoverPreview()
+        }
     }
 
     /// A tile was clicked: select and commit it in one go.
@@ -505,7 +528,7 @@ final class SwitcherController {
     private func capturePreview(pid: pid_t, tileRect: NSRect) {
         let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
         previewTask = Task { [weak self] in
-            let thumbs = await WindowCapture.thumbnails(for: pid)
+            let thumbs = await WindowCapture.shared.thumbnails(for: pid)
             guard !Task.isCancelled, let self, self.isVisible else { return }
             if thumbs.isEmpty {
                 self.previewPanel.dismiss()

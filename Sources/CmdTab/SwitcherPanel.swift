@@ -14,9 +14,14 @@ final class SwitcherPanel: NSPanel {
     private var laidOutColumns = 1
     private var laidOutTile = CGSize.zero
 
-    // Fires while another app is frontmost — the panel never becomes key, so SwiftUI's own hover
-    // tracking stays dormant and we drive the highlight from the raw cursor position instead.
-    private var hoverMonitor: Any?
+    // The panel never becomes key, so SwiftUI's own hover tracking stays dormant and we drive the
+    // highlight from the raw cursor position instead. This is a timer poll rather than a global
+    // mouse-moved monitor because a global monitor only sees events bound for *other* apps — so the
+    // moment Cmd-Tab itself is frontmost (e.g. right after ⌘Q/⌘H, or after Settings was open) the
+    // monitor goes silent and the highlight stops following the cursor. Polling the location is
+    // immune to that.
+    private var hoverTimer: Timer?
+    private var lastHoverLocation: NSPoint?
     private var scrollMonitor: Any?
     private var scrollAccumulator: CGFloat = 0
     /// Bumped on every show/hide so a pending fade-out completion can tell it has been superseded.
@@ -40,9 +45,14 @@ final class SwitcherPanel: NSPanel {
     /// Fires when the hovered app tile changes: the app's pid and the tile's screen rect, or nil pid
     /// when the cursor leaves the grid. Only emitted in app mode with previews on.
     var onHoverPreview: ((_ pid: pid_t?, _ tileRect: NSRect) -> Void)?
-    /// The last tile a preview was requested for, so it is not re-requested on every mouse-move.
-    /// nil means the cursor is off the grid (or nothing hovered yet), matching "no preview".
-    private var lastHoverPreviewIndex: Int?
+    /// Identity of the tile a preview was last requested for. Keyed on the app's pid as well as the
+    /// index so that a preview is re-requested when the grid shifts a *different* app under an
+    /// unmoved cursor, but not on every mouse-move or when only the selection changed. nil = off grid.
+    private struct HoverKey: Equatable {
+        let index: Int
+        let pid: pid_t
+    }
+    private var lastHoverPreviewKey: HoverKey?
 
     init(model: SwitcherModel) {
         self.model = model
@@ -121,48 +131,69 @@ final class SwitcherPanel: NSPanel {
     // MARK: - Hover & scroll
 
     private func startHoverTracking() {
-        guard hoverMonitor == nil else { return }
-        // Global (not local) because the switch happens while another app owns the keyboard and
-        // mouse. Global monitors observe those events read-only, which is all we need. Mouse-moved
-        // monitoring needs no Accessibility grant of its own.
-        hoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) {
-            [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let index = self.tileIndex(at: NSEvent.mouseLocation)
-                if let index, self.model.selection != index { self.model.selection = index }
-                self.updateHoverPreview(index)
-            }
+        guard hoverTimer == nil else { return }
+        lastHoverLocation = nil
+        // ~60 Hz. Added in .common mode so it keeps firing during tracking run-loop modes.
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateHoverFromCursor() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+        // Scroll stays a global monitor — deltas can't be polled. It shares the frontmost-app
+        // limitation above, but scroll-to-move is secondary to the cursor highlight.
         scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) {
             [weak self] event in
             MainActor.assumeIsolated { self?.handleScroll(event) }
         }
     }
 
-    private func stopHoverTracking() {
-        for monitor in [hoverMonitor, scrollMonitor] {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-        }
-        hoverMonitor = nil
-        scrollMonitor = nil
-        scrollAccumulator = 0
-        // Dismiss any live preview and reset so the next session starts clean.
-        if lastHoverPreviewIndex != nil { onHoverPreview?(nil, .zero) }
-        lastHoverPreviewIndex = nil
+    /// Polls the cursor and moves the highlight (and preview) to the tile under it. Skips the work
+    /// when the cursor hasn't moved since the last tick, so a still cursor costs almost nothing.
+    private func updateHoverFromCursor() {
+        let location = NSEvent.mouseLocation
+        guard location != lastHoverLocation else { return }
+        lastHoverLocation = location
+        let index = tileIndex(at: location)
+        if let index, model.selection != index { model.selection = index }
+        updateHoverPreview(index)
     }
 
-    /// Requests a window preview when the hovered app tile changes, and a dismissal when the cursor
-    /// leaves the grid. Debounced to tile changes so it is not re-fired on every mouse-moved event.
+    private func stopHoverTracking() {
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+        scrollMonitor = nil
+        scrollAccumulator = 0
+        lastHoverLocation = nil
+        // Dismiss any live preview and reset so the next session starts clean.
+        if lastHoverPreviewKey != nil { onHoverPreview?(nil, .zero) }
+        lastHoverPreviewKey = nil
+    }
+
+    /// Requests a window preview when the app under the cursor changes, and a dismissal when the
+    /// cursor leaves the grid. Keyed on (index, pid) so it fires when a genuinely different app is
+    /// hovered — or shifted under a still cursor — but not on every mouse-moved event.
     private func updateHoverPreview(_ index: Int?) {
         guard windowPreviewEnabled, model.mode == .apps else { return }
-        guard index != lastHoverPreviewIndex else { return }
-        lastHoverPreviewIndex = index
-        if let index, model.targets.indices.contains(index) {
-            onHoverPreview?(model.targets[index].pid, tileScreenRect(for: index) ?? .zero)
+        let key: HoverKey? =
+            index.flatMap { i in
+                model.targets.indices.contains(i) ? HoverKey(index: i, pid: model.targets[i].pid) : nil
+            }
+        guard key != lastHoverPreviewKey else { return }
+        lastHoverPreviewKey = key
+        if let key {
+            onHoverPreview?(key.pid, tileScreenRect(for: key.index) ?? .zero)
         } else {
             onHoverPreview?(nil, .zero)
         }
+    }
+
+    /// Re-evaluates the preview against whatever tile is under the cursor now. Called after the
+    /// target list changes beneath a stationary cursor — a tile was quit/closed/hidden, or a
+    /// background refresh folded in a new list — so the floating strip follows the app actually there
+    /// (or is dismissed if the tile is gone). The pid keying means an unchanged tile is a no-op.
+    func refreshHoverPreview() {
+        updateHoverPreview(tileIndex(at: NSEvent.mouseLocation))
     }
 
     /// The screen rect of tile `index` — the inverse of `tileIndex(at:)`, in bottom-up screen
@@ -271,10 +302,7 @@ final class SwitcherPanel: NSPanel {
         if positionMode == .activeScreen, let main = NSScreen.main {
             return main
         }
-        let mouse = NSEvent.mouseLocation
-        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
-            ?? NSScreen.main
-            ?? NSScreen.screens[0]
+        return .underCursor
     }
 
     private static func columns(for model: SwitcherModel, on screen: NSScreen, cap: Int) -> Int {

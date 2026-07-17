@@ -364,7 +364,7 @@ struct AppearanceSettings: View {
                             "App mode: hover a tile to float live thumbnails of that app's windows. "
                                 + "Needs Screen Recording permission.")
                         .onChange(of: behavior.windowPreview) {
-                            if behavior.windowPreview { Permissions.requestScreenCapture() }
+                            if behavior.windowPreview { Permissions.ensureScreenCaptureForPreview() }
                         }
                     Toggle("Fade the panel in and out", isOn: $behavior.fade)
                         .toggleStyle(.checkbox)

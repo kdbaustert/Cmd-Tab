@@ -2,6 +2,14 @@ import AppKit
 import ScreenCaptureKit
 import SwiftUI
 
+extension NSScreen {
+    /// The screen under the cursor, falling back to the main screen then the first attached one.
+    static var underCursor: NSScreen {
+        let mouse = NSEvent.mouseLocation
+        return screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? main ?? screens[0]
+    }
+}
+
 /// A live thumbnail of one on-screen window, captured for the hover preview.
 struct WindowThumb: Identifiable {
     let id: CGWindowID
@@ -12,46 +20,95 @@ struct WindowThumb: Identifiable {
 /// Captures thumbnails of an app's windows through ScreenCaptureKit. This is the only place in the
 /// app that touches Screen Recording — the switcher itself reads pids and titles over Accessibility
 /// and never needs it.
-enum WindowCapture {
-    /// Live thumbnails of the standard-layer windows owned by `pid`. Returns an empty list if Screen
-    /// Recording is not granted or the app has nothing capturable.
-    static func thumbnails(for pid: pid_t, maxCount: Int = 12, maxHeight: CGFloat = 150) async
+///
+/// An actor so the short-lived caches below are touched from one place at a time: hovers arrive off
+/// the main thread and can overlap, and the caches spare repeated system-wide window enumeration and
+/// per-app Accessibility round-trips when the cursor sweeps across tiles.
+actor WindowCapture {
+    static let shared = WindowCapture()
+
+    private var cachedContent: SCShareableContent?
+    private var contentFetchedAt: Date?
+    private var idCache: [pid_t: (ids: [CGWindowID], at: Date)] = [:]
+    /// How long a fetched window list / id set may be reused before it is refetched.
+    private let ttl: TimeInterval = 0.75
+
+    /// Live thumbnails of the standard-layer windows owned by `pid`, ordered to match window mode.
+    /// Returns an empty list if Screen Recording is not granted or the app has nothing capturable.
+    func thumbnails(for pid: pid_t, maxCount: Int = 12, maxHeight: CGFloat = 150) async
         -> [WindowThumb]
     {
         guard Permissions.canCaptureScreen else { return [] }
-        // On-screen windows only: a window on another Space or minimized has no live surface, so it
-        // would only ever capture blank.
-        guard
-            let content = try? await SCShareableContent.excludingDesktopWindows(
-                true, onScreenWindowsOnly: true)
-        else { return [] }
+        guard let content = await shareableContent() else { return [] }
 
+        // Standard-layer windows of this app, across every Space. `onScreenWindowsOnly: false` is
+        // deliberate — a window on another Space still captures its real backing surface, so limiting
+        // to the current Space would silently drop every window of an app the user isn't looking at.
         let appWindows = content.windows.filter {
             $0.owningApplication?.processID == pid && $0.windowLayer == 0
         }
 
-        // Prefer the switcher's own window set (via Accessibility): it is exactly what window mode
-        // shows, with the Electron/Catalyst phantom windows already filtered out, so no capture ever
-        // comes back empty. Only when window ids can't be resolved do we fall back to a size filter
-        // plus the blank-content check.
-        let ids = TargetProvider.switchableWindowIDs(for: pid)
-        let usingBlankFilter = ids.isEmpty
-        let windows =
-            (ids.isEmpty
-            ? appWindows.filter { $0.frame.width > 40 && $0.frame.height > 40 }
-            : appWindows.filter { ids.contains($0.windowID) })
-            .prefix(maxCount)
-
-        var thumbs: [WindowThumb] = []
-        for window in windows {
-            guard let image = try? await capture(window, maxHeight: maxHeight) else { continue }
-            if usingBlankFilter && isBlank(image) { continue }
-            let size = NSSize(width: image.width, height: image.height)
-            thumbs.append(
-                WindowThumb(id: window.windowID, image: NSImage(cgImage: image, size: size),
-                    title: window.title ?? ""))
+        // Prefer the switcher's own window set and order (via Accessibility), which matches window
+        // mode. Fall back to a size filter when the ids can't be resolved or don't line up with the
+        // captured windows. Either way, a blank capture is dropped below — that is what removes the
+        // Electron/Catalyst phantom backing windows those apps expose (a hidden, transparent window).
+        let order = switchableIDs(for: pid)
+        let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        var windows = appWindows.filter { rank[$0.windowID] != nil }
+        if windows.isEmpty {
+            windows = appWindows.filter { $0.frame.width > 40 && $0.frame.height > 40 }
+        } else {
+            windows.sort { (rank[$0.windowID] ?? .max) < (rank[$1.windowID] ?? .max) }
         }
-        return thumbs
+        let selected = Array(windows.prefix(maxCount))
+
+        // Each capture is an independent GPU round-trip; run them concurrently, then restore order.
+        let captured = await withTaskGroup(of: (Int, WindowThumb?).self) { group in
+            for (index, window) in selected.enumerated() {
+                group.addTask {
+                    guard let image = try? await Self.capture(window, maxHeight: maxHeight),
+                        !Self.isBlank(image)
+                    else { return (index, nil) }
+                    let size = NSSize(width: image.width, height: image.height)
+                    return (
+                        index,
+                        WindowThumb(
+                            id: window.windowID, image: NSImage(cgImage: image, size: size),
+                            title: window.title ?? ""))
+                }
+            }
+            var out: [(Int, WindowThumb)] = []
+            for await result in group where result.1 != nil {
+                out.append((result.0, result.1!))
+            }
+            return out
+        }
+        return captured.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    /// The full window list, reused for `ttl` so a sweep across tiles doesn't re-run the whole
+    /// system-wide enumeration for each one.
+    private func shareableContent() async -> SCShareableContent? {
+        if let cachedContent, let contentFetchedAt, Date().timeIntervalSince(contentFetchedAt) < ttl
+        {
+            return cachedContent
+        }
+        guard
+            let content = try? await SCShareableContent.excludingDesktopWindows(
+                true, onScreenWindowsOnly: false)
+        else { return nil }
+        cachedContent = content
+        contentFetchedAt = Date()
+        return content
+    }
+
+    /// The app's switchable window ids (ordered), cached for `ttl` to spare the Accessibility
+    /// round-trips when the same app tile is revisited.
+    private func switchableIDs(for pid: pid_t) -> [CGWindowID] {
+        if let entry = idCache[pid], Date().timeIntervalSince(entry.at) < ttl { return entry.ids }
+        let ids = TargetProvider.switchableWindowIDs(for: pid)
+        idCache[pid] = (ids, Date())
+        return ids
     }
 
     /// True when a capture is essentially empty — nearly every pixel transparent. Downsamples to a
@@ -193,28 +250,26 @@ final class WindowPreviewPanel: NSPanel {
     func present(
         thumbs: [WindowThumb], appName: String, over tileRect: NSRect, appearance: NSAppearance?
     ) {
+        // Drive the content through the observed model; the hosting view is built once and reused,
+        // its intrinsic-size sizing tracking the model rather than being rebuilt each hover.
         content.thumbs = thumbs
         content.appName = appName
         self.appearance = appearance
 
-        let view = WindowPreviewView(model: content)
-        if let host {
-            host.rootView = view
+        let host: NSHostingView<WindowPreviewView>
+        if let existing = self.host {
+            host = existing
         } else {
-            let host = NSHostingView(rootView: view)
+            host = NSHostingView(rootView: WindowPreviewView(model: content))
+            host.sizingOptions = [.intrinsicContentSize]
             self.host = host
             contentView = host
         }
-        guard let host else { return }
         host.layoutSubtreeIfNeeded()
         let size = host.fittingSize
         setContentSize(size)
 
-        let screen =
-            NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? NSScreen.main ?? NSScreen.screens[0]
-        let visible = screen.visibleFrame
-
+        let visible = NSScreen.underCursor.visibleFrame
         var x = tileRect.midX - size.width / 2
         var y = tileRect.maxY + gap  // above the tile
         if y + size.height > visible.maxY { y = tileRect.minY - gap - size.height }  // else below

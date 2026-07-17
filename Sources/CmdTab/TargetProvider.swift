@@ -328,11 +328,13 @@ final class TargetProvider {
         return id
     }
 
-    /// The `CGWindowID`s of an app's switchable windows — the very set window mode shows, so it
-    /// already excludes the phantom backing windows Electron/Catalyst apps expose. Used by the hover
-    /// preview to capture exactly those windows. Runs Accessibility IPC, so keep it off the tap.
-    static func switchableWindowIDs(for pid: pid_t) -> Set<CGWindowID> {
-        let windows = AX.windows(of: AX.application(pid)).filter(AX.isSwitchableWindow)
-        return Set(windows.compactMap(windowID))
+    /// The `CGWindowID`s of an app's switchable windows, in Accessibility order (front-to-back) so
+    /// the hover preview can match window mode's ordering. This is the set window mode shows, so it
+    /// already excludes the phantom backing windows Electron/Catalyst apps expose. May come back
+    /// empty — or fail to line up with the captured windows — for apps whose AX windows don't map to
+    /// a resolvable `CGWindowID`; the caller falls back accordingly. Runs Accessibility IPC, so keep
+    /// it off the tap.
+    static func switchableWindowIDs(for pid: pid_t) -> [CGWindowID] {
+        AX.windows(of: AX.application(pid)).filter(AX.isSwitchableWindow).compactMap(windowID)
     }
 }
