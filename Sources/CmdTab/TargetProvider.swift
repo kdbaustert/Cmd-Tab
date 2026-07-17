@@ -11,6 +11,8 @@ import ApplicationServices
 /// instantly and `refresh()` updates it off the main thread.
 final class TargetProvider {
     private var mru: [pid_t] = []
+    /// Most-recently-focused window ids, newest first — the per-window analogue of `mru`.
+    private var windowMRU: [CGWindowID] = []
     private var cache: [SwitchTarget] = []
     private let axQueue = DispatchQueue(label: "com.cmdtab.accessibility", qos: .userInteractive)
 
@@ -31,6 +33,10 @@ final class TargetProvider {
     /// Bundle identifiers the user has excluded. Applied in both modes, so excluding an app also
     /// takes all of its windows out of window mode.
     var excludedBundleIDs: Set<String> = []
+
+    /// Favourited apps, in the user's order. Any that aren't running are appended in app mode as
+    /// launchable tiles.
+    var favoriteBundleIDs: [String] = []
 
     init() {
         mru = Self.zOrderedPIDs()
@@ -53,6 +59,7 @@ final class TargetProvider {
         if note.name == NSWorkspace.didActivateApplicationNotification,
            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
             touch(app.processIdentifier)
+            touchFocusedWindow(of: app.processIdentifier)
         }
         refresh()
     }
@@ -60,6 +67,26 @@ final class TargetProvider {
     private func touch(_ pid: pid_t) {
         mru.removeAll { $0 == pid }
         mru.insert(pid, at: 0)
+    }
+
+    /// Records the just-activated app's focused window as most-recently-used, so window mode can
+    /// order an app's windows by real recency rather than raw AX z-order. Clicking a background app's
+    /// window activates it and fires this too, so the MRU tracks external switches, not just ours.
+    /// Runs the Accessibility read off the main thread — the same event-tap constraint as elsewhere.
+    private func touchFocusedWindow(of pid: pid_t) {
+        axQueue.async { [weak self] in
+            var value: CFTypeRef?
+            guard
+                AXUIElementCopyAttributeValue(
+                    AX.application(pid), kAXFocusedWindowAttribute as CFString, &value) == .success,
+                let value, CFGetTypeID(value) == AXUIElementGetTypeID(),
+                let id = Self.windowID(value as! AXUIElement)
+            else { return }
+            DispatchQueue.main.async {
+                self?.windowMRU.removeAll { $0 == id }
+                self?.windowMRU.insert(id, at: 0)
+            }
+        }
     }
 
     /// Whatever we last computed. Never blocks.
@@ -78,6 +105,15 @@ final class TargetProvider {
         // the active-display scope actually needs it.
         let activeScreenCG = (mode == .windows && scope == .activeDisplay)
             ? Self.activeScreenCGFrame() : nil
+        let windowMRU = self.windowMRU
+        // Display frames only when window mode has more than one display to distinguish — otherwise
+        // the badge would be pointless and we skip the per-window position lookup entirely.
+        let screenFrames = (mode == .windows && NSScreen.screens.count > 1)
+            ? Self.screenCGFrames() : []
+        // Favourites that aren't running, resolved here on the main thread (NSWorkspace) and appended
+        // in app mode. Empty in window mode — a not-running app has no windows to show.
+        let launchTargets = mode == .apps
+            ? Self.launchFavorites(favoriteBundleIDs, excluded: excludedBundleIDs) : []
 
         axQueue.async { [weak self] in
             var targets: [SwitchTarget]
@@ -90,8 +126,11 @@ final class TargetProvider {
                     let owning = Self.windowOwningPIDs()
                     targets.removeAll { !owning.contains($0.pid) }
                 }
+                targets += launchTargets  // launchable favourites go last, after the running apps
             case .windows:
-                targets = Self.windowTargets(apps, order: order, sortOrder: sortOrder)
+                targets = Self.windowTargets(
+                    apps, order: order, sortOrder: sortOrder,
+                    windowMRU: windowMRU, screenFrames: screenFrames)
                 if skipMinimized { targets.removeAll { $0.isMinimized } }
                 if scope != .allSpaces {
                     targets = Self.scoped(
@@ -217,6 +256,24 @@ final class TargetProvider {
         }
     }
 
+    /// Launchable tiles for favourites that aren't currently running (and aren't excluded), in the
+    /// user's favourites order. Runs on the main thread — `NSWorkspace` app lookups want it.
+    private static func launchFavorites(_ bundleIDs: [String], excluded: Set<String>)
+        -> [SwitchTarget]
+    {
+        guard !bundleIDs.isEmpty else { return [] }
+        let running = Set(
+            NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
+        return bundleIDs.compactMap { id in
+            guard !running.contains(id), !excluded.contains(id),
+                let info = FavoritesStore.appInfo(for: id)
+            else { return nil }
+            return SwitchTarget(
+                id: "launch:\(id)", kind: .launch(info.url), title: info.name, appName: info.name,
+                icon: info.icon, isMinimized: false, isHidden: false)
+        }
+    }
+
     /// Apps that currently own an on-screen window, front to back. Only used to seed the MRU
     /// list at launch — this needs no Screen Recording permission because we read pids and
     /// layers, never window titles.
@@ -273,29 +330,62 @@ final class TargetProvider {
     }
 
     private static func windowTargets(
-        _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder
+        _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder,
+        windowMRU: [CGWindowID], screenFrames: [CGRect]
     ) -> [SwitchTarget] {
-        sorted(apps, by: order, sortOrder: sortOrder).flatMap { app -> [SwitchTarget] in
+        let mruRank = Dictionary(windowMRU.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        return sorted(apps, by: order, sortOrder: sortOrder).flatMap { app -> [SwitchTarget] in
             // `AX.application` applies the messaging timeout: a wedged app must not wedge the
             // switcher with it.
             let windows = AX.windows(of: AX.application(app.pid))
 
-            return windows.enumerated().compactMap { index, window in
-                guard AX.isSwitchableWindow(window) else { return nil }
+            // Keep the AX index as a stable tiebreak, and the MRU rank to reorder within the app.
+            var built: [(target: SwitchTarget, axIndex: Int, rank: Int)] = []
+            for (index, window) in windows.enumerated() {
+                guard AX.isSwitchableWindow(window) else { continue }
 
                 let title = AX.copyString(window, kAXTitleAttribute) ?? ""
                 let minimized = AX.isMinimized(window)
-                let id = windowID(window).map { "win:\($0)" } ?? "win:\(app.pid):\(index)"
+                let wid = windowID(window)
+                let id = wid.map { "win:\($0)" } ?? "win:\(app.pid):\(index)"
+                let display = screenFrames.isEmpty ? nil : displayIndex(of: window, in: screenFrames)
 
-                return SwitchTarget(
+                let target = SwitchTarget(
                     id: id,
                     kind: .window(app.pid, window),
                     title: title.isEmpty ? app.name : title,
                     appName: app.name,
                     icon: app.icon,
                     isMinimized: minimized,
-                    isHidden: app.isHidden)
+                    isHidden: app.isHidden,
+                    displayIndex: display)
+                built.append((target, index, wid.flatMap { mruRank[$0] } ?? Int.max))
             }
+            // Recently-used mode orders an app's windows by our tracked focus recency, falling back
+            // to AX z-order; alphabetical leaves them in AX order.
+            if sortOrder == .recentlyUsed {
+                built.sort { $0.rank == $1.rank ? $0.axIndex < $1.axIndex : $0.rank < $1.rank }
+            }
+            return built.map(\.target)
+        }
+    }
+
+    /// Which display a window sits on, by its centre — used only for the multi-display badge.
+    private static func displayIndex(of window: AXUIElement, in frames: [CGRect]) -> Int? {
+        guard let origin = AX.position(window), let size = AX.size(window) else { return nil }
+        let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+        return frames.firstIndex { $0.contains(center) }
+    }
+
+    /// Every display's full frame in Quartz (top-left) coordinates, to match AX window positions.
+    private static func screenCGFrames() -> [CGRect] {
+        let primaryHeight =
+            (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
+        return NSScreen.screens.map { screen in
+            let f = screen.frame
+            return CGRect(
+                x: f.origin.x, y: primaryHeight - f.origin.y - f.height,
+                width: f.width, height: f.height)
         }
     }
 

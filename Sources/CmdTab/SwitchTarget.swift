@@ -18,6 +18,8 @@ struct SwitchTarget: Identifiable {
     enum Kind {
         case app(pid_t)
         case window(pid_t, AXUIElement)
+        /// A favourited app that isn't running: picking it launches the app at this URL.
+        case launch(URL)
     }
 
     let id: String
@@ -29,12 +31,30 @@ struct SwitchTarget: Identifiable {
     let icon: NSImage?
     let isMinimized: Bool
     let isHidden: Bool
+    /// Which display (0-based) a window is on, set only in window mode with more than one display.
+    /// nil the rest of the time, which is what suppresses the display badge.
+    var displayIndex: Int? = nil
 
     var pid: pid_t {
         switch kind {
         case .app(let pid): return pid
         case .window(let pid, _): return pid
+        case .launch: return -1
         }
+    }
+
+    /// A not-yet-running favourite. Its tile launches rather than switches, and the window actions
+    /// (quit/close/minimize…) don't apply — they no-op safely on its absent pid.
+    var isLaunchable: Bool {
+        if case .launch = kind { return true }
+        return false
+    }
+
+    /// The `CGWindowID` parsed back out of a window target's id, when it carries a resolved one.
+    var windowID: CGWindowID? {
+        let parts = id.split(separator: ":")
+        guard parts.count == 2, parts[0] == "win", let value = UInt32(parts[1]) else { return nil }
+        return value
     }
 }
 
@@ -48,6 +68,15 @@ extension SwitchTarget {
     /// Brings the target forward. Unminimizing has to happen before the raise, and the app
     /// activation has to happen after it, or the window comes up behind its own app.
     func focus() {
+        // A favourite that isn't running launches instead of switching — handled before the
+        // running-app guard below, which would otherwise reject its absent pid.
+        if case .launch(let url) = kind {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config)
+            return
+        }
+
         guard let app = NSRunningApplication(processIdentifier: pid) else { return }
 
         switch kind {
@@ -66,6 +95,9 @@ extension SwitchTarget {
             AXUIElementSetAttributeValue(
                 window, kAXMainAttribute as CFString, true as CFTypeRef)
             app.activate()
+
+        case .launch:
+            break  // handled above
         }
     }
 
@@ -109,27 +141,100 @@ extension SwitchTarget {
         NSRunningApplication(processIdentifier: pid)?.hide()
     }
 
-    /// Closes a window by pressing its AX close button. In app mode we resolve the app's frontmost
-    /// window first. Runs off the main thread — the same event-tap constraint as `focus()`.
+    func forceQuitApp() {
+        NSRunningApplication(processIdentifier: pid)?.forceTerminate()
+    }
+
+    /// The AX window this target acts on: the element itself in window mode, or the app's frontmost
+    /// window in app mode.
+    private static func resolveWindow(_ kind: Kind) -> AXUIElement? {
+        switch kind {
+        case .window(_, let element): return element
+        case .app(let pid):
+            let app = AX.application(pid)
+            // Prefer the app's main/focused window directly — more reliable than filtering the whole
+            // `AXWindows` list, which can come back empty or role-less for some apps.
+            return AX.copyElement(app, kAXMainWindowAttribute as String)
+                ?? AX.copyElement(app, kAXFocusedWindowAttribute as String)
+                ?? AX.windows(of: app).first(where: AX.isWindow)
+        case .launch: return nil
+        }
+    }
+
+    /// Closes the window (window mode) or the app's frontmost window (app mode) by pressing its AX
+    /// close button. Runs off the main thread — the same event-tap constraint as `focus()`.
     func closeWindow() {
         let kind = self.kind
         Self.focusQueue.async {
-            let window: AXUIElement?
+            guard let window = Self.resolveWindow(kind) else { return }
+            AX.press(window, button: kAXCloseButtonAttribute)
+        }
+    }
+
+    /// Minimizes the target window into the Dock.
+    func minimizeWindow() {
+        let kind = self.kind
+        Self.focusQueue.async {
+            guard let window = Self.resolveWindow(kind) else { return }
+            AX.setBool(window, kAXMinimizedAttribute, true)
+        }
+    }
+
+    /// Toggles the window's zoom (the green button) — maximize / restore.
+    func zoomWindow() {
+        let kind = self.kind
+        Self.focusQueue.async {
+            guard let window = Self.resolveWindow(kind) else { return }
+            AX.press(window, button: kAXZoomButtonAttribute)
+        }
+    }
+
+    /// Moves the window to the next/previous Space via private SkyLight (there is no public API). In
+    /// window mode the target's id carries the `CGWindowID`; in app mode we resolve the app's front
+    /// switchable window. Runs off the main thread — the Accessibility lookup can block.
+    func moveToSpace(_ delta: Int) {
+        let kind = self.kind
+        let parsedWindowID = windowID
+        Self.focusQueue.async {
+            let id: CGWindowID?
             switch kind {
-            case .window(_, let element):
-                window = element
-            case .app(let pid):
-                window = AX.windows(of: AX.application(pid)).first(where: AX.isWindow)
+            case .window: id = parsedWindowID
+            case .app(let pid): id = TargetProvider.switchableWindowIDs(for: pid).first
+            case .launch: return
             }
-            guard let window else { return }
-            var button: CFTypeRef?
-            guard
-                AXUIElementCopyAttributeValue(
-                    window, kAXCloseButtonAttribute as CFString, &button) == .success,
-                let button
+            guard let id else { return }
+            SpaceMover.move(window: id, bySpaces: delta)
+        }
+    }
+
+    /// Moves the window to the next/previous display, keeping its position relative to the display it
+    /// leaves. `screenFramesCG` are the displays' visible frames in Quartz (top-left) coordinates,
+    /// resolved on the main thread by the caller since `NSScreen` is main-thread-only.
+    func moveWindow(acrossDisplays delta: Int, screenFramesCG frames: [CGRect]) {
+        guard frames.count > 1, delta != 0 else { return }
+        let kind = self.kind
+        let pid = self.pid
+        Self.focusQueue.async {
+            guard let window = Self.resolveWindow(kind),
+                let origin = AX.position(window), let size = AX.size(window)
             else { return }
-            // `button` is an AXUIElement; press it exactly as a click on the red dot would.
-            AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+            let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+            let from = frames.firstIndex { $0.contains(center) } ?? 0
+            let to = frames[((from + delta) % frames.count + frames.count) % frames.count]
+            let current = frames[from]
+            // Same fractional offset within the destination display, then clamp so it stays on it.
+            let relX = current.width > 0 ? (origin.x - current.minX) / current.width : 0
+            let relY = current.height > 0 ? (origin.y - current.minY) / current.height : 0
+            let x = min(max(to.minX + relX * to.width, to.minX), max(to.minX, to.maxX - size.width))
+            let y = min(max(to.minY + relY * to.height, to.minY), max(to.minY, to.maxY - size.height))
+            AX.setPosition(window, CGPoint(x: x, y: y))
+            // Bring it to the front of the destination display and focus it, rather than dropping it
+            // behind whatever is already there.
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, true as CFTypeRef)
+            DispatchQueue.main.async {
+                NSRunningApplication(processIdentifier: pid)?.activate()
+            }
         }
     }
 }

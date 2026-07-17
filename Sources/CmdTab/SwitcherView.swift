@@ -85,28 +85,16 @@ struct SwitcherView: View {
     private var tile: CGSize { metrics.tile(for: model.mode, showsTitle: model.showsTitle) }
 
     var body: some View {
+        // The grid stays the first child so `SwitcherPanel.tileIndex` — which maps the cursor from the
+        // top of the panel — needs no offset; the search line sits at the bottom with the caption.
         VStack(spacing: metrics.titleSpacing) {
-            LazyVGrid(
-                columns: Array(
-                    repeating: GridItem(.fixed(tile.width), spacing: Metrics.tileGap),
-                    count: max(columns, 1)),
-                spacing: Metrics.tileGap
-            ) {
-                ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
-                    TargetTile(
-                        target: target,
-                        size: tile,
-                        iconSize: metrics.icon(for: model.mode),
-                        titleSpacing: metrics.titleSpacing,
-                        showsTitle: model.showsTitle,
-                        isSelected: index == model.selection,
-                        highlightColor: model.highlightColor,
-                        corner: model.tileCorner,
-                        titleFontSize: model.titleFontSize,
-                        number: model.showNumbers && index < 9 ? index + 1 : nil)
-                }
+            if model.targets.isEmpty {
+                noMatches
+            } else {
+                grid
+                caption
             }
-            caption
+            if !model.query.isEmpty { searchBar }
         }
         .padding(Metrics.panelPadding)
         .background(
@@ -118,6 +106,53 @@ struct SwitcherView: View {
         )
         .opacity(model.opacity)
         .fixedSize()
+    }
+
+    private var grid: some View {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.fixed(tile.width), spacing: Metrics.tileGap),
+                count: max(columns, 1)),
+            spacing: Metrics.tileGap
+        ) {
+            ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
+                TargetTile(
+                    target: target,
+                    size: tile,
+                    iconSize: metrics.icon(for: model.mode),
+                    titleSpacing: metrics.titleSpacing,
+                    showsTitle: model.showsTitle,
+                    isSelected: index == model.selection,
+                    highlightColor: model.highlightColor,
+                    corner: model.tileCorner,
+                    titleFontSize: model.titleFontSize,
+                    // The ⌘-number jump is disabled while filtering (digits type into the query),
+                    // so the badges come off too.
+                    number: model.showNumbers && model.query.isEmpty && index < 9 ? index + 1 : nil)
+            }
+        }
+    }
+
+    /// The live type-to-filter query, shown only while one is being typed.
+    private var searchBar: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+            Text(model.query)
+                .font(.system(size: 12, weight: .medium))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+    }
+
+    private var noMatches: some View {
+        Text("No matches")
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 8)
+            .frame(minWidth: 140)
     }
 
     @ViewBuilder
@@ -191,13 +226,16 @@ private struct TargetTile: View {
             }
             .scaledToFit()
             .frame(width: iconSize, height: iconSize)
-            // Dim the icon when the window is not actually on screen right now.
-            .opacity(target.isMinimized || target.isHidden ? 0.45 : 1)
+            // Dim the icon when the window is not actually on screen right now — or, for a favourite,
+            // when it isn't running yet.
+            .opacity(target.isMinimized || target.isHidden ? 0.45 : (target.isLaunchable ? 0.6 : 1))
 
             if target.isMinimized {
                 Badge(symbol: "minus")
             } else if target.isHidden {
                 Badge(symbol: "eye.slash.fill")
+            } else if target.isLaunchable {
+                Badge(symbol: "arrow.up.forward")
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -207,6 +245,28 @@ private struct TargetTile: View {
                     .offset(x: -1, y: -1)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if let display = target.displayIndex {
+                DisplayBadge(number: display + 1)  // 1-based for humans
+            }
+        }
+    }
+}
+
+/// Marks which display a window is on, shown only in window mode with more than one display.
+private struct DisplayBadge: View {
+    let number: Int
+
+    var body: some View {
+        HStack(spacing: 1) {
+            Image(systemName: "display")
+            Text("\(number)")
+        }
+        .font(.system(size: 7, weight: .bold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 3)
+        .frame(height: 14)
+        .background(Capsule().fill(Color.black.opacity(0.55)))
     }
 }
 

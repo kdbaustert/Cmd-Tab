@@ -94,6 +94,8 @@ struct SettingsView: View {
 struct GeneralSettings: View {
     @ObservedObject var loginItem: LoginItemStore
     @ObservedObject var behavior: BehaviorStore
+    @ObservedObject private var favorites = FavoritesStore.shared
+    @ObservedObject private var shortcutsStore = SwitcherShortcutsStore.shared
 
     var body: some View {
         ScrollView {
@@ -151,6 +153,14 @@ struct GeneralSettings: View {
 
                 Divider()
 
+                favoritesSection
+
+                Divider()
+
+                shortcutsSection
+
+                Divider()
+
                 Toggle("Show menu-bar icon", isOn: $behavior.showMenuBarIcon)
                     .toggleStyle(.checkbox)
                     .help("Off = no menu bar item. Reopen Cmd-Tab from Finder to get Settings back.")
@@ -174,8 +184,9 @@ struct GeneralSettings: View {
                 }
 
                 Text(
-                    "While the switcher is open: 1–9 jump, ⌘Q quits the app, ⌘W closes the window, "
-                    + "⌘H hides the app, scroll or hover to move, or click a tile.")
+                    "While the switcher is open: type to filter, 1–9 jump, ⌘⌥Q/W/H quit / close / "
+                    + "hide, ⌘⌥M minimize, ⌘⌥F zoom, ⌘⌥←→ move to another display, scroll or hover "
+                    + "to move, or click a tile.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -184,6 +195,80 @@ struct GeneralSettings: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .onAppear { loginItem.refresh() }
+    }
+
+    /// Pinned apps that appear in the switcher (app mode) even when not running, launching on select.
+    @ViewBuilder
+    private var favoritesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Favorite apps").font(.system(size: 12, weight: .medium))
+                Spacer()
+                Button("Add…", action: addFavorites)
+            }
+            Text("Shown in app mode even when not running; picking one launches it.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+            ForEach(favorites.favorites, id: \.self) { id in
+                HStack(spacing: 8) {
+                    let info = FavoritesStore.appInfo(for: id)
+                    Group {
+                        if let icon = info?.icon {
+                            Image(nsImage: icon).resizable().interpolation(.high)
+                        } else {
+                            Image(systemName: "app.dashed").resizable().foregroundStyle(.secondary)
+                        }
+                    }
+                    .scaledToFit().frame(width: 18, height: 18)
+                    Text(info?.name ?? id).font(.system(size: 12)).lineLimit(1)
+                    Spacer()
+                    Button {
+                        favorites.remove(id)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// Rebindable keys for the in-switcher window actions.
+    @ViewBuilder
+    private var shortcutsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Switcher shortcuts").font(.system(size: 12, weight: .medium))
+                Spacer()
+                Button("Reset", action: shortcutsStore.resetToDefaults)
+            }
+            Text(
+                "Keys for the window actions while the switcher is open. ⌘ (the trigger) is held, so "
+                + "each also needs ⌥ or ⌃ to stay clear of type-to-filter.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(SwitcherAction.allCases) { action in
+                HStack {
+                    Text(action.title).font(.system(size: 12))
+                    Spacer()
+                    ActionShortcutRecorder(action: action, store: shortcutsStore)
+                }
+            }
+        }
+    }
+
+    private func addFavorites() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.message = "Choose apps to pin as favourites"
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            guard let id = Bundle(url: url)?.bundleIdentifier else { continue }
+            favorites.add(id)
+        }
     }
 
     private func exportSettings() { SettingsIO.export() }
@@ -256,6 +341,56 @@ struct HotkeyRecorder: View {
     private static func cgFlags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
         var out: CGEventFlags = []
         if flags.contains(.command) { out.insert(.maskCommand) }
+        if flags.contains(.option) { out.insert(.maskAlternate) }
+        if flags.contains(.control) { out.insert(.maskControl) }
+        if flags.contains(.shift) { out.insert(.maskShift) }
+        return out
+    }
+}
+
+/// Records a binding for one in-switcher action: a key plus *extra* modifiers (⌘ is the held
+/// trigger, so it is neither recorded nor required). At least ⌥ or ⌃ is required so the binding
+/// can't be swallowed by type-to-filter.
+struct ActionShortcutRecorder: View {
+    let action: SwitcherAction
+    @ObservedObject var store: SwitcherShortcutsStore
+    @State private var recording = false
+    @State private var monitor: Any?
+
+    private var current: ActionShortcut {
+        store.shortcuts.bindings[action] ?? action.defaultShortcut
+    }
+
+    var body: some View {
+        Button(recording ? "Press keys…" : current.displayString) {
+            recording ? stop() : start()
+        }
+        .frame(width: 120)
+        .onDisappear(perform: stop)
+    }
+
+    private func start() {
+        recording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            if event.keyCode == 53 { stop(); return nil }  // Esc aborts without binding
+            let extras = Self.extras(from: event.modifierFlags)
+            guard extras.contains(.maskAlternate) || extras.contains(.maskControl) else { return nil }
+            store.set(
+                ActionShortcut(keyCode: Int(event.keyCode), modifierRaw: extras.rawValue),
+                for: action)
+            stop()
+            return nil
+        }
+    }
+
+    private func stop() {
+        recording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private static func extras(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
+        var out: CGEventFlags = []
         if flags.contains(.option) { out.insert(.maskAlternate) }
         if flags.contains(.control) { out.insert(.maskControl) }
         if flags.contains(.shift) { out.insert(.maskShift) }

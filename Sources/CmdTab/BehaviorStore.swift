@@ -194,7 +194,8 @@ final class BehaviorStore: ObservableObject {
         "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
         "alwaysShowTitles", "tileCorner", "titleFontSize",
         "fadeAnimation", "showMenuBarIcon", "reflectModeInMenuBar", "windowPreviewOnHover",
-        "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs",
+        "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs", "favoriteBundleIDs",
+        "switcherShortcuts",
     ]
 
     /// Fired after any change so the app can reconfigure the running switcher.

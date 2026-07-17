@@ -39,12 +39,35 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | ⌘-Tab | Open the switcher / advance |
 | ⌘-⇧-Tab | Go backwards |
 | ⌘-← / ⌘-→ | Move the selection |
-| ⌘-1 … ⌘-9 | Switch straight to that tile |
-| ⌘-Q | Quit the selected app |
-| ⌘-W | Close the selected window (window mode) or the app's front window |
-| ⌘-H | Hide the selected app |
-| Esc | Dismiss without switching |
+| *type* | Filter the list by app / window name |
+| ⌫ | Delete the last character of the filter |
+| ⌘-1 … ⌘-9 | Switch straight to that tile (no filter active) |
+| ⌘-⌥-Q | Quit the selected app |
+| ⌘-⌥-⇧-Q | Force-quit the selected app |
+| ⌘-⌥-W | Close the selected window (window mode) or the app's front window |
+| ⌘-⌥-H | Hide the selected app |
+| ⌘-⌥-⇧-H | Hide every other app |
+| ⌘-⌥-M | Minimize the selected window |
+| ⌘-⌥-F | Zoom (maximize / restore) the selected window |
+| ⌘-⌥-← / ⌘-⌥-→ | Move the selected window to the previous / next display |
+| Esc | Clear the filter, or dismiss the switcher when there is none |
 | Release ⌘ | Switch to the selection |
+
+### Type to filter
+
+While the switcher is open, just start typing to narrow the list to apps (or, in window mode,
+windows) whose name contains what you typed — space-separated words each have to match, so `saf 2`
+finds Safari's second window. The match is on the tile's title *and* its app name, case-insensitively.
+Because you are still holding ⌘, the character each key would type is read from the event honouring
+your keyboard layout, so it follows the physical keys rather than assuming a US layout.
+
+The window actions live on ⌥ (**⌘-⌥-Q/W/H**, and the rest in the table) precisely so the bare
+letters stay free for this — otherwise you could never search for a word containing q, w or h. Every
+one of those bindings is rebindable in **Settings → General → Switcher shortcuts**. A digit still jumps to that
+tile when the filter is empty; once you have started a query, digits type into it instead (so you can
+find *1Password*). The number badges hide while a filter is active, since the jump is off. **Esc**
+backs out of the query first and only dismisses the switcher on a second press, the way a search
+field behaves.
 
 The mouse works too: while the switcher is open, **moving over a tile highlights it** (the highlight
 and caption follow the cursor) and **clicking a tile switches to it**. Neither goes through SwiftUI,
@@ -59,6 +82,10 @@ The first nine tiles carry their number in the bottom-right corner. The number s
 immediately rather than moving the highlight — waiting for ⌘ to come up would make it slower than
 the arrow keys. A digit past the end of the list does nothing, but is still swallowed: letting it
 through would fire ⌘-7 in whatever app is sitting behind the panel.
+
+Tiles carry small badges besides the number: a minimized window shows a **–**, a hidden app an
+**eye-slash**, a not-running favourite an **↗** (and a dimmed icon), and — in window mode with more
+than one display — the window's **display number**.
 
 Both the number row and the keypad work. The mapping is by physical key position, so it follows
 the keys *labelled* 1–9 on ANSI-style layouts.
@@ -75,10 +102,13 @@ the keys *labelled* 1–9 on ANSI-style layouts.
 | Switch between | Applications or individual windows. | Applications |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
 | Skip minimized windows | Window mode only: leave minimized windows out of the list rather than showing them dimmed. | Off |
+| Favorite apps | Apps pinned via **Add…**. In app mode a favourite that isn't running still appears as a launchable tile (dimmed, with an ↗ badge) at the end of the list; picking it launches the app instead of switching. Keyed by bundle id, persisted as `favoriteBundleIDs`. | None |
+| Switcher shortcuts | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
 | Start at login | Registers the app as a login item via `SMAppService`. | Off |
 
 Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `mode`, `sortOrder`,
-`skipMinimized`); Start at login lives in the system's Login Items, not our defaults.
+`skipMinimized`, `favoriteBundleIDs`); Start at login lives in the system's Login Items, not our
+defaults.
 
 ### Appearance
 
@@ -250,13 +280,19 @@ Changing the certificate changes the requirement, so Accessibility has to be gra
 after that. Remove the identity in Keychain Access to undo it.
 
 ## Known limitations
-- Window ordering within an app follows Accessibility's z-order, not a true per-window MRU.
-  Cross-app ordering *is* real MRU, tracked from activation notifications.
+- Per-window ordering within an app is a best-effort MRU: it is updated when an app activates (which
+  fires when you click into a window or switch to it), read from that app's focused window. Switching
+  between windows of the *same, already-active* app by clicking doesn't fire an activation, so that
+  case falls back to Accessibility z-order until the next activation catches up. Cross-app ordering
+  is full MRU, tracked from activation notifications.
 - Windows on other Spaces are listed, and switching to one follows macOS's normal Space-switch
   behavior. The hover preview shows them too — only *minimized* windows can't be previewed, since
   they have no live surface to capture.
+- Moving a window to another display is on ⌘-⌥-←/→. Moving to another *Space* is implemented too
+  (`SpaceMover`, a private SkyLight call like the ⌘-Tab takeover) but is currently unbound — the
+  keystroke was removed in favour of the simpler display-only move.
 - Live window thumbnails appear only in the optional hover preview (app mode); tiles themselves are
-  app icons. There is no search-by-typing in the switcher.
+  app icons.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
   frontmost app and a ⌘-Tab lands one target further along than usual. Close it and ordering is
   normal again.
@@ -266,6 +302,9 @@ after that. Remove the identity in Keychain Access to undo it.
 | File | Role |
 | --- | --- |
 | `SystemSwitcher.swift` | The private SkyLight shim that disables the Dock's switcher |
+| `SpaceMover.swift` | Private SkyLight shim for moving a window to an adjacent Space |
+| `FavoritesStore.swift` | Pinned apps that appear as launchable tiles when not running |
+| `SwitcherShortcuts.swift` | Rebindable key bindings for the in-switcher window actions |
 | `EventTap.swift` | Session event tap; swallows keys, self-heals if the system disables it |
 | `SwitcherController.swift` | State machine — decides what to swallow and when to commit |
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |

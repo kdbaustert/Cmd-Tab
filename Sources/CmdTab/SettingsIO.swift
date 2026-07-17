@@ -52,5 +52,7 @@ enum SettingsIO {
         BehaviorStore.shared.reload()
         AppearanceStore.shared.reload()
         ExclusionStore.shared.reload()
+        FavoritesStore.shared.reload()
+        SwitcherShortcutsStore.shared.reload()
     }
 }

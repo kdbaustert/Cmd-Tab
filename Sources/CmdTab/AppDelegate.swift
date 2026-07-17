@@ -18,6 +18,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.excludedBundleIDs = excluded
         }
 
+        let favorites = FavoritesStore.shared
+        controller.favoriteBundleIDs = favorites.favorites
+        favorites.onChange = { [weak self] ids in
+            self?.controller.favoriteBundleIDs = ids
+        }
+
+        let shortcuts = SwitcherShortcutsStore.shared
+        controller.shortcuts = shortcuts.shortcuts
+        shortcuts.onChange = { [weak self] bindings in
+            self?.controller.shortcuts = bindings
+        }
+
         let appearance = AppearanceStore.shared
         controller.metrics = appearance.metrics
         appearance.onChange = { [weak self] metrics in
@@ -34,6 +46,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Log.general.notice(
             "launched: pid=\(ProcessInfo.processInfo.processIdentifier) trusted=\(Permissions.isTrusted) path=\(Bundle.main.bundlePath)")
+        // TEMP: verify shortcut binding + matching that ⌘⌥Q etc. rely on.
+        let sc = SwitcherShortcutsStore.shared.shortcuts
+        for (code, extra, label) in [
+            (12, CGEventFlags.maskAlternate, "optQ"),
+            (13, CGEventFlags.maskAlternate, "optW"),
+            (12, CGEventFlags.maskAlternate.union(.maskShift), "optShiftQ"),
+        ] {
+            Log.general.notice(
+                "shortcuttest: \(label, privacy: .public) → \(sc.action(code: code, extra: extra)?.rawValue ?? "nil", privacy: .public)")
+        }
 
         if Permissions.isTrusted {
             startController()

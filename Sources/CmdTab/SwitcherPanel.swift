@@ -196,6 +196,13 @@ final class SwitcherPanel: NSPanel {
         updateHoverPreview(tileIndex(at: NSEvent.mouseLocation))
     }
 
+    /// Previews the tile the *keyboard* has selected, so arrowing/tabbing through the switcher floats
+    /// the same thumbnails hovering does. Shares the pid keying with hover, so whichever input last
+    /// changed the target wins and neither re-fires for an unchanged one.
+    func previewSelectedTile() {
+        updateHoverPreview(model.selection)
+    }
+
     /// The screen rect of tile `index` — the inverse of `tileIndex(at:)`, in bottom-up screen
     /// coordinates. Mirrors the same `LazyVGrid` layout.
     private func tileScreenRect(for index: Int) -> NSRect? {

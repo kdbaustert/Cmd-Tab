@@ -5,11 +5,9 @@ import SwiftUI
 private enum Key {
     static let tab = 48
     static let escape = 53
+    static let delete = 51
     static let leftArrow = 123
     static let rightArrow = 124
-    static let q = 12
-    static let w = 13
-    static let h = 4
 
     /// Keycodes for 1–9 on the number row and again on the keypad. The number row is not
     /// sequential — 5, 6, 7, 8 and 9 are 23, 22, 26, 28, 25 — so this has to be a table.
@@ -71,6 +69,14 @@ final class SwitcherController {
         get { provider.excludedBundleIDs }
         set {
             provider.excludedBundleIDs = newValue
+            provider.refresh()
+        }
+    }
+
+    var favoriteBundleIDs: [String] {
+        get { provider.favoriteBundleIDs }
+        set {
+            provider.favoriteBundleIDs = newValue
             provider.refresh()
         }
     }
@@ -201,6 +207,9 @@ final class SwitcherController {
         set { panel.windowPreviewEnabled = newValue }
     }
 
+    /// User-configurable key bindings for the in-switcher window actions.
+    var shortcuts: SwitcherShortcuts = .defaults
+
     /// The combination that opens the switcher. Changing it re-syncs the system ⌘-Tab: the native
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
     var hotkey: Hotkey = .commandTab {
@@ -230,8 +239,7 @@ final class SwitcherController {
         panel.onPick = { [weak self] index in self?.pick(index) }
         panel.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
-            self.model.step(step)
-            self.panel.layout()
+            self.advance(step)
         }
         panel.onHoverPreview = { [weak self] pid, rect in
             self?.hoverPreview(pid: pid, tileRect: rect)
@@ -284,7 +292,7 @@ final class SwitcherController {
         if isVisible {
             if !stillHeld(flags, activeHeld) { commit(); return false }
             if type == .keyUp { return true }
-            return handleVisibleKey(code, flags)
+            return handleVisibleKey(code, flags, event)
         }
 
         // Armed: a trigger press is waiting out the show-delay. A second press shows immediately.
@@ -308,27 +316,83 @@ final class SwitcherController {
         return false
     }
 
-    private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags) -> Bool {
+    /// Moves the highlight and keeps the keyboard-selected preview in step with it.
+    private func advance(_ delta: Int) {
+        model.step(delta)
+        panel.layout()
+        panel.previewSelectedTile()
+    }
+
+    private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
+        // The trigger advances the selection.
         if code == hotkey.keyCode {
-            model.step(flags.contains(.maskShift) ? -1 : 1)
-            panel.layout()
+            advance(flags.contains(.maskShift) ? -1 : 1)
             return true
         }
-        if let digit = Key.digits[code] {
-            jump(to: digit)
-            return true
+        // Configurable window actions. Each is bound to a key plus *extra* modifiers on top of the
+        // held trigger; ⌥/⌃ keep the action keys clear of the type-to-filter query.
+        let extra = flags.intersection([.maskAlternate, .maskShift, .maskControl])
+        if !extra.isEmpty {
+            let matched = shortcuts.action(code: code, extra: extra)
+            Log.tap.notice(
+                "visibleKey code=\(code) extra=\(extra.rawValue) matched=\(matched?.rawValue ?? "nil", privacy: .public)")
+            if let action = matched {
+                perform(action)
+                return true
+            }
         }
+        // Navigation and editing keys.
         switch code {
-        case Key.escape: cancel()
-        case Key.rightArrow: model.step(1); panel.layout()
-        case Key.leftArrow: model.step(-1); panel.layout()
-        case Key.q: quitSelected()
-        case Key.w: closeSelectedWindow()
-        case Key.h: hideSelected()
+        case Key.escape:
+            // Backing out of a query first, then out of the switcher — like a search field.
+            if model.query.isEmpty { cancel() } else { setQuery("") }
+            return true
+        case Key.rightArrow: advance(1); return true
+        case Key.leftArrow: advance(-1); return true
+        case Key.delete:
+            if !model.query.isEmpty { setQuery(String(model.query.dropLast())) }
+            return true
         default: break
+        }
+        // A digit jumps straight to that tile — but only with no query, so a query can still contain
+        // digits (typing into a filtered list rather than jumping).
+        if model.query.isEmpty, Key.digits[code] != nil {
+            jump(to: Key.digits[code]!)
+            return true
+        }
+        // Anything else that resolves to a visible character extends the filter query. ⌥/⌃ are action
+        // modifiers, so a key held with either never types.
+        if extra.intersection([.maskAlternate, .maskControl]).isEmpty,
+            let character = Self.typedCharacter(from: event) {
+            setQuery(model.query + character)
+            return true
         }
         // Command is held, so passing keys through would fire shortcuts in the app behind us.
         return true
+    }
+
+    /// Applies a new filter query and relays out — the list, and often its column count, change.
+    private func setQuery(_ query: String) {
+        model.setQuery(query)
+        panel.layout()
+        panel.refreshHoverPreview()
+    }
+
+    /// The character a key event would type, ignoring ⌘/⌥/⌃ (Shift/Caps kept for case) and honouring
+    /// the active keyboard layout, so type-to-filter follows the physical keys the user actually
+    /// presses. Returns nil for control keys and anything that isn't a plain letter/number/space/dash.
+    private static func typedCharacter(from event: CGEvent) -> String? {
+        guard let copy = event.copy() else { return nil }
+        copy.flags = copy.flags.intersection([.maskShift, .maskAlphaShift])
+        var length = 0
+        var buffer = [UniChar](repeating: 0, count: 4)
+        copy.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &buffer)
+        guard length == 1 else { return nil }
+        let string = String(utf16CodeUnits: buffer, count: 1)
+        guard let scalar = string.unicodeScalars.first else { return nil }
+        let allowed = CharacterSet.alphanumerics.union(.whitespaces)
+            .union(CharacterSet(charactersIn: "-_.'"))
+        return allowed.contains(scalar) ? string : nil
     }
 
     // MARK: - Actions
@@ -369,7 +433,7 @@ final class SwitcherController {
 
     private func showWith(targets: [SwitchTarget], backwards: Bool) {
         model.mode = provider.mode
-        model.targets = targets
+        model.begin(targets)
         // The frontmost app/window is index 0, so a plain tap lands on the previous one.
         model.selection = backwards ? targets.count - 1 : min(1, targets.count - 1)
 
@@ -381,12 +445,7 @@ final class SwitcherController {
         let fold: ([SwitchTarget]) -> Void = { [weak self] fresh in
             guard let self, self.isVisible else { return }
             self.model.update(targets: fresh)
-            if self.model.isEmpty {
-                self.cancel()
-            } else {
-                self.panel.layout()
-                self.panel.refreshHoverPreview()
-            }
+            self.finishListMutation()
         }
         provider.refresh(then: fold)
     }
@@ -444,16 +503,8 @@ final class SwitcherController {
     private func quitSelected() {
         guard let target = model.selected else { return }
         target.quitApp()
-        var remaining = model.targets
-        remaining.removeAll { $0.pid == target.pid }
-        model.update(targets: remaining)
-        if model.isEmpty {
-            cancel()
-        } else {
-            panel.layout()
-            // The tile grid shifted under a possibly-stationary cursor; follow it with the preview.
-            panel.refreshHoverPreview()
-        }
+        model.remove { $0.pid == target.pid }
+        finishListMutation()
     }
 
     /// Closes the highlighted window (window mode) or the frontmost window of the highlighted app
@@ -467,31 +518,95 @@ final class SwitcherController {
         target.closeWindow()
         // Window mode: drop just that tile. App mode: the app stays (it may have other windows).
         guard case .window = target.kind else { return }
-        var remaining = model.targets
-        remaining.removeAll { $0.id == target.id }
-        model.update(targets: remaining)
-        if model.isEmpty {
-            cancel()
-        } else {
-            panel.layout()
-            // The tile grid shifted under a possibly-stationary cursor; follow it with the preview.
-            panel.refreshHoverPreview()
-        }
+        model.remove { $0.id == target.id }
+        finishListMutation()
     }
 
     /// Hides the highlighted app and takes it (and any of its windows) out of the list.
     private func hideSelected() {
         guard let target = model.selected else { return }
         target.hideApp()
-        var remaining = model.targets
-        remaining.removeAll { $0.pid == target.pid }
-        model.update(targets: remaining)
-        if model.isEmpty {
+        model.remove { $0.pid == target.pid }
+        finishListMutation()
+    }
+
+    /// Shared tail for the in-switcher actions: dismiss only when nothing is left at all (a query
+    /// matching nothing keeps the panel up), otherwise relayout and follow the cursor with the preview.
+    private func finishListMutation() {
+        if !model.hasAnyTarget {
             cancel()
         } else {
             panel.layout()
-            // The tile grid shifted under a possibly-stationary cursor; follow it with the preview.
             panel.refreshHoverPreview()
+        }
+    }
+
+    /// Dispatches a bound window action to its handler.
+    private func perform(_ action: SwitcherAction) {
+        switch action {
+        case .quit: quitSelected()
+        case .forceQuit: forceQuitSelected()
+        case .close: closeSelectedWindow()
+        case .hide: hideSelected()
+        case .hideOthers: hideOthers()
+        case .minimize: minimizeSelected()
+        case .zoom: zoomSelected()
+        case .moveDisplayPrev: moveSelectedWindow(acrossDisplays: -1)
+        case .moveDisplayNext: moveSelectedWindow(acrossDisplays: 1)
+        }
+    }
+
+    /// Force-terminates the selected app.
+    private func forceQuitSelected() {
+        guard let target = model.selected else { return }
+        target.forceQuitApp()
+        model.remove { $0.pid == target.pid }
+        finishListMutation()
+    }
+
+    /// Minimizes the selected window (or the app's front window). The tile stays — a minimized window
+    /// is still switchable — so the panel just relays out.
+    private func minimizeSelected() {
+        model.selected?.minimizeWindow()
+        panel.layout()
+    }
+
+    /// Zooms (maximize / restore) the selected window.
+    private func zoomSelected() {
+        model.selected?.zoomWindow()
+    }
+
+    /// Moves the selected window to the next/previous display, wrapping around.
+    private func moveSelectedWindow(acrossDisplays delta: Int) {
+        model.selected?.moveWindow(acrossDisplays: delta, screenFramesCG: Self.screenFramesCG())
+    }
+
+    /// Hides every other regular app, leaving the selected one (and Cmd-Tab) alone.
+    private func hideOthers() {
+        guard let keep = model.selected?.pid else { return }
+        let mine = ProcessInfo.processInfo.processIdentifier
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular
+            && app.processIdentifier != keep && app.processIdentifier != mine {
+            app.hide()
+        }
+    }
+
+    /// The displays' *full* frames in Quartz (top-left) coordinates, to match AX window positions.
+    /// Full frames (not visible frames) so a window always falls inside exactly one — using the
+    /// menu-bar-inset visible frame shifted the origin and could fail to locate the source display,
+    /// leaving the move stuck. Relative placement then keeps the window's menu-bar gap on arrival.
+    /// Must run on the main thread — `NSScreen` is main-thread-only.
+    private static func screenFramesCG() -> [CGRect] {
+        // Flip AppKit's bottom-left origin to Quartz's top-left using the primary display's height —
+        // the primary is the screen at AppKit origin (0,0), not merely the first in the array.
+        let primaryHeight =
+            (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
+        return NSScreen.screens.map { screen in
+            let f = screen.frame
+            return CGRect(
+                x: f.origin.x, y: primaryHeight - f.origin.y - f.height,
+                width: f.width, height: f.height)
         }
     }
 

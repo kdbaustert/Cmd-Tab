@@ -68,4 +68,55 @@ enum AX {
         else { return nil }
         return value as? Bool
     }
+
+    static func setBool(_ element: AXUIElement, _ attribute: String, _ value: Bool) {
+        AXUIElementSetAttributeValue(element, attribute as CFString, value as CFTypeRef)
+    }
+
+    /// Reads an attribute that is itself an element — e.g. an app's `AXMainWindow`/`AXFocusedWindow`.
+    static func copyElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+            let value, CFGetTypeID(value) == AXUIElementGetTypeID()
+        else { return nil }
+        return (value as! AXUIElement)
+    }
+
+    /// Presses a window control (close/zoom/minimize button) by resolving the button element and
+    /// performing its press action — exactly what a click on the traffic-light dot does.
+    static func press(_ element: AXUIElement, button attribute: String) {
+        var button: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(element, attribute as CFString, &button) == .success,
+            let button
+        else { return }
+        AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+    }
+
+    /// The window's on-screen origin (top-left, Quartz global coordinates).
+    static func position(_ window: AXUIElement) -> CGPoint? {
+        guard let value = copyAXValue(window, kAXPositionAttribute) else { return nil }
+        var point = CGPoint.zero
+        return AXValueGetValue(value, .cgPoint, &point) ? point : nil
+    }
+
+    static func size(_ window: AXUIElement) -> CGSize? {
+        guard let value = copyAXValue(window, kAXSizeAttribute) else { return nil }
+        var size = CGSize.zero
+        return AXValueGetValue(value, .cgSize, &size) ? size : nil
+    }
+
+    static func setPosition(_ window: AXUIElement, _ point: CGPoint) {
+        var point = point
+        guard let value = AXValueCreate(.cgPoint, &point) else { return }
+        AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+    }
+
+    private static func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+            let value, CFGetTypeID(value) == AXValueGetTypeID()
+        else { return nil }
+        return (value as! AXValue)
+    }
 }
