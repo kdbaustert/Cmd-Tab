@@ -104,7 +104,6 @@ struct SwitcherView: View {
                         corner: model.tileCorner,
                         titleFontSize: model.titleFontSize,
                         titleWeight: model.titleWeight,
-                        truncation: model.truncation,
                         number: model.showNumbers && index < 9 ? index + 1 : nil)
                 }
             }
@@ -125,13 +124,16 @@ struct SwitcherView: View {
     @ViewBuilder
     private var caption: some View {
         if let selected = model.selected {
+            // The caption is the selected window/application title, so the "Title size" setting
+            // drives it. Offset from the slider value (default 10) so the defaults still land on
+            // the original 13pt title / 11pt subtitle.
             VStack(spacing: 1) {
                 Text(selected.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: model.titleFontSize + 3, weight: .semibold))
                     .lineLimit(1)
                 if model.mode == .windows {
                     Text(selected.appName)
-                        .font(.system(size: 11))
+                        .font(.system(size: model.titleFontSize + 1))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -152,7 +154,6 @@ private struct TargetTile: View {
     let corner: CGFloat
     let titleFontSize: CGFloat
     let titleWeight: Font.Weight
-    let truncation: Text.TruncationMode
     /// 1–9, or nil past the ninth tile, which has no key to jump to it.
     let number: Int?
 
@@ -164,7 +165,6 @@ private struct TargetTile: View {
                     .font(.system(size: titleFontSize, weight: titleWeight))
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(2)
-                    .truncationMode(truncation)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: size.width - 10)
             }
@@ -274,6 +274,9 @@ final class BlurVisualEffectView: NSVisualEffectView {
     var overrideBlurRadius: Double? {
         didSet { applyBlurOverride() }
     }
+    /// The filter's natural `inputRadius`, captured before the first override so it can be restored
+    /// when the override is cleared — otherwise the last custom value would stick.
+    private var naturalRadius: Double?
 
     override func updateLayer() {
         super.updateLayer()
@@ -286,12 +289,17 @@ final class BlurVisualEffectView: NSVisualEffectView {
     }
 
     private func applyBlurOverride() {
-        guard let radius = overrideBlurRadius else { return }
         for sublayer in layer?.sublayers ?? [] {
             guard let filters = sublayer.filters as? [NSObject] else { continue }
             for filter in filters where (filter.value(forKey: "name") as? String) == "gaussianBlur" {
-                filter.setValue(radius, forKey: "inputRadius")
+                if let radius = overrideBlurRadius {
+                    if naturalRadius == nil { naturalRadius = filter.value(forKey: "inputRadius") as? Double }
+                    filter.setValue(radius, forKey: "inputRadius")
+                } else if let natural = naturalRadius {
+                    filter.setValue(natural, forKey: "inputRadius")
+                }
             }
         }
+        if overrideBlurRadius == nil { naturalRadius = nil }
     }
 }

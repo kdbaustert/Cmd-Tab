@@ -102,13 +102,6 @@ enum TitleWeight: String, CaseIterable {
     }
 }
 
-/// How an over-long title is shortened.
-enum TruncationStyle: String, CaseIterable {
-    case tail, middle
-    var title: String { rawValue.capitalized }
-    var mode: Text.TruncationMode { self == .middle ? .middle : .tail }
-}
-
 /// Where the panel places itself when it opens.
 enum PanelPosition: String, CaseIterable {
     case center
@@ -188,8 +181,6 @@ final class BehaviorStore: ObservableObject {
         static let highlightColor = "highlightColorHex"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
-        static let cycleKeyCode = "cycleHotkeyKeyCode"
-        static let cycleModifiers = "cycleHotkeyModifiers"
         static let showDelay = "showDelayMs"
         static let windowScope = "windowScope"
         static let hideEmptyApps = "hideEmptyApps"
@@ -203,7 +194,6 @@ final class BehaviorStore: ObservableObject {
         static let tileCorner = "tileCorner"
         static let titleFontSize = "titleFontSize"
         static let titleWeight = "titleWeight"
-        static let truncation = "truncation"
         static let fade = "fadeAnimation"
         static let showMenuBarIcon = "showMenuBarIcon"
         static let reflectMode = "reflectModeInMenuBar"
@@ -212,10 +202,10 @@ final class BehaviorStore: ObservableObject {
     /// The keys we own, for export/import/reset.
     static let ownedDefaultsKeys = [
         "mode", "sortOrder", "skipMinimized", "panelAppearance", "panelPosition",
-        "highlightColorHex", "hotkeyKeyCode", "hotkeyModifiers", "cycleHotkeyKeyCode",
-        "cycleHotkeyModifiers", "showDelayMs", "windowScope", "hideEmptyApps", "maxColumns",
+        "highlightColorHex", "hotkeyKeyCode", "hotkeyModifiers",
+        "showDelayMs", "windowScope", "hideEmptyApps", "maxColumns",
         "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
-        "alwaysShowTitles", "tileCorner", "titleFontSize", "titleWeight", "truncation",
+        "alwaysShowTitles", "tileCorner", "titleFontSize", "titleWeight",
         "fadeAnimation", "showMenuBarIcon", "reflectModeInMenuBar", "iconSize", "iconSpacing",
         "titleSpacing", "excludedBundleIDs",
     ]
@@ -243,9 +233,6 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var hotkey: Hotkey {
         didSet { storeHotkey(hotkey, oldValue, Key.hotkeyKeyCode, Key.hotkeyModifiers) }
-    }
-    @Published var cycleHotkey: Hotkey {
-        didSet { storeHotkey(cycleHotkey, oldValue, Key.cycleKeyCode, Key.cycleModifiers) }
     }
     @Published var showDelay: Double {
         didSet { store(showDelay, Key.showDelay, oldValue != showDelay) }
@@ -286,9 +273,6 @@ final class BehaviorStore: ObservableObject {
     @Published var titleWeight: TitleWeight {
         didSet { store(titleWeight.rawValue, Key.titleWeight, oldValue != titleWeight) }
     }
-    @Published var truncation: TruncationStyle {
-        didSet { store(truncation.rawValue, Key.truncation, oldValue != truncation) }
-    }
     @Published var fade: Bool {
         didSet { store(fade, Key.fade, oldValue != fade) }
     }
@@ -300,7 +284,6 @@ final class BehaviorStore: ObservableObject {
     }
 
     static let defaultHighlight = Color.accentColor
-    static let defaultCycleHotkey = Hotkey(keyCode: 50, modifierRaw: CGEventFlags.maskCommand.rawValue)
 
     private init() {
         let d = UserDefaults.standard
@@ -313,8 +296,6 @@ final class BehaviorStore: ObservableObject {
         highlightColor =
             d.string(forKey: Key.highlightColor).flatMap(Color.init(hex:)) ?? Self.defaultHighlight
         hotkey = Self.loadHotkey(d, Key.hotkeyKeyCode, Key.hotkeyModifiers, default: .commandTab)
-        cycleHotkey = Self.loadHotkey(
-            d, Key.cycleKeyCode, Key.cycleModifiers, default: Self.defaultCycleHotkey)
         showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         windowScope = d.string(forKey: Key.windowScope).flatMap(WindowScope.init) ?? .allSpaces
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)
@@ -331,7 +312,6 @@ final class BehaviorStore: ObservableObject {
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
         titleWeight = d.string(forKey: Key.titleWeight).flatMap(TitleWeight.init) ?? .regular
-        truncation = d.string(forKey: Key.truncation).flatMap(TruncationStyle.init) ?? .tail
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true
@@ -341,6 +321,11 @@ final class BehaviorStore: ObservableObject {
     /// Re-reads every field from `UserDefaults`. Used after an import or reset so the live values
     /// (and the UI bound to them) follow the file rather than staying on what was in memory.
     func reload() {
+        suppressOnChange = true
+        defer {
+            suppressOnChange = false
+            onChange?()  // one coalesced notification after the whole batch
+        }
         let d = UserDefaults.standard
         mode = d.string(forKey: Key.mode).flatMap(SwitcherMode.init) ?? .apps
         sortOrder = d.string(forKey: Key.sortOrder).flatMap(SortOrder.init) ?? .recentlyUsed
@@ -351,8 +336,6 @@ final class BehaviorStore: ObservableObject {
         highlightColor =
             d.string(forKey: Key.highlightColor).flatMap(Color.init(hex:)) ?? Self.defaultHighlight
         hotkey = Self.loadHotkey(d, Key.hotkeyKeyCode, Key.hotkeyModifiers, default: .commandTab)
-        cycleHotkey = Self.loadHotkey(
-            d, Key.cycleKeyCode, Key.cycleModifiers, default: Self.defaultCycleHotkey)
         showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         windowScope = d.string(forKey: Key.windowScope).flatMap(WindowScope.init) ?? .allSpaces
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)
@@ -368,7 +351,6 @@ final class BehaviorStore: ObservableObject {
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
         titleWeight = d.string(forKey: Key.titleWeight).flatMap(TitleWeight.init) ?? .regular
-        truncation = d.string(forKey: Key.truncation).flatMap(TruncationStyle.init) ?? .tail
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true
@@ -384,16 +366,34 @@ final class BehaviorStore: ObservableObject {
             modifierRaw: UInt64(bitPattern: Int64(d.integer(forKey: modKey))))
     }
 
+    /// Suppresses per-field `onChange` during a bulk `reload()`, so an import/reset/theme-apply
+    /// fires the (expensive) callback once at the end rather than ~27 times.
+    private var suppressOnChange = false
+
+    private func notify() {
+        guard !suppressOnChange else { return }
+        onChange?()
+    }
+
+    /// Applies several field changes with per-field notifications suppressed, then fires one
+    /// coalesced `onChange`. Used when applying a theme, which touches many fields at once.
+    func batch(_ changes: () -> Void) {
+        suppressOnChange = true
+        changes()
+        suppressOnChange = false
+        onChange?()
+    }
+
     private func store(_ value: Any, _ key: String, _ changed: Bool) {
         guard changed else { return }
         UserDefaults.standard.set(value, forKey: key)
-        onChange?()
+        notify()
     }
 
     private func storeColor(_ new: Color, _ old: Color) {
         guard new != old else { return }
         UserDefaults.standard.set(new.hexString, forKey: Key.highlightColor)
-        onChange?()
+        notify()
     }
 
     private func storeHotkey(_ new: Hotkey, _ old: Hotkey, _ codeKey: String, _ modKey: String) {
@@ -401,15 +401,14 @@ final class BehaviorStore: ObservableObject {
         let d = UserDefaults.standard
         d.set(new.keyCode, forKey: codeKey)
         d.set(Int(Int64(bitPattern: new.modifierRaw)), forKey: modKey)
-        onChange?()
+        notify()
     }
 
-    /// Wipes every owned key and reloads defaults into a fresh process on next launch. Applied by
-    /// re-reading; callers should also refresh dependent stores.
+    /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,
+    /// which republishes the defaults and notifies once.
     func resetAll() {
         let d = UserDefaults.standard
         for key in Self.ownedDefaultsKeys { d.removeObject(forKey: key) }
-        onChange?()
     }
 }
 

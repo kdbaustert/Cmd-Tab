@@ -25,8 +25,6 @@ final class SwitcherModel: ObservableObject {
     /// Point size and weight of tile titles.
     @Published var titleFontSize: CGFloat = 10
     @Published var titleWeight: Font.Weight = .regular
-    /// How over-long titles are shortened.
-    @Published var truncation: Text.TruncationMode = .tail
 
     /// Whether tiles carry a title in the current mode.
     var showsTitle: Bool { mode == .windows || alwaysShowTitles }

@@ -17,7 +17,6 @@ struct Theme: Codable, Identifiable, Equatable {
     var tileCorner: Double
     var titleFontSize: Double
     var titleWeight: String
-    var truncation: String
     var fade: Bool
     var iconSize: Double
     var iconSpacing: Double
@@ -27,11 +26,14 @@ struct Theme: Codable, Identifiable, Equatable {
     var id: String { name }
 
     /// Two themes are "the same look" when every visual field matches — the name and the built-in
-    /// flag are identity, not appearance, so they are excluded.
+    /// flag are identity, not appearance, so they are excluded. Icon size is also excluded: it is a
+    /// user-level preference that `apply` deliberately preserves across theme changes, so a theme
+    /// still counts as current no matter what size the icons are set to.
     func sameLook(as other: Theme) -> Bool {
         var a = self, b = other
         a.name = ""; b.name = ""
         a.builtIn = false; b.builtIn = false
+        a.iconSize = 0; b.iconSize = 0
         return a == b
     }
 }
@@ -77,7 +79,6 @@ final class ThemeStore: ObservableObject {
             tileCorner: b.tileCorner,
             titleFontSize: b.titleFontSize,
             titleWeight: b.titleWeight.rawValue,
-            truncation: b.truncation.rawValue,
             fade: b.fade,
             iconSize: a.iconSize,
             iconSpacing: a.iconSpacing,
@@ -87,22 +88,26 @@ final class ThemeStore: ObservableObject {
     /// Pushes a theme's fields into the live stores, which in turn update the running switcher.
     func apply(_ theme: Theme) {
         let b = BehaviorStore.shared
-        b.highlightColor = Color(hex: theme.highlightHex) ?? BehaviorStore.defaultHighlight
-        b.panelAppearance = PanelAppearance(rawValue: theme.appearance) ?? .system
-        b.panelMaterial = PanelMaterial(rawValue: theme.material) ?? .hud
-        b.panelOpacity = theme.opacity
-        b.blurOverride = theme.blurOverride
-        b.blurRadius = theme.blurRadius
-        b.showNumbers = theme.showNumbers
-        b.alwaysShowTitles = theme.alwaysShowTitles
-        b.tileCorner = theme.tileCorner
-        b.titleFontSize = theme.titleFontSize
-        b.titleWeight = TitleWeight(rawValue: theme.titleWeight) ?? .regular
-        b.truncation = TruncationStyle(rawValue: theme.truncation) ?? .tail
-        b.fade = theme.fade
+        // Coalesce the many field writes into a single onChange so the switcher reconfigures once
+        // rather than dozens of times.
+        b.batch {
+            b.highlightColor = Color(hex: theme.highlightHex) ?? BehaviorStore.defaultHighlight
+            b.panelAppearance = PanelAppearance(rawValue: theme.appearance) ?? .system
+            b.panelMaterial = PanelMaterial(rawValue: theme.material) ?? .hud
+            b.panelOpacity = theme.opacity
+            b.blurOverride = theme.blurOverride
+            b.blurRadius = theme.blurRadius
+            b.showNumbers = theme.showNumbers
+            b.alwaysShowTitles = theme.alwaysShowTitles
+            b.tileCorner = theme.tileCorner
+            b.titleFontSize = theme.titleFontSize
+            b.titleWeight = TitleWeight(rawValue: theme.titleWeight) ?? .regular
+            b.fade = theme.fade
+        }
 
         let a = AppearanceStore.shared
-        a.iconSize = theme.iconSize
+        // Icon size is a user-level preference, not a theme trait: switching themes leaves whatever
+        // size is currently assigned untouched (see `sameLook`, which also ignores it).
         a.iconSpacing = theme.iconSpacing
         a.titleSpacing = theme.titleSpacing
     }
@@ -189,31 +194,31 @@ final class ThemeStore: ObservableObject {
             name: "Classic", highlightHex: "#8A8A8E", appearance: "system", material: "hud",
             opacity: 1.0, blurOverride: false, blurRadius: 20, showNumbers: true,
             alwaysShowTitles: false, tileCorner: 12, titleFontSize: 10, titleWeight: "regular",
-            truncation: "tail", fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
+            fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Vibrant", highlightHex: "#0A84FF", appearance: "system", material: "hud",
             opacity: 1.0, blurOverride: true, blurRadius: 42, showNumbers: true,
             alwaysShowTitles: false, tileCorner: 16, titleFontSize: 11, titleWeight: "medium",
-            truncation: "tail", fade: true, iconSize: 72, iconSpacing: 20, titleSpacing: 2,
+            fade: true, iconSize: 72, iconSpacing: 20, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Minimal", highlightHex: "#8A8A8E", appearance: "system", material: "sidebar",
             opacity: 0.96, blurOverride: false, blurRadius: 20, showNumbers: false,
             alwaysShowTitles: false, tileCorner: 8, titleFontSize: 10, titleWeight: "regular",
-            truncation: "tail", fade: true, iconSize: 56, iconSpacing: 12, titleSpacing: 2,
+            fade: true, iconSize: 56, iconSpacing: 12, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Midnight", highlightHex: "#BF5AF2", appearance: "dark", material: "hud",
             opacity: 0.86, blurOverride: true, blurRadius: 30, showNumbers: true,
             alwaysShowTitles: false, tileCorner: 14, titleFontSize: 10, titleWeight: "regular",
-            truncation: "tail", fade: true, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
+            fade: true, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Daylight", highlightHex: "#0A84FF", appearance: "light", material: "window",
             opacity: 1.0, blurOverride: false, blurRadius: 20, showNumbers: true,
             alwaysShowTitles: true, tileCorner: 12, titleFontSize: 10, titleWeight: "medium",
-            truncation: "middle", fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 3,
+            fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 3,
             builtIn: true),
     ]
 }

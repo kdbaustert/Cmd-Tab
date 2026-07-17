@@ -19,6 +19,8 @@ final class SwitcherPanel: NSPanel {
     private var hoverMonitor: Any?
     private var scrollMonitor: Any?
     private var scrollAccumulator: CGFloat = 0
+    /// Bumped on every show/hide so a pending fade-out completion can tell it has been superseded.
+    private var hideToken = 0
 
     /// Forced appearance and placement, driven from settings.
     var appearanceMode: PanelAppearance = .system
@@ -68,6 +70,8 @@ final class SwitcherPanel: NSPanel {
     }
 
     func show() {
+        // Invalidate any in-flight fade-out completion so a quick re-show is not ordered back out.
+        hideToken &+= 1
         layout()
         if fade {
             alphaValue = 0
@@ -86,13 +90,19 @@ final class SwitcherPanel: NSPanel {
     func hide() {
         stopHoverTracking()
         // A fade-out has to keep the window up until the animation finishes, so order out in the
-        // completion; the instant path just drops it.
+        // completion; the instant path just drops it. The token guards against a re-show landing
+        // mid-fade — without it the stale completion would order the fresh panel back out.
         if fade && alphaValue > 0 {
+            hideToken &+= 1
+            let token = hideToken
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.10
                 animator().alphaValue = 0
             } completionHandler: { [weak self] in
-                self?.orderOut(nil)
+                MainActor.assumeIsolated {
+                    guard let self, self.hideToken == token else { return }
+                    self.orderOut(nil)
+                }
             }
         } else {
             orderOut(nil)
@@ -204,10 +214,12 @@ final class SwitcherPanel: NSPanel {
             return NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
         case .cursor:
             let mouse = NSEvent.mouseLocation
-            let x = (mouse.x - size.width / 2)
-                .clamped(to: visible.minX...(visible.maxX - size.width))
-            let y = (mouse.y - size.height / 2)
-                .clamped(to: visible.minY...(visible.maxY - size.height))
+            // Clamp the upper bounds up to the lower ones: a panel taller or wider than the visible
+            // frame would otherwise make an inverted ClosedRange, which traps at runtime.
+            let maxX = max(visible.minX, visible.maxX - size.width)
+            let maxY = max(visible.minY, visible.maxY - size.height)
+            let x = (mouse.x - size.width / 2).clamped(to: visible.minX...maxX)
+            let y = (mouse.y - size.height / 2).clamped(to: visible.minY...maxY)
             return NSPoint(x: x, y: y)
         }
     }

@@ -12,9 +12,6 @@ import ApplicationServices
 final class TargetProvider {
     private var mru: [pid_t] = []
     private var cache: [SwitchTarget] = []
-    /// Windows of the frontmost app, kept warm for the window-cycle hotkey so its panel can open
-    /// from cache without enumerating on the event-tap thread.
-    private var cycleCache: [SwitchTarget] = []
     private let axQueue = DispatchQueue(label: "com.cmdtab.accessibility", qos: .userInteractive)
 
     var mode: SwitcherMode = .apps
@@ -58,36 +55,6 @@ final class TargetProvider {
             touch(app.processIdentifier)
         }
         refresh()
-        // Keep the cycle list warm for whatever app is now frontmost.
-        refreshCycle()
-    }
-
-    /// Whatever we last computed for the frontmost app's windows. Never blocks.
-    func cycleSnapshot() -> [SwitchTarget] { cycleCache }
-
-    /// Rebuilds the frontmost app's window list off-thread. The frontmost app is read now, on the
-    /// main thread, because our panel never activates — so it is still the app the user was in.
-    func refreshCycle(then handler: (([SwitchTarget]) -> Void)? = nil) {
-        let mine = ProcessInfo.processInfo.processIdentifier
-        guard let front = NSWorkspace.shared.frontmostApplication,
-              front.processIdentifier != mine else {
-            cycleCache = []
-            handler?([])
-            return
-        }
-        let info = AppInfo(
-            pid: front.processIdentifier, name: front.localizedName ?? "Unknown",
-            icon: front.icon, isHidden: front.isHidden)
-        let sortOrder = self.sortOrder
-        let skipMinimized = self.skipMinimized
-        axQueue.async { [weak self] in
-            var targets = Self.windowTargets([info], order: [info.pid], sortOrder: sortOrder)
-            if skipMinimized { targets.removeAll { $0.isMinimized } }
-            DispatchQueue.main.async {
-                self?.cycleCache = targets
-                handler?(targets)
-            }
-        }
     }
 
     private func touch(_ pid: pid_t) {
@@ -107,28 +74,29 @@ final class TargetProvider {
         let hideEmptyApps = self.hideEmptyApps
         let apps = switchableApps()
         let order = mru
-        // NSScreen is main-thread-only, so resolve the active screen's CG rect here and hand it in.
-        let activeScreenCG = Self.activeScreenCGFrame()
+        // NSScreen is main-thread-only, so resolve the active screen's CG rect here — but only when
+        // the active-display scope actually needs it.
+        let activeScreenCG = (mode == .windows && scope == .activeDisplay)
+            ? Self.activeScreenCGFrame() : nil
 
         axQueue.async { [weak self] in
-            // On-screen window info: cheap, and needs no Screen Recording (bounds and owners only).
-            // Serves both the empty-app filter and the Space/display scoping.
-            let onScreen = (mode == .windows && scope != .allSpaces) || hideEmptyApps
-                ? Self.onScreenWindows() : ([], [:])
-
             var targets: [SwitchTarget]
             switch mode {
             case .apps:
                 targets = Self.appTargets(apps, order: order, sortOrder: sortOrder)
                 if hideEmptyApps {
-                    targets.removeAll { !onScreen.0.contains($0.pid) }
+                    // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
+                    // counts as non-empty rather than being dropped.
+                    let owning = Self.windowOwningPIDs()
+                    targets.removeAll { !owning.contains($0.pid) }
                 }
             case .windows:
                 targets = Self.windowTargets(apps, order: order, sortOrder: sortOrder)
                 if skipMinimized { targets.removeAll { $0.isMinimized } }
                 if scope != .allSpaces {
                     targets = Self.scoped(
-                        targets, scope: scope, onScreenBounds: onScreen.1, activeScreen: activeScreenCG)
+                        targets, scope: scope,
+                        onScreenBounds: Self.onScreenBounds(), activeScreen: activeScreenCG)
                 }
             }
             DispatchQueue.main.async {
@@ -140,25 +108,36 @@ final class TargetProvider {
 
     // MARK: - Space / display scoping
 
-    /// PIDs and window bounds for everything on screen in the current Space. Layer-0 windows only,
-    /// keyed by `CGWindowID` so callers can match against a target's parsed id.
-    private static func onScreenWindows() -> (Set<pid_t>, [CGWindowID: CGRect]) {
+    /// Window bounds for everything on screen in the current Space, keyed by `CGWindowID` so callers
+    /// can match against a target's parsed id. Layer-0 windows only; no Screen Recording needed.
+    private static func onScreenBounds() -> [CGWindowID: CGRect] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
-        else { return ([], [:]) }
+        else { return [:] }
 
-        var pids = Set<pid_t>()
         var bounds: [CGWindowID: CGRect] = [:]
         for window in info {
-            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
-            if let pid = window[kCGWindowOwnerPID as String] as? pid_t { pids.insert(pid) }
-            if let number = window[kCGWindowNumber as String] as? CGWindowID,
-               let rect = window[kCGWindowBounds as String] as? [String: CGFloat],
-               let cg = CGRect(dictionaryRepresentation: rect as CFDictionary) {
-                bounds[number] = cg
-            }
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                  let number = window[kCGWindowNumber as String] as? CGWindowID,
+                  let rect = window[kCGWindowBounds as String] as? [String: CGFloat],
+                  let cg = CGRect(dictionaryRepresentation: rect as CFDictionary) else { continue }
+            bounds[number] = cg
         }
-        return (pids, bounds)
+        return bounds
+    }
+
+    /// PIDs owning at least one real window on ANY Space (no on-screen restriction). Used by the
+    /// "hide apps with no open windows" filter so fullscreen / other-Space apps are not dropped.
+    private static func windowOwningPIDs() -> Set<pid_t> {
+        guard let info = CGWindowListCopyWindowInfo(
+            [.excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        var pids = Set<pid_t>()
+        for window in info {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                  let pid = window[kCGWindowOwnerPID as String] as? pid_t else { continue }
+            pids.insert(pid)
+        }
+        return pids
     }
 
     /// Filters window targets to the current Space (present in the on-screen list) or the active
@@ -191,7 +170,10 @@ final class TargetProvider {
         let screen = NSScreen.main
             ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
             ?? NSScreen.screens.first
-        guard let screen, let primary = NSScreen.screens.first else { return nil }
+        guard let screen else { return nil }
+        // The flip reference is the primary display — the one at AppKit origin (0,0) — not merely
+        // the first in the array, which need not be primary on a multi-display setup.
+        let primary = NSScreen.screens.first { $0.frame.origin == .zero } ?? screen
         let f = screen.frame
         // Flip AppKit (bottom-left) to CG (top-left) using the primary display's height.
         return CGRect(

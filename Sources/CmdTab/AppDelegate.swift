@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Permissions.waitForTrust { [weak self] in
                 Log.general.notice("trust acquired; starting")
                 self?.startController()
+                // Now trusted: re-evaluate the icon so a user who chose to hide it gets their wish.
+                self?.updateStatusItem(BehaviorStore.shared)
                 self?.refreshMenu()
             }
             refreshMenu()
@@ -75,7 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.tileCorner = behavior.tileCorner
         controller.titleFontSize = behavior.titleFontSize
         controller.titleWeight = behavior.titleWeight.fontWeight
-        controller.truncation = behavior.truncation.mode
         controller.fade = behavior.fade
         controller.panelMaterial = behavior.panelMaterial
         controller.panelOpacity = behavior.panelOpacity
@@ -83,7 +84,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.maxColumns = behavior.maxColumns
         controller.showDelay = behavior.showDelay / 1000
         controller.hotkey = behavior.hotkey
-        controller.cycleHotkey = behavior.cycleHotkey
         updateStatusItem(behavior)
     }
 
@@ -117,7 +117,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// user turns it off; the app is then reachable only through the shortcut (reopening it from
     /// Finder brings the settings window back — see `applicationShouldHandleReopen`).
     private func updateStatusItem(_ behavior: BehaviorStore) {
-        guard behavior.showMenuBarIcon else {
+        // Keep the item when Accessibility is not trusted even if the user hid it: the menu is the
+        // only in-app path to the "Open Accessibility Settings…" recovery item, and without it a
+        // permission reset would leave the switcher dead with no way back.
+        guard behavior.showMenuBarIcon || !Permissions.isTrusted else {
             if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
             statusItem = nil
             return

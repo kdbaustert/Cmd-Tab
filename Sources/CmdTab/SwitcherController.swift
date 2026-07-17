@@ -34,14 +34,10 @@ final class SwitcherController {
     private lazy var panel = SwitcherPanel(model: model)
     private var tap: EventTap?
     private var isVisible = false
-    /// True while the visible session is a window-cycle (frontmost app's windows) rather than the
-    /// main switcher — changes which trigger key advances it.
-    private var isCycleSession = false
 
     // Quick-switch arming: between a trigger press and the show-delay firing, the panel is not yet
     // on screen. Releasing the modifier in that window switches straight to the previous target.
     private var armed = false
-    private var armedCycle = false
     private var armedBackwards = false
     private var armedTargets: [SwitchTarget] = []
     private var armWorkItem: DispatchWorkItem?
@@ -162,11 +158,6 @@ final class SwitcherController {
         set { model.titleWeight = newValue }
     }
 
-    var truncation: Text.TruncationMode {
-        get { model.truncation }
-        set { model.truncation = newValue }
-    }
-
     var fade: Bool {
         get { panel.fade }
         set { panel.fade = newValue }
@@ -205,9 +196,6 @@ final class SwitcherController {
     /// A tap that opens the switcher waits this long before drawing; released sooner, it switches
     /// straight to the previous target with no panel flash. 0 keeps the panel instant.
     var showDelay: TimeInterval = 0
-
-    /// Second trigger that opens a switcher over just the frontmost app's windows.
-    var cycleHotkey: Hotkey = BehaviorStore.defaultCycleHotkey
 
     /// The combination that opens the switcher. Changing it re-syncs the system ⌘-Tab: the native
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
@@ -249,7 +237,6 @@ final class SwitcherController {
         provider.refresh { targets in
             Log.targets.notice("initial refresh: \(targets.count) targets")
         }
-        provider.refreshCycle()
         return true
     }
 
@@ -262,10 +249,16 @@ final class SwitcherController {
 
     // MARK: - Event handling
 
-    /// The primary modifiers (Shift excluded) held, compared for equality so a session ends the
-    /// instant its opening modifier is released — exactly like the system switcher.
+    /// Exact match on the primary modifiers (Shift excluded) — used to decide whether a keypress
+    /// is our trigger chord, so ⌘-Tab opens only on exactly ⌘.
     private func modifiersMatch(_ flags: CGEventFlags, _ held: CGEventFlags) -> Bool {
         flags.intersection([.maskCommand, .maskAlternate, .maskControl]) == held
+    }
+
+    /// The opening modifier is *still down*, tolerating extra modifiers the user may add. A session
+    /// ends only when the trigger modifier itself is released, not when another one is pressed.
+    private func stillHeld(_ flags: CGEventFlags, _ held: CGEventFlags) -> Bool {
+        flags.intersection([.maskCommand, .maskAlternate, .maskControl]).isSuperset(of: held)
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
@@ -274,7 +267,7 @@ final class SwitcherController {
         // Modifier events are never swallowed — other apps need to track modifier state, and this
         // is also the escape hatch that guarantees the panel can always be dismissed.
         if type == .flagsChanged {
-            if (isVisible || armed) && !modifiersMatch(flags, activeHeld) { releaseTrigger() }
+            if (isVisible || armed) && !stillHeld(flags, activeHeld) { releaseTrigger() }
             return false
         }
 
@@ -282,7 +275,7 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            if !modifiersMatch(flags, activeHeld) { commit(); return false }
+            if !stillHeld(flags, activeHeld) { commit(); return false }
             if type == .keyUp { return true }
             return handleVisibleKey(code, flags)
         }
@@ -290,10 +283,9 @@ final class SwitcherController {
         // Armed: a trigger press is waiting out the show-delay. A second press shows immediately.
         if armed {
             if type == .keyUp { return true }
-            if !modifiersMatch(flags, activeHeld) { releaseTrigger(); return true }
-            let triggerCode = armedCycle ? cycleHotkey.keyCode : hotkey.keyCode
+            if !stillHeld(flags, activeHeld) { releaseTrigger(); return true }
             showFromArm()
-            if code == triggerCode {
+            if code == hotkey.keyCode {
                 model.step(flags.contains(.maskShift) ? -1 : 1)
                 panel.layout()
             }
@@ -304,17 +296,13 @@ final class SwitcherController {
         if type == .keyUp { return false }
         let backwards = flags.contains(.maskShift)
         if code == hotkey.keyCode, modifiersMatch(flags, hotkey.heldModifiers) {
-            return open(cycle: false, backwards: backwards)
-        }
-        if code == cycleHotkey.keyCode, modifiersMatch(flags, cycleHotkey.heldModifiers) {
-            return open(cycle: true, backwards: backwards)
+            return open(backwards: backwards)
         }
         return false
     }
 
     private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags) -> Bool {
-        let triggerCode = isCycleSession ? cycleHotkey.keyCode : hotkey.keyCode
-        if code == triggerCode {
+        if code == hotkey.keyCode {
             model.step(flags.contains(.maskShift) ? -1 : 1)
             panel.layout()
             return true
@@ -341,17 +329,15 @@ final class SwitcherController {
     /// Opens the switcher, or arms a quick-switch if a show-delay is set. Returns false — declining
     /// to swallow — only when there is nothing to show.
     @discardableResult
-    private func open(cycle: Bool, backwards: Bool) -> Bool {
-        activeHeld = (cycle ? cycleHotkey : hotkey).heldModifiers
-        let targets = cycle ? provider.cycleSnapshot() : provider.snapshot()
+    private func open(backwards: Bool) -> Bool {
+        activeHeld = hotkey.heldModifiers
+        let targets = provider.snapshot()
         guard !targets.isEmpty else {
-            if cycle { provider.refreshCycle() }  // cold cache — warm it for next time
-            Log.targets.error("trigger with an empty list (cycle=\(cycle)); cache not warm?")
+            Log.targets.error("trigger with an empty list; cache not warm?")
             return false
         }
         if showDelay > 0 {
             armed = true
-            armedCycle = cycle
             armedBackwards = backwards
             armedTargets = targets
             let work = DispatchWorkItem { [weak self] in
@@ -361,7 +347,7 @@ final class SwitcherController {
             DispatchQueue.main.asyncAfter(deadline: .now() + showDelay, execute: work)
             return true
         }
-        showWith(targets: targets, cycle: cycle, backwards: backwards)
+        showWith(targets: targets, backwards: backwards)
         return true
     }
 
@@ -371,20 +357,18 @@ final class SwitcherController {
         armWorkItem?.cancel()
         armWorkItem = nil
         armed = false
-        showWith(targets: armedTargets, cycle: armedCycle, backwards: armedBackwards)
+        showWith(targets: armedTargets, backwards: armedBackwards)
     }
 
-    private func showWith(targets: [SwitchTarget], cycle: Bool, backwards: Bool) {
-        isCycleSession = cycle
-        model.mode = cycle ? .windows : provider.mode
+    private func showWith(targets: [SwitchTarget], backwards: Bool) {
+        model.mode = provider.mode
         model.targets = targets
         // The frontmost app/window is index 0, so a plain tap lands on the previous one.
         model.selection = backwards ? targets.count - 1 : min(1, targets.count - 1)
 
         isVisible = true
         panel.show()
-        Log.general.notice(
-            "panel shown: cycle=\(cycle) frame=\(NSStringFromRect(self.panel.frame))")
+        Log.general.notice("panel shown: frame=\(NSStringFromRect(self.panel.frame))")
 
         // The cache can be a moment stale; fold in a fresh list without disturbing the highlight.
         let fold: ([SwitchTarget]) -> Void = { [weak self] fresh in
@@ -392,12 +376,11 @@ final class SwitcherController {
             self.model.update(targets: fresh)
             if self.model.isEmpty { self.cancel() } else { self.panel.layout() }
         }
-        if cycle { provider.refreshCycle(then: fold) } else { provider.refresh(then: fold) }
+        provider.refresh(then: fold)
     }
 
     private func hide() {
         isVisible = false
-        isCycleSession = false
         panel.hide()
     }
 
@@ -457,20 +440,18 @@ final class SwitcherController {
 
     /// Closes the highlighted window (window mode) or the frontmost window of the highlighted app
     /// (app mode), then drops it from the list without dismissing the switcher.
+    ///
+    /// Optimistic like `quitSelected`, and deliberately without a refresh: the close is an async AX
+    /// call on another queue, so refreshing here can enumerate the window before it is gone and fold
+    /// it straight back in.
     private func closeSelectedWindow() {
         guard let target = model.selected else { return }
         target.closeWindow()
+        // Window mode: drop just that tile. App mode: the app stays (it may have other windows).
+        guard case .window = target.kind else { return }
         var remaining = model.targets
-        // In window mode only that one tile goes; in app mode the app stays (it may have others).
-        if case .window = target.kind {
-            remaining.removeAll { $0.id == target.id }
-            model.update(targets: remaining)
-        }
-        provider.refresh { [weak self] fresh in
-            guard let self, self.isVisible else { return }
-            self.model.update(targets: fresh)
-            if self.model.isEmpty { self.cancel() } else { self.panel.layout() }
-        }
+        remaining.removeAll { $0.id == target.id }
+        model.update(targets: remaining)
         if model.isEmpty { cancel() } else { panel.layout() }
     }
 

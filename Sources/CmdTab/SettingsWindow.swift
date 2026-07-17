@@ -102,10 +102,6 @@ struct GeneralSettings: View {
                     HotkeyRecorder(hotkey: $behavior.hotkey)
                 }
 
-                field("Cycle windows", help: "Opens a switcher over just the front app's windows.") {
-                    HotkeyRecorder(hotkey: $behavior.cycleHotkey)
-                }
-
                 field(
                     "Show delay",
                     help: "Wait before drawing the panel; a quick tap switches with no flash. "
@@ -360,10 +356,6 @@ struct AppearanceSettings: View {
                     pickerRow("Title weight", selection: $behavior.titleWeight) {
                         ForEach(TitleWeight.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
-                    pickerRow("Truncation", selection: $behavior.truncation) {
-                        ForEach(TruncationStyle.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-
                     Toggle("Show number badges", isOn: $behavior.showNumbers)
                         .toggleStyle(.checkbox)
                     Toggle("Always show titles under icons", isOn: $behavior.alwaysShowTitles)
