@@ -393,11 +393,18 @@ final class BehaviorStore: ObservableObject {
         notify()
     }
 
+    /// Keys this app used to own and no longer reads. Cleared by `resetAll` so a retired setting
+    /// cannot linger in `UserDefaults` forever, but deliberately kept out of `ownedDefaultsKeys` so
+    /// export/import does not carry dead settings between machines.
+    ///
+    /// - `titleWeight`: the tile-title font weight picker, removed along with its `Theme` field.
+    static let retiredDefaultsKeys = ["titleWeight"]
+
     /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,
     /// which republishes the defaults and notifies once.
     func resetAll() {
         let d = UserDefaults.standard
-        for key in Self.ownedDefaultsKeys { d.removeObject(forKey: key) }
+        for key in Self.ownedDefaultsKeys + Self.retiredDefaultsKeys { d.removeObject(forKey: key) }
     }
 }
 

@@ -13,6 +13,11 @@ final class EventTap {
     private var source: CFRunLoopSource?
     private let handler: Handler
 
+    /// Times the system disabled the tap for overrunning its deadline — we were too slow.
+    private(set) var timeoutDisableCount = 0
+    /// Times the system disabled the tap for user input (e.g. Ctrl-Alt-Cmd-Esc) — expected, not alarming.
+    private(set) var userInputDisableCount = 0
+
     init(handler: @escaping Handler) {
         self.handler = handler
     }
@@ -65,7 +70,15 @@ final class EventTap {
     private func dispatch(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // The system kills the tap if we ever overrun its deadline. Switch it back on rather
         // than silently losing every future keystroke.
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if type == .tapDisabledByTimeout {
+            timeoutDisableCount += 1
+            Log.tap.error("Tap disabled by timeout (overran deadline), re-enabling. Count: \(self.timeoutDisableCount, privacy: .public)")
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        if type == .tapDisabledByUserInput {
+            userInputDisableCount += 1
+            Log.tap.notice("Tap disabled by user input, re-enabling. Count: \(self.userInputDisableCount, privacy: .public)")
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }

@@ -11,6 +11,12 @@ let package = Package(
             name: "CmdTab",
             path: "Sources/CmdTab",
             swiftSettings: [.swiftLanguageMode(.v5)]
-        )
+        ),
+        .testTarget(
+            name: "CmdTabTests",
+            dependencies: ["CmdTab"],
+            path: "Tests/CmdTabTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

@@ -40,8 +40,12 @@ actor WindowCapture {
     func thumbnails(for pid: pid_t, maxCount: Int = 12, maxHeight: CGFloat = 150) async
         -> [WindowThumb]
     {
+        guard !Task.isCancelled else { return [] }
         guard Permissions.canCaptureScreen else { return [] }
         guard let content = await shareableContent() else { return [] }
+        // `shareableContent()` suspends on a system-wide enumeration; a hover that moved on while it
+        // was in flight should not go on to spend a dozen GPU captures on a tile nobody is over.
+        guard !Task.isCancelled else { return [] }
 
         // Standard-layer windows of this app, across every Space. `onScreenWindowsOnly: false` is
         // deliberate — a window on another Space still captures its real backing surface, so limiting
@@ -54,7 +58,10 @@ actor WindowCapture {
         // mode. Fall back to a size filter when the ids can't be resolved or don't line up with the
         // captured windows. Either way, a blank capture is dropped below — that is what removes the
         // Electron/Catalyst phantom backing windows those apps expose (a hidden, transparent window).
-        let order = switchableIDs(for: pid)
+        let order = await switchableIDs(for: pid)
+        // `switchableIDs` can itself sit through the full AX timeout against a beach-balling app
+        // (see its doc comment); worth re-checking before committing to a round of captures.
+        guard !Task.isCancelled else { return [] }
         let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
         var windows = appWindows.filter { rank[$0.windowID] != nil }
         if windows.isEmpty {
@@ -68,6 +75,9 @@ actor WindowCapture {
         let captured = await withTaskGroup(of: (Int, WindowThumb?).self) { group in
             for (index, window) in selected.enumerated() {
                 group.addTask {
+                    // Child tasks inherit cancellation from this method's `Task`; a capture still
+                    // queued when the hover moves on should never start.
+                    guard !Task.isCancelled else { return (index, nil) }
                     guard let image = try? await Self.capture(window, maxHeight: maxHeight),
                         !Self.isBlank(image)
                     else { return (index, nil) }
@@ -106,9 +116,15 @@ actor WindowCapture {
 
     /// The app's switchable window ids (ordered), cached for `ttl` to spare the Accessibility
     /// round-trips when the same app tile is revisited.
-    private func switchableIDs(for pid: pid_t) -> [CGWindowID] {
+    ///
+    /// The AX work runs off the actor. `TargetProvider.switchableWindowIDs` is synchronous and does
+    /// two `AXUIElementCopyAttributeValue` round-trips per window, each of which can burn the full
+    /// AX timeout against a beach-balling app — several seconds for an app with a dozen windows.
+    /// Run inline it would hold the actor with no suspension point, so every other hover queues
+    /// behind one wedged app and the previews stop appearing entirely until it clears.
+    private func switchableIDs(for pid: pid_t) async -> [CGWindowID] {
         if let entry = idCache[pid], Date().timeIntervalSince(entry.at) < ttl { return entry.ids }
-        let ids = TargetProvider.switchableWindowIDs(for: pid)
+        let ids = await Task.detached { TargetProvider.switchableWindowIDs(for: pid) }.value
         idCache[pid] = (ids, Date())
         return ids
     }
@@ -120,17 +136,25 @@ actor WindowCapture {
         let side = 16
         var data = [UInt8](repeating: 0, count: side * side * 4)
         let space = CGColorSpaceCreateDeviceRGB()
-        guard
-            let ctx = CGContext(
-                data: &data, width: side, height: side, bitsPerComponent: 8,
-                bytesPerRow: side * 4, space: space,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return false }
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
-        var opaque = 0
-        for i in stride(from: 3, to: data.count, by: 4) where data[i] > 8 { opaque += 1 }
-        // Real windows fill almost the whole frame; a transparent phantom leaves it near-empty.
-        return opaque < (side * side) / 10
+        // Create, draw, and read entirely inside the closure. Passing `&data` to `CGContext` would
+        // be an inout-to-pointer conversion, which is only guaranteed valid for the duration of the
+        // initializer call itself — but the context keeps the pointer and writes through it during
+        // `draw`, after that call has returned. The compiler is free to hand over a temporary
+        // buffer and copy back, in which case `draw` scribbles on freed memory and the alpha scan
+        // reads uninitialized bytes, making the blank/not-blank verdict arbitrary.
+        return data.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress,
+                let ctx = CGContext(
+                    data: base, width: side, height: side, bitsPerComponent: 8,
+                    bytesPerRow: side * 4, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            var opaque = 0
+            for i in stride(from: 3, to: raw.count, by: 4) where raw[i] > 8 { opaque += 1 }
+            // Real windows fill almost the whole frame; a transparent phantom leaves it near-empty.
+            return opaque < (side * side) / 10
+        }
     }
 
     private static func capture(_ window: SCWindow, maxHeight: CGFloat) async throws -> CGImage? {
@@ -344,11 +368,26 @@ final class WindowPreviewPanel: NSPanel {
         // the strip never floats over other tiles (which — now that it takes clicks — would make
         // those tiles unhoverable and unclickable).
         var x = tileRect.midX - size.width / 2
-        var y = switcherFrame.maxY + gap  // above the switcher
-        if y + size.height > visible.maxY { y = switcherFrame.minY - gap - size.height }  // else below
+        let above = switcherFrame.maxY + gap
+        let below = switcherFrame.minY - gap - size.height
+        let roomAbove = visible.maxY - above
+        let roomBelow = (switcherFrame.minY - gap) - visible.minY
+        // Prefer above, then below. When the strip fits in neither gap, anchor it into the larger
+        // one and let it run off the screen edge rather than clamping it back on-screen — the old
+        // `max(visible.minY, y)` did exactly that and dropped the strip on top of the switcher,
+        // which (since the strip takes clicks and reports `.overPreview` for any point inside it)
+        // made the tiles underneath unhoverable and unclickable. That is the precise failure this
+        // placement exists to prevent, so overflowing the screen edge is the better trade.
+        var y: CGFloat
+        if size.height <= roomAbove {
+            y = above
+        } else if size.height <= roomBelow {
+            y = below
+        } else {
+            y = roomAbove >= roomBelow ? above : below
+        }
         let maxX = max(visible.minX, visible.maxX - size.width)
         x = x.clamped(to: visible.minX...maxX)
-        y = max(visible.minY, y)
 
         setFrameOrigin(NSPoint(x: x, y: y))
         orderFrontRegardless()

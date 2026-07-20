@@ -85,6 +85,51 @@ struct SwitcherShortcuts: Equatable {
     func action(code: Int, extra: CGEventFlags) -> SwitcherAction? {
         SwitcherAction.allCases.first { bindings[$0]?.matches(code: code, extra: extra) == true }
     }
+
+    // MARK: - Trigger conflicts
+
+    /// The action modifiers a trigger swallows: ⌥ and ⌃ are the two an action binding can be built
+    /// from, and a trigger that holds one for its whole session makes it unusable as an *extra*.
+    /// ⌘ is never in play — no binding uses it, because it is always held.
+    static func modifiersClaimed(by trigger: Hotkey) -> CGEventFlags {
+        trigger.heldModifiers.intersection([.maskAlternate, .maskControl])
+    }
+
+    /// Actions whose binding cannot fire while `trigger` is the opening chord.
+    ///
+    /// Bindings are matched against the modifiers held *on top of* the trigger, so a modifier the
+    /// trigger already claims can never appear there — an action needing ⌥ is physically unreachable
+    /// when ⌥ is what opens the switcher. There is no way to tell the two apart: the hardware
+    /// reports one ⌥. And the failure is worse than the action merely going dead, because the
+    /// keypress then falls through to type-to-filter — ⌘⌥Q types "q" instead of quitting.
+    func actionsShadowed(by trigger: Hotkey) -> [SwitcherAction] {
+        let claimed = Self.modifiersClaimed(by: trigger)
+        guard !claimed.isEmpty else { return [] }
+        return SwitcherAction.allCases.filter {
+            !(bindings[$0]?.extras.intersection(claimed).isEmpty ?? true)
+        }
+    }
+
+    /// The action modifier still free under `trigger`, or nil when it claims both.
+    static func freeModifier(under trigger: Hotkey) -> CGEventFlags? {
+        let claimed = Self.modifiersClaimed(by: trigger)
+        return [CGEventFlags.maskAlternate, .maskControl].first { !claimed.contains($0) }
+    }
+
+    /// A copy with every shadowed binding moved onto `replacement`. ⇧ is preserved — it is only ever
+    /// a qualifier on top of ⌥/⌃ (⌥Q quit vs ⌥⇧Q force-quit), so dropping it would collapse pairs of
+    /// bindings onto each other.
+    func rebindingShadowed(by trigger: Hotkey, to replacement: CGEventFlags) -> SwitcherShortcuts {
+        let claimed = Self.modifiersClaimed(by: trigger)
+        var copy = self
+        for action in actionsShadowed(by: trigger) {
+            guard let existing = copy.bindings[action] else { continue }
+            let kept = existing.extras.subtracting(claimed)
+            copy.bindings[action] = ActionShortcut(
+                keyCode: existing.keyCode, modifierRaw: kept.union(replacement).rawValue)
+        }
+        return copy
+    }
 }
 
 /// Persists the per-action bindings and notifies the switcher when they change.
@@ -107,6 +152,12 @@ final class SwitcherShortcutsStore: ObservableObject {
 
     func resetToDefaults() {
         shortcuts = .defaults
+        persist()
+    }
+
+    /// Replaces every binding at once — used when a new trigger forces the shadowed ones to move.
+    func replaceAll(with new: SwitcherShortcuts) {
+        shortcuts = new
         persist()
     }
 

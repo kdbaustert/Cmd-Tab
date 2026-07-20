@@ -25,18 +25,24 @@ private enum Key {
 /// Everything here runs on the main thread from inside the event tap callback, so it must stay
 /// cheap. The expensive part — enumerating windows over Accessibility — is deferred to the
 /// provider's background refresh and lands after the panel is already on screen.
+///
+/// The invariant that keeps this safe, and that any new feature on the key path has to hold to:
+/// **`handle` reads cheap in-memory state, decides swallow / don't-swallow, and posts everything
+/// else.** A tap that overruns the system's deadline is disabled outright, and while it is down
+/// every keystroke on the machine is dropped — so SwiftUI layout, Accessibility calls, LaunchServices
+/// and NSWorkspace all belong behind a `DispatchQueue.main.async`, never inline.
 @MainActor
 final class SwitcherController {
     private let model = SwitcherModel()
     private let provider = TargetProvider()
     private lazy var panel = SwitcherPanel(model: model)
-    private lazy var previewPanel = WindowPreviewPanel()
-    private var previewWork: DispatchWorkItem?
-    private var previewTask: Task<Void, Never>?
-    /// Grace-period teardown of the preview, cancelled if the cursor reaches the preview or a tile.
-    private var previewDismissWork: DispatchWorkItem?
+    private lazy var preview = PreviewCoordinator(switcher: panel) { [weak self] in
+        self?.isVisible ?? false
+    }
     private var tap: EventTap?
     private var isVisible = false
+    /// Second source of truth for "is the trigger still down". See `startWatchdog`.
+    private var watchdog: Timer?
 
     // Quick-switch arming: between a trigger press and the show-delay firing, the panel is not yet
     // on screen. Releasing the modifier in that window switches straight to the previous target.
@@ -210,15 +216,34 @@ final class SwitcherController {
     }
 
     /// User-configurable key bindings for the in-switcher window actions.
-    var shortcuts: SwitcherShortcuts = .defaults
+    var shortcuts: SwitcherShortcuts = .defaults {
+        didSet { warnAboutShadowedActions() }
+    }
 
     /// The combination that opens the switcher. Changing it re-syncs the system ⌘-Tab: the native
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
     var hotkey: Hotkey = .commandTab {
         didSet {
+            warnAboutShadowedActions()
             guard hotkey != oldValue, isRunning else { return }
             SystemSwitcher.setNativeEnabled(!hotkey.isCommandTab)
         }
+    }
+
+    /// Logs a trigger/action modifier collision.
+    ///
+    /// Settings refuses to *create* this combination, but a config written before that check existed,
+    /// imported from another machine, or hand-edited in the defaults plist can still arrive here —
+    /// and the symptom (actions dead, their keys typing into the filter) gives no hint of the cause.
+    private func warnAboutShadowedActions() {
+        let shadowed = shortcuts.actionsShadowed(by: hotkey)
+        guard !shadowed.isEmpty else { return }
+        Log.tap.error(
+            """
+            trigger \(self.hotkey.displayString, privacy: .public) claims a modifier \
+            \(shadowed.count, privacy: .public) action(s) need as an extra; they cannot fire: \
+            \(shadowed.map(\.title).joined(separator: ", "), privacy: .public)
+            """)
     }
 
     var isRunning: Bool { tap?.isRunning ?? false }
@@ -243,13 +268,12 @@ final class SwitcherController {
             guard let self, self.isVisible else { return }
             self.advance(step)
         }
-        panel.onPreviewHover = { [weak self] target in self?.previewHover(target) }
-        panel.isOverPreview = { [weak self] point in self?.previewPanel.isShowing(point) ?? false }
-        previewPanel.onPick = { [weak self] thumb in
+        panel.onPreviewHover = { [weak self] target in self?.preview.hover(target) }
+        panel.isOverPreview = { [weak self] point in self?.preview.isShowing(point) ?? false }
+        preview.onPick = { [weak self] thumb in
             SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
             self?.cancel()
         }
-        previewPanel.onScroll = { [weak self] event in self?.panel.forwardScroll(event) }
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
         // hotkey leaves the native switcher alone.
         let disabled = hotkey.isCommandTab ? SystemSwitcher.setNativeEnabled(false) : false
@@ -270,16 +294,13 @@ final class SwitcherController {
 
     // MARK: - Event handling
 
-    /// Exact match on the primary modifiers (Shift excluded) — used to decide whether a keypress
-    /// is our trigger chord, so ⌘-Tab opens only on exactly ⌘.
+    /// See `TriggerModifiers` — the arithmetic lives there so it can be tested on its own.
     private func modifiersMatch(_ flags: CGEventFlags, _ held: CGEventFlags) -> Bool {
-        flags.intersection([.maskCommand, .maskAlternate, .maskControl]) == held
+        TriggerModifiers.opens(flags, held: held)
     }
 
-    /// The opening modifier is *still down*, tolerating extra modifiers the user may add. A session
-    /// ends only when the trigger modifier itself is released, not when another one is pressed.
     private func stillHeld(_ flags: CGEventFlags, _ held: CGEventFlags) -> Bool {
-        flags.intersection([.maskCommand, .maskAlternate, .maskControl]).isSuperset(of: held)
+        TriggerModifiers.stillHeld(flags, held: held)
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
@@ -325,8 +346,12 @@ final class SwitcherController {
     /// Moves the highlight and keeps the keyboard-selected preview in step with it.
     private func advance(_ delta: Int) {
         model.step(delta)
-        panel.layout()
-        panel.previewSelectedTile()
+        // Off the tap callback — see `scheduleLayout`.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.panel.layout()
+            self.panel.previewSelectedTile()
+        }
     }
 
     private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
@@ -348,8 +373,12 @@ final class SwitcherController {
         // Navigation and editing keys.
         switch code {
         case Key.escape:
-            // Backing out of a query first, then out of the switcher — like a search field.
-            if model.query.isEmpty { cancel() } else { setQuery("") }
+            // Unconditional, deliberately. While the panel is up this handler swallows every key on
+            // the system, so Escape is the user's last-resort way out and must never depend on any
+            // other state. Backspace already backs out of a query character by character, so making
+            // Escape search-field-like ("first press clears the query") bought very little and cost
+            // the one exit that is supposed to always work.
+            cancel()
             return true
         case Key.rightArrow: advance(1); return true
         case Key.leftArrow: advance(-1); return true
@@ -378,8 +407,23 @@ final class SwitcherController {
     /// Applies a new filter query and relays out — the list, and often its column count, change.
     private func setQuery(_ query: String) {
         model.setQuery(query)
-        panel.layout()
-        panel.refreshHoverPreview()
+        scheduleLayout()
+    }
+
+    /// Relayout on the next main-loop turn instead of inline.
+    ///
+    /// `panel.layout()` reassigns the hosting view's root, runs `layoutSubtreeIfNeeded`, reads
+    /// `fittingSize` and resizes the window — all synchronous SwiftUI work. Every caller on the key
+    /// path runs inside the `CGEventTap` callback, and a tap that overruns the system's deadline is
+    /// disabled outright: macOS posts `tapDisabledByTimeout` and *every* keystroke during the stall
+    /// is dropped machine-wide. Type-to-filter made that a per-character risk rather than a
+    /// per-Tab-press one. Hopping off the callback first keeps the tap's own work trivial.
+    private func scheduleLayout() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.panel.layout()
+            self.panel.refreshHoverPreview()
+        }
     }
 
     /// The character a key event would type, ignoring ⌘/⌥/⌃ (Shift/Caps kept for case) and honouring
@@ -420,6 +464,8 @@ final class SwitcherController {
             }
             armWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + showDelay, execute: work)
+            // Armed swallows keys too, and gets out the same way — so it needs the same failsafe.
+            startWatchdog()
             return true
         }
         showWith(targets: targets, backwards: backwards)
@@ -441,39 +487,43 @@ final class SwitcherController {
         // The frontmost app/window is index 0, so a plain tap lands on the previous one.
         model.selection = backwards ? targets.count - 1 : min(1, targets.count - 1)
 
+        // The state flip stays synchronous — the very next key event has to see `isVisible` — but
+        // everything that *costs* anything is deferred. `panel.show()` runs a full SwiftUI layout,
+        // and `provider.refresh` does `switchableApps()`, screen-frame lookups and `launchFavorites`
+        // (NSWorkspace/LaunchServices) on the calling thread before it ever reaches its background
+        // queue. All of that was running inside the event-tap callback, which is the one place in
+        // this app where being slow costs the user every keystroke on the machine.
         isVisible = true
-        panel.show()
-        Log.general.notice("panel shown: frame=\(NSStringFromRect(self.panel.frame))")
+        startWatchdog()
 
-        // The cache can be a moment stale; fold in a fresh list without disturbing the highlight.
-        let fold: ([SwitchTarget]) -> Void = { [weak self] fresh in
+        DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
-            self.model.update(targets: fresh)
-            self.finishListMutation()
+            self.panel.show()
+            Log.general.notice("panel shown: frame=\(NSStringFromRect(self.panel.frame))")
+
+            // The cache can be a moment stale; fold in a fresh list without disturbing the highlight.
+            self.provider.refresh { [weak self] fresh in
+                guard let self, self.isVisible else { return }
+                self.model.update(targets: fresh)
+                self.finishListMutation()
+            }
         }
-        provider.refresh(then: fold)
     }
 
     private func hide() {
         isVisible = false
+        stopWatchdog()
         panel.hide()
-        // Tear the preview down at once. `panel.hide()` only *schedules* the grace dismiss, which
-        // would leave the strip floating over the just-activated app — and, if the switcher reopens
-        // within that window, let a stale preview be pinned into the new session.
-        previewWork?.cancel()
-        previewWork = nil
-        previewTask?.cancel()
-        previewTask = nil
-        previewDismissWork?.cancel()
-        previewDismissWork = nil
-        previewPanel.dismiss()
+        preview.teardown()
     }
 
     private func commit() {
         guard isVisible else { return }
         let target = model.selected
         hide()
-        target?.focus()
+        // Off the tap callback — activating an app is an AX / NSWorkspace round-trip against a
+        // process that may not answer promptly.
+        DispatchQueue.main.async { target?.focus() }
     }
 
     /// Modifier released. In the tap window this is a quick-switch to the previous target with no
@@ -483,8 +533,12 @@ final class SwitcherController {
             armWorkItem?.cancel()
             armWorkItem = nil
             armed = false
+            stopWatchdog()
             let index = armedBackwards ? armedTargets.count - 1 : min(1, armedTargets.count - 1)
-            if armedTargets.indices.contains(index) { armedTargets[index].focus() }
+            if armedTargets.indices.contains(index) {
+                let target = armedTargets[index]
+                DispatchQueue.main.async { target.focus() }
+            }
             return
         }
         commit()
@@ -494,8 +548,49 @@ final class SwitcherController {
         armed = false
         armWorkItem?.cancel()
         armWorkItem = nil
+        stopWatchdog()
         guard isVisible else { return }
         hide()
+    }
+
+    // MARK: - Session watchdog
+
+    /// Polls the *real* modifier state for as long as a session is open.
+    ///
+    /// The normal way a session ends is a `.flagsChanged` telling us the trigger modifier came up.
+    /// That event is not guaranteed to arrive: another session-level, head-inserted tap ahead of
+    /// ours can consume it, and keyboard remappers (Karabiner and the like) both rewrite and
+    /// synthesize modifier events. A missed release used to be unrecoverable — `isVisible` stayed
+    /// true, and since `handleVisibleKey` swallows every key that reaches it, the result was a
+    /// system-wide keyboard lockout with no way out but killing the app or logging out.
+    ///
+    /// Querying the hardware state gives us an exit that does not depend on an event being
+    /// delivered. Deliberately *not* a timeout: holding the trigger for a long time is legitimate,
+    /// so the session ends when the modifier is actually up, never merely because time passed.
+    private func startWatchdog() {
+        guard watchdog == nil else { return }
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.watchdogTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
+    }
+
+    private func stopWatchdog() {
+        watchdog?.invalidate()
+        watchdog = nil
+    }
+
+    private func watchdogTick() {
+        guard isVisible || armed else {
+            stopWatchdog()
+            return
+        }
+        // `.combinedSessionState` is the post-tap view of what is physically held, so it stays
+        // right even when the event that would have told us never reached our callback.
+        guard !stillHeld(CGEventSource.flagsState(.combinedSessionState), activeHeld) else { return }
+        Log.tap.error("watchdog: trigger released with no flagsChanged; ending session")
+        releaseTrigger()
     }
 
     /// Switches straight to the numbered tile rather than just moving the highlight — the number
@@ -550,8 +645,7 @@ final class SwitcherController {
         if !model.hasAnyTarget {
             cancel()
         } else {
-            panel.layout()
-            panel.refreshHoverPreview()
+            scheduleLayout()
         }
     }
 
@@ -560,6 +654,15 @@ final class SwitcherController {
     /// action through would hit *all* of them (or, for hide-others, hide the entire session).
     private func perform(_ action: SwitcherAction) {
         guard model.selected?.isLaunchable == false else { return }
+        // Off the tap callback: every one of these reaches Accessibility or NSWorkspace, and
+        // `hideOthers` walks the whole running-application list. See the type's doc comment.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.execute(action)
+        }
+    }
+
+    private func execute(_ action: SwitcherAction) {
         switch action {
         case .quit: quitSelected()
         case .forceQuit: forceQuitSelected()
@@ -619,55 +722,4 @@ final class SwitcherController {
         commit()
     }
 
-    // MARK: - Window preview
-
-    /// Reacts to what the cursor points at. A tile (re)captures its preview after a short debounce;
-    /// sitting on the preview cancels any teardown so its thumbnails can be clicked; leaving both
-    /// schedules a *grace-delayed* dismissal so the cursor can cross the gap from tile to preview
-    /// without the strip vanishing mid-move.
-    private func previewHover(_ target: PreviewHoverTarget) {
-        previewDismissWork?.cancel()
-        previewDismissWork = nil
-        switch target {
-        case .tile(let pid, let rect):
-            previewWork?.cancel()
-            previewWork = nil
-            previewTask?.cancel()
-            previewTask = nil
-            let work = DispatchWorkItem { [weak self] in
-                MainActor.assumeIsolated { self?.capturePreview(pid: pid, tileRect: rect) }
-            }
-            previewWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-        case .overPreview:
-            // Keep what's shown; just stop any pending new capture.
-            previewWork?.cancel()
-            previewWork = nil
-        case .away:
-            previewWork?.cancel()
-            previewWork = nil
-            previewTask?.cancel()
-            previewTask = nil
-            let work = DispatchWorkItem { [weak self] in self?.previewPanel.dismiss() }
-            previewDismissWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
-        }
-    }
-
-    /// Captures the app's windows off the main thread, then floats them if the switcher is still up
-    /// and the capture was not superseded. Empty (no permission, or nothing to show) hides the strip.
-    private func capturePreview(pid: pid_t, tileRect: NSRect) {
-        let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
-        previewTask = Task { [weak self] in
-            let thumbs = await WindowCapture.shared.thumbnails(for: pid)
-            guard !Task.isCancelled, let self, self.isVisible else { return }
-            if thumbs.isEmpty {
-                self.previewPanel.dismiss()
-            } else {
-                self.previewPanel.present(
-                    thumbs: thumbs, appName: appName, over: tileRect, clearOf: self.panel.frame,
-                    appearance: self.panel.effectiveAppearance)
-            }
-        }
-    }
 }

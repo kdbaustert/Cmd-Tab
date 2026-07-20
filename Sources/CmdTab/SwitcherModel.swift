@@ -29,6 +29,17 @@ final class SwitcherModel: ObservableObject {
     /// Point size of tile titles.
     @Published var titleFontSize: CGFloat = 10
 
+    /// Each tile's frame, keyed by index, in the panel's content coordinates (top-left origin) —
+    /// reported by the view itself rather than re-derived from the grid's parameters.
+    ///
+    /// Not `@Published`: it is produced *by* the layout pass, so republishing it would re-enter the
+    /// pass that wrote it. It feeds `SwitcherPanel`'s hit-testing only, never the view.
+    ///
+    /// `SwitcherPanel.layout()` clears this. An empty map means "geometry not reported yet", which
+    /// hit-testing must read as "no tile" — mapping a cursor onto frames left over from a previous
+    /// list would select whichever app has since taken that slot.
+    var tileFrames: [Int: CGRect] = [:]
+
     /// Whether tiles carry a title in the current mode.
     var showsTitle: Bool { mode == .windows || alwaysShowTitles }
 

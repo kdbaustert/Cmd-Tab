@@ -77,16 +77,33 @@ struct Metrics: Equatable {
     }
 }
 
+/// Reports each tile's laid-out frame up to the panel for cursor hit-testing.
+///
+/// The panel used to re-derive tile positions from the grid's own parameters — padding, gap, column
+/// stride, reading order. That duplicated the layout in a second place that no compiler checks, and
+/// it broke every time the view gained a sibling: a long filter query made the search bar the widest
+/// child, SwiftUI centred the narrower grid inside the wider panel, and the arithmetic — still
+/// assuming the grid started at the panel's padding inset — silently mapped clicks onto the
+/// neighbouring app. Letting the tiles report where they actually ended up removes the whole class.
+private struct TileFrameKey: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { first, _ in first })
+    }
+}
+
 struct SwitcherView: View {
     @ObservedObject var model: SwitcherModel
     let columns: Int
+
+    /// Name of the coordinate space tile frames are measured in — the panel's content, so a screen
+    /// point maps straight onto them after flipping.
+    static let space = "switcherContent"
 
     private var metrics: Metrics { model.metrics }
     private var tile: CGSize { metrics.tile(for: model.mode, showsTitle: model.showsTitle) }
 
     var body: some View {
-        // The grid stays the first child so `SwitcherPanel.tileIndex` — which maps the cursor from the
-        // top of the panel — needs no offset; the search line sits at the bottom with the caption.
         VStack(spacing: metrics.titleSpacing) {
             if model.targets.isEmpty {
                 noMatches
@@ -106,6 +123,8 @@ struct SwitcherView: View {
         )
         .opacity(model.opacity)
         .fixedSize()
+        .coordinateSpace(name: Self.space)
+        .onPreferenceChange(TileFrameKey.self) { model.tileFrames = $0 }
     }
 
     private var grid: some View {
@@ -129,6 +148,12 @@ struct SwitcherView: View {
                     // The ⌘-number jump is disabled while filtering (digits type into the query),
                     // so the badges come off too.
                     number: model.showNumbers && model.query.isEmpty && index < 9 ? index + 1 : nil)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: TileFrameKey.self,
+                                value: [index: geo.frame(in: .named(SwitcherView.space))])
+                        })
             }
         }
     }
@@ -145,6 +170,11 @@ struct SwitcherView: View {
         .padding(.vertical, 3)
         .padding(.horizontal, 8)
         .background(Capsule().fill(Color.primary.opacity(0.08)))
+        // Clamped to the grid's width for the same reason `caption` is: a long query against a
+        // one- or two-match list would otherwise be the widest child and stretch the panel around
+        // it. Purely cosmetic now — hit-testing reads the frames the tiles report, so an off-centre
+        // grid is no longer a correctness problem, just an ugly one.
+        .frame(maxWidth: CGFloat(max(columns, 1)) * tile.width)
     }
 
     private var noMatches: some View {
