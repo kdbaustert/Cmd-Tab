@@ -13,7 +13,10 @@ struct SettingsView: View {
                 .tabItem { Label("Excluded Apps", systemImage: "eye.slash") }
         }
         .padding(12)
-        .frame(width: 470, height: 620)
+        // Rows are label — spacer — control, so width is what keeps the two columns apart and gives
+        // the help text under each row a sensible measure. The controls grew (the same-app cycle row
+        // carries a toggle *and* a 220pt recorder), which left the old 470 cramped.
+        .frame(width: 620, height: 620)
     }
 }
 
