@@ -301,7 +301,13 @@ final class BehaviorStore: ObservableObject {
         didSet { store(windowPreview, Key.windowPreview, oldValue != windowPreview) }
     }
 
-    static let defaultHighlight = Color.accentColor
+    /// Tint of the selected/hovered tile. A neutral grey rather than the system accent: the
+    /// highlight sits directly behind app icons of every colour, and an accent-tinted one fights
+    /// whichever icon it lands on.
+    ///
+    /// Force-unwrapped deliberately — a malformed literal here is a build-time mistake, not a
+    /// runtime condition worth carrying a fallback for.
+    static let defaultHighlight = Color(hex: "#434648")!
 
     private init() {
         let d = UserDefaults.standard
