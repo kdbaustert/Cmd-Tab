@@ -13,8 +13,9 @@ final class PreviewCoordinator {
     var onPick: ((WindowThumb) -> Void)?
 
     private let strip = WindowPreviewPanel()
-    /// The switcher the strip positions itself against and forwards scrolls to.
-    private unowned let switcher: SwitcherPanel
+    /// The switcher the strip positions itself against and forwards scrolls to. The group rather
+    /// than a panel: mirrored, the strip has to clear every panel, not just the one it grew from.
+    private unowned let switcher: PanelGroup
     /// Whether a session is still open. A capture that lands after the switcher went away must not
     /// draw the strip over whatever the user just switched to.
     private let isActive: () -> Bool
@@ -31,7 +32,7 @@ final class PreviewCoordinator {
     /// Covers the gap between a tile and the strip, so crossing it doesn't dismiss mid-move.
     private let dismissDelay: TimeInterval = 0.35
 
-    init(switcher: SwitcherPanel, isActive: @escaping () -> Bool) {
+    init(switcher: PanelGroup, isActive: @escaping () -> Bool) {
         self.switcher = switcher
         self.isActive = isActive
         strip.onPick = { [weak self] thumb in self?.onPick?(thumb) }

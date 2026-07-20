@@ -95,6 +95,13 @@ private struct TileFrameKey: PreferenceKey {
 struct SwitcherView: View {
     @ObservedObject var model: SwitcherModel
     let columns: Int
+    /// Where this instance reports its tile geometry.
+    ///
+    /// Per-instance rather than written onto the shared model, because mirroring puts one of these
+    /// views on every display at once. They share a model but each has its own coordinate space, so
+    /// a single shared map would have them overwriting each other's frames and hit-testing against
+    /// whichever display reported last.
+    let onTileFrames: ([Int: CGRect]) -> Void
 
     /// Name of the coordinate space tile frames are measured in — the panel's content, so a screen
     /// point maps straight onto them after flipping.
@@ -124,7 +131,7 @@ struct SwitcherView: View {
         .opacity(model.opacity)
         .fixedSize()
         .coordinateSpace(name: Self.space)
-        .onPreferenceChange(TileFrameKey.self) { model.tileFrames = $0 }
+        .onPreferenceChange(TileFrameKey.self) { onTileFrames($0) }
     }
 
     private var grid: some View {

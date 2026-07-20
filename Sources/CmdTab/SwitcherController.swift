@@ -38,8 +38,8 @@ private enum Key {
 final class SwitcherController {
     private let model = SwitcherModel()
     private let provider = TargetProvider()
-    private lazy var panel = SwitcherPanel(model: model)
-    private lazy var preview = PreviewCoordinator(switcher: panel) { [weak self] in
+    private lazy var panels = PanelGroup(model: model)
+    private lazy var preview = PreviewCoordinator(switcher: panels) { [weak self] in
         self?.isVisible ?? false
     }
     private var tap: EventTap?
@@ -87,7 +87,7 @@ final class SwitcherController {
         set {
             guard newValue != model.metrics else { return }
             model.metrics = newValue
-            if isVisible { panel.layout() }
+            if isVisible { panels.layout() }
         }
     }
 
@@ -140,19 +140,26 @@ final class SwitcherController {
     }
 
     var panelAppearance: PanelAppearance {
-        get { panel.appearanceMode }
+        get { panels.appearanceMode }
         set {
-            panel.appearanceMode = newValue
-            if isVisible { panel.layout() }
+            panels.appearanceMode = newValue
+            if isVisible { panels.layout() }
         }
     }
 
     var panelPosition: PanelPosition {
-        get { panel.positionMode }
+        get { panels.positionMode }
         set {
-            panel.positionMode = newValue
-            if isVisible { panel.layout() }
+            panels.positionMode = newValue
+            if isVisible { panels.layout() }
         }
+    }
+
+    /// Which displays the switcher occupies. Takes effect on the next session — changing the number
+    /// of panels under a live selection would mean tearing windows out from under the user.
+    var panelScreens: PanelScreens {
+        get { panels.screens }
+        set { panels.screens = newValue }
     }
 
     var highlightColor: Color {
@@ -170,7 +177,7 @@ final class SwitcherController {
         set {
             guard newValue != model.alwaysShowTitles else { return }
             model.alwaysShowTitles = newValue
-            if isVisible { panel.layout() }
+            if isVisible { panels.layout() }
         }
     }
 
@@ -184,13 +191,13 @@ final class SwitcherController {
         set {
             guard newValue != model.titleFontSize else { return }
             model.titleFontSize = newValue
-            if isVisible { panel.layout() }
+            if isVisible { panels.layout() }
         }
     }
 
     var fade: Bool {
-        get { panel.fade }
-        set { panel.fade = newValue }
+        get { panels.fade }
+        set { panels.fade = newValue }
     }
 
     var panelMaterial: PanelMaterial {
@@ -210,16 +217,16 @@ final class SwitcherController {
         set {
             guard newValue != model.blurRadius else { return }
             model.blurRadius = newValue
-            if isVisible { panel.layout() }
+            if isVisible { panels.layout() }
         }
     }
 
     var maxColumns: Int {
-        get { panel.maxColumns }
+        get { panels.maxColumns }
         set {
-            guard newValue != panel.maxColumns else { return }
-            panel.maxColumns = newValue
-            if isVisible { panel.layout() }
+            guard newValue != panels.maxColumns else { return }
+            panels.maxColumns = newValue
+            if isVisible { panels.layout() }
         }
     }
 
@@ -229,8 +236,8 @@ final class SwitcherController {
 
     /// App mode: float live window thumbnails when a tile is hovered.
     var windowPreview: Bool {
-        get { panel.windowPreviewEnabled }
-        set { panel.windowPreviewEnabled = newValue }
+        get { panels.windowPreviewEnabled }
+        set { panels.windowPreviewEnabled = newValue }
     }
 
     /// Keeps a session open after the trigger modifier is released, for driving the switcher with
@@ -291,13 +298,13 @@ final class SwitcherController {
             return false
         }
         self.tap = tap
-        panel.onPick = { [weak self] index in self?.pick(index) }
-        panel.onScroll = { [weak self] step in
+        panels.onPick = { [weak self] index in self?.pick(index) }
+        panels.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
             self.advance(step)
         }
-        panel.onPreviewHover = { [weak self] target in self?.preview.hover(target) }
-        panel.isOverPreview = { [weak self] point in self?.preview.isShowing(point) ?? false }
+        panels.onPreviewHover = { [weak self] target in self?.preview.hover(target) }
+        panels.isOverPreview = { [weak self] point in self?.preview.isShowing(point) ?? false }
         preview.onPick = { [weak self] thumb in
             SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
             self?.cancel()
@@ -373,7 +380,7 @@ final class SwitcherController {
             showFromArm()
             if code == hotkey.keyCode {
                 model.step(flags.contains(.maskShift) ? -1 : 1)
-                panel.layout()
+                panels.layout()
             }
             return true
         }
@@ -398,8 +405,8 @@ final class SwitcherController {
         // Off the tap callback — see `scheduleLayout`.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
-            self.panel.layout()
-            self.panel.previewSelectedTile()
+            self.panels.layout()
+            self.panels.previewSelectedTile()
         }
     }
 
@@ -481,7 +488,7 @@ final class SwitcherController {
 
     /// Relayout on the next main-loop turn instead of inline.
     ///
-    /// `panel.layout()` reassigns the hosting view's root, runs `layoutSubtreeIfNeeded`, reads
+    /// `panels.layout()` reassigns the hosting view's root, runs `layoutSubtreeIfNeeded`, reads
     /// `fittingSize` and resizes the window — all synchronous SwiftUI work. Every caller on the key
     /// path runs inside the `CGEventTap` callback, and a tap that overruns the system's deadline is
     /// disabled outright: macOS posts `tapDisabledByTimeout` and *every* keystroke during the stall
@@ -490,8 +497,8 @@ final class SwitcherController {
     private func scheduleLayout() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
-            self.panel.layout()
-            self.panel.refreshHoverPreview()
+            self.panels.layout()
+            self.panels.refreshHoverPreview()
         }
     }
 
@@ -575,7 +582,7 @@ final class SwitcherController {
         return true
     }
 
-    /// The show-delay elapsed (or a re-press arrived) while still held: actually draw the panel.
+    /// The show-delay elapsed (or a re-press arrived) while still held: actually draw the panels.
     private func showFromArm() {
         guard armed else { return }
         armWorkItem?.cancel()
@@ -591,7 +598,7 @@ final class SwitcherController {
         model.selection = backwards ? targets.count - 1 : min(1, targets.count - 1)
 
         // The state flip stays synchronous — the very next key event has to see `isVisible` — but
-        // everything that *costs* anything is deferred. `panel.show()` runs a full SwiftUI layout,
+        // everything that *costs* anything is deferred. `panels.show()` runs a full SwiftUI layout,
         // and `provider.refresh` does `switchableApps()`, screen-frame lookups and `launchFavorites`
         // (NSWorkspace/LaunchServices) on the calling thread before it ever reaches its background
         // queue. All of that was running inside the event-tap callback, which is the one place in
@@ -603,8 +610,8 @@ final class SwitcherController {
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
-            self.panel.show()
-            Log.general.notice("panel shown: frame=\(NSStringFromRect(self.panel.frame))")
+            self.panels.show()
+            Log.general.notice("panel shown: frame=\(NSStringFromRect(self.panels.frame))")
 
             // The cache can be a moment stale; fold in a fresh list without disturbing the highlight.
             self.provider.refresh { [weak self] fresh in
@@ -620,7 +627,7 @@ final class SwitcherController {
         isSticky = false
         stopWatchdog()
         stopStickyGuards()
-        panel.hide()
+        panels.hide()
         preview.teardown()
     }
 
@@ -631,9 +638,9 @@ final class SwitcherController {
     /// steer without it. A launch tile has no windows either. Both cases no-op rather than entering
     /// an empty mode.
     private func enterDrill() {
-        guard model.mode == .apps, panel.windowPreviewEnabled,
+        guard model.mode == .apps, panels.windowPreviewEnabled,
             let target = model.selected, !target.isLaunchable,
-            let rect = panel.selectedTileScreenRect
+            let rect = panels.selectedTileScreenRect
         else { return }
         preview.beginSteering(pid: target.pid, tileRect: rect)
     }
@@ -872,7 +879,7 @@ final class SwitcherController {
     /// is still switchable — so the panel just relays out.
     private func minimizeSelected() {
         model.selected?.minimizeWindow()
-        panel.layout()
+        panels.layout()
     }
 
     /// Zooms (maximize / restore) the selected window.

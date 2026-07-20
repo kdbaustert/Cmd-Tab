@@ -53,6 +53,9 @@ struct AppearanceSettings: View {
                     pickerRow("Position", selection: $behavior.panelPosition) {
                         ForEach(PanelPosition.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
+                    pickerRow("Show on", selection: $behavior.panelScreens) {
+                        ForEach(PanelScreens.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
                     pickerRow("Material", selection: $behavior.panelMaterial) {
                         ForEach(PanelMaterial.allCases, id: \.self) { Text($0.title).tag($0) }
                     }

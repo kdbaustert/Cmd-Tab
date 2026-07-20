@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.hotkey = behavior.hotkey
         controller.sameAppHotkey = behavior.sameAppCycle ? behavior.sameAppHotkey : nil
         controller.stickyMode = behavior.stickyMode
+        controller.panelScreens = behavior.panelScreens
         updateStatusItem(behavior)
     }
 

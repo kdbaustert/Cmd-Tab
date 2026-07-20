@@ -20,16 +20,23 @@ final class SwitcherPanel: NSPanel {
     private let model: SwitcherModel
     private var host: NSHostingView<SwitcherView>?
 
-    // The panel never becomes key, so SwiftUI's own hover tracking stays dormant and we drive the
-    // highlight from the raw cursor position instead. This is a timer poll rather than a global
-    // mouse-moved monitor because a global monitor only sees events bound for *other* apps — so the
-    // moment Cmd-Tab itself is frontmost (e.g. right after ⌘Q/⌘H, or after Settings was open) the
-    // monitor goes silent and the highlight stops following the cursor. Polling the location is
-    // immune to that.
-    private var hoverTimer: Timer?
-    private var lastHoverLocation: NSPoint?
-    private var scrollMonitor: Any?
-    private var scrollAccumulator: CGFloat = 0
+    /// Each tile's frame in this panel's content coordinates (top-left origin), reported by its own
+    /// view. Owned per panel: mirroring puts one panel on every display, each with its own layout.
+    ///
+    /// `layout()` clears it. An empty map means "geometry not reported yet", which hit-testing must
+    /// read as "no tile" — matching frames left over from a previous list would select whichever app
+    /// has since taken that slot.
+    private var tileFrames: [Int: CGRect] = [:]
+
+    /// The display this panel is pinned to, or nil to follow the position setting. Set by
+    /// `PanelGroup` when it spreads panels across displays.
+    var pinnedScreen: NSScreen?
+
+    /// Fired once the tiles have reported their frames for the current layout. `layout()` clears the
+    /// geometry and SwiftUI reports the new frames a turn or two later, so anything that needs a
+    /// tile's position has to wait for this rather than reading straight after `layout()`.
+    var onGeometryChange: (() -> Void)?
+
     /// Bumped on every show/hide so a pending fade-out completion can tell it has been superseded.
     private var hideToken = 0
 
@@ -41,21 +48,11 @@ final class SwitcherPanel: NSPanel {
     /// Fade the panel in and out instead of appearing instantly.
     var fade = false
 
-    /// Invoked when a tile is clicked, with its index. Set by the controller to commit the pick.
+    /// Invoked when a tile is clicked, with its index. Set by `PanelGroup` to commit the pick.
     var onPick: ((Int) -> Void)?
-    /// Invoked with a step (+1/-1) when the scroll wheel moves over the panel.
-    var onScroll: ((Int) -> Void)?
-
-    /// App-mode window previews: whether the hover thumbnails are enabled at all.
-    var windowPreviewEnabled = false
-    /// Fires when what the cursor points at (a tile, the preview, or nothing) changes. Only while
-    /// app-mode previews are on.
-    var onPreviewHover: ((PreviewHoverTarget) -> Void)?
-    /// Whether a screen point is over the floating preview panel — the controller answers this so the
-    /// preview stays up (and clickable) while the cursor is on it.
-    var isOverPreview: ((NSPoint) -> Bool)?
-    /// The last target emitted, so nothing re-fires while the cursor sits on the same tile/preview.
-    private var lastPreviewTarget: PreviewHoverTarget = .away
+    /// A scroll that landed on this panel, forwarded up to the group, which owns the accumulator so
+    /// a flick spanning two displays still reads as one gesture.
+    var onScrollEvent: ((NSEvent) -> Void)?
 
     init(model: SwitcherModel) {
         self.model = model
@@ -84,9 +81,18 @@ final class SwitcherPanel: NSPanel {
     /// the panel is never key, so SwiftUI's own gesture recognisers stay dormant (the same reason
     /// hover is driven from a global monitor).
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown, let index = tileIndex(at: NSEvent.mouseLocation) {
-            onPick?(index)
+        switch event.type {
+        case .leftMouseDown:
+            if let index = tileIndex(at: NSEvent.mouseLocation) {
+                onPick?(index)
+                return
+            }
+        case .scrollWheel:
+            // Up to the group, which owns the accumulator.
+            onScrollEvent?(event)
             return
+        default:
+            break
         }
         super.sendEvent(event)
     }
@@ -106,11 +112,9 @@ final class SwitcherPanel: NSPanel {
             alphaValue = 1
             orderFrontRegardless()
         }
-        startHoverTracking()
     }
 
     func hide() {
-        stopHoverTracking()
         // A fade-out has to keep the window up until the animation finishes, so order out in the
         // completion; the instant path just drops it. The token guards against a re-show landing
         // mid-fade — without it the stale completion would order the fresh panel back out.
@@ -131,118 +135,16 @@ final class SwitcherPanel: NSPanel {
         }
     }
 
-    // MARK: - Hover & scroll
-
-    private func startHoverTracking() {
-        guard hoverTimer == nil else { return }
-        // Seed with where the cursor already is, not nil. The old `mouseMoved` monitor could only
-        // fire on actual movement; this poll cannot tell "moved here" from "was already here", so a
-        // nil seed made the first tick treat a resting cursor as a fresh hover and hand the
-        // selection to whatever tile happened to be under it — turning a plain ⌘-Tab into a switch
-        // to the wrong app.
-        lastHoverLocation = NSEvent.mouseLocation
-        // ~60 Hz. Added in .common mode so it keeps firing during tracking run-loop modes.
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateHoverFromCursor() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        hoverTimer = timer
-        // Scroll stays a global monitor — deltas can't be polled. It shares the frontmost-app
-        // limitation above, but scroll-to-move is secondary to the cursor highlight.
-        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) {
-            [weak self] event in
-            MainActor.assumeIsolated { self?.handleScroll(event) }
-        }
-    }
-
-    /// Polls the cursor, moves the highlight to the tile under it, and reports what the preview
-    /// should track. Skips the work when the cursor hasn't moved, so a still cursor costs nothing.
-    private func updateHoverFromCursor() {
-        let location = NSEvent.mouseLocation
-        guard location != lastHoverLocation else { return }
-        lastHoverLocation = location
-        let overPreview = isOverPreview?(location) == true
-        // The highlight follows the tile — but not while over the preview, so it stays put there.
-        let index = overPreview ? nil : tileIndex(at: location)
-        if let index, model.selection != index { model.selection = index }
-        emitPreview(target(overPreview: overPreview, index: index))
-    }
-
-    private func stopHoverTracking() {
-        hoverTimer?.invalidate()
-        hoverTimer = nil
-        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
-        scrollMonitor = nil
-        scrollAccumulator = 0
-        lastHoverLocation = nil
-        // Reset unconditionally (not via emitPreview, which is gated on the setting) so the next
-        // session starts clean. The controller dismisses the preview panel itself on hide.
-        lastPreviewTarget = .away
-    }
-
-    /// The preview target for the given cursor state — the preview panel, a tile, or nothing.
-    private func target(overPreview: Bool, index: Int?) -> PreviewHoverTarget {
-        if overPreview { return .overPreview }
-        if let index, model.targets.indices.contains(index) {
-            return .tile(pid: model.targets[index].pid, rect: tileScreenRect(for: index) ?? .zero)
-        }
-        return .away
-    }
-
-    /// Emits a target change (only in app mode with previews on), deduped so an unchanged target
-    /// doesn't re-fire on every tick.
-    private func emitPreview(_ target: PreviewHoverTarget) {
-        guard windowPreviewEnabled, model.mode == .apps else { return }
-        guard target != lastPreviewTarget else { return }
-        lastPreviewTarget = target
-        onPreviewHover?(target)
-    }
-
-    /// Re-evaluates the preview against whatever tile is under the cursor now. Called after the
-    /// target list changes beneath a stationary cursor — a tile was quit/closed/hidden, or a
-    /// background refresh folded in a new list — so the floating strip follows the app actually there
-    /// (or is dismissed if the tile is gone).
-    func refreshHoverPreview() {
-        let location = NSEvent.mouseLocation
-        emitPreview(target(overPreview: isOverPreview?(location) == true, index: tileIndex(at: location)))
-    }
-
-    /// Previews the tile the *keyboard* has selected, so arrowing/tabbing through the switcher floats
-    /// the same thumbnails hovering does.
-    func previewSelectedTile() {
-        emitPreview(target(overPreview: false, index: model.selection))
-    }
-
     /// The highlighted tile's screen rect, for positioning a keyboard-driven preview against it.
     var selectedTileScreenRect: NSRect? { tileScreenRect(for: model.selection) }
 
     /// The screen rect of tile `index`, in bottom-up screen coordinates — the reported content-space
     /// frame flipped back out to the screen.
-    private func tileScreenRect(for index: Int) -> NSRect? {
-        guard let rect = model.tileFrames[index] else { return nil }
+    func tileScreenRect(for index: Int) -> NSRect? {
+        guard let rect = tileFrames[index] else { return nil }
         return NSRect(
             x: frame.minX + rect.minX, y: frame.maxY - rect.maxY,
             width: rect.width, height: rect.height)
-    }
-
-    /// A scroll that landed on the floating preview instead of the switcher, forwarded here so it
-    /// still moves the selection.
-    func forwardScroll(_ event: NSEvent) { handleScroll(event) }
-
-    /// Turns accumulated scroll travel into discrete selection steps. The threshold keeps a single
-    /// flick of an inertial trackpad from racing through the whole list.
-    private func handleScroll(_ event: NSEvent) {
-        let delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.scrollingDeltaX
-        scrollAccumulator += delta
-        let threshold: CGFloat = 6
-        while scrollAccumulator <= -threshold {
-            scrollAccumulator += threshold
-            onScroll?(1)
-        }
-        while scrollAccumulator >= threshold {
-            scrollAccumulator -= threshold
-            onScroll?(-1)
-        }
     }
 
     /// Maps a screen point to the tile under it, or nil if the cursor is off the grid (gaps, the
@@ -251,10 +153,10 @@ final class SwitcherPanel: NSPanel {
     /// Reads the frames the tiles reported rather than re-deriving them. The gaps between tiles fall
     /// out for free — they belong to no reported frame — where the old arithmetic had to subtract
     /// them back out by hand.
-    private func tileIndex(at screenPoint: NSPoint) -> Int? {
+    func tileIndex(at screenPoint: NSPoint) -> Int? {
         // Content coordinates are top-left origin; flip the bottom-up screen point into them.
         let point = CGPoint(x: screenPoint.x - frame.minX, y: frame.maxY - screenPoint.y)
-        guard let index = model.tileFrames.first(where: { $0.value.contains(point) })?.key,
+        guard let index = tileFrames.first(where: { $0.value.contains(point) })?.key,
             index < model.targets.count
         else { return nil }
         return index
@@ -264,11 +166,18 @@ final class SwitcherPanel: NSPanel {
     func layout() {
         let screen = targetScreen()
         let columns = Self.columns(for: model, on: screen, cap: maxColumns)
-        // Drop the outgoing geometry. The tiles report fresh frames as part of this pass, but until
-        // they land, hit-testing must find nothing rather than match the previous list — after a
-        // filter keystroke the tile at a given slot is usually a different app.
-        model.tileFrames = [:]
-        let view = SwitcherView(model: model, columns: columns)
+        // Deliberately does NOT clear `tileFrames`. `onPreferenceChange` only fires when the reported
+        // value actually changes, so wiping the cache here does not provoke a fresh report — it just
+        // empties it until the tiles happen to move. Relayouts that keep the same geometry (stepping
+        // the selection being the common one) never move them, so the cache stayed empty and every
+        // reader broke: no hover highlight, no click hit-testing, and previews positioned against a
+        // missing rect. Letting the callback own the cache is what keeps it in step, and because it
+        // assigns the whole map rather than merging, a shorter list drops the extra entries anyway.
+        let view = SwitcherView(model: model, columns: columns) { [weak self] frames in
+            guard let self else { return }
+            self.tileFrames = frames
+            self.onGeometryChange?()
+        }
 
         if let host {
             host.rootView = view
@@ -308,6 +217,8 @@ final class SwitcherPanel: NSPanel {
     }
 
     private func targetScreen() -> NSScreen {
+        // A pinned screen wins outright — the panel exists *because* that display was chosen.
+        if let pinnedScreen { return pinnedScreen }
         // "Active screen" follows the frontmost app's screen (NSScreen.main); the others follow
         // the cursor's screen.
         if positionMode == .activeScreen, let main = NSScreen.main {

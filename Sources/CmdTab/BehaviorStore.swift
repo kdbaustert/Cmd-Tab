@@ -171,6 +171,7 @@ final class BehaviorStore: ObservableObject {
         static let highlightColor = "highlightColorHex"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
+        static let panelScreens = "panelScreens"
         static let stickyMode = "stickyMode"
         static let sameAppCycle = "sameAppCycle"
         static let sameAppKeyCode = "sameAppHotkeyKeyCode"
@@ -197,7 +198,8 @@ final class BehaviorStore: ObservableObject {
     static let ownedDefaultsKeys = [
         "mode", "sortOrder", "skipMinimized", "panelAppearance", "panelPosition",
         "highlightColorHex", "hotkeyKeyCode", "hotkeyModifiers",
-        "stickyMode", "sameAppCycle", "sameAppHotkeyKeyCode", "sameAppHotkeyModifiers",
+        "panelScreens", "stickyMode",
+        "sameAppCycle", "sameAppHotkeyKeyCode", "sameAppHotkeyModifiers",
         "showDelayMs", "windowScope", "hideEmptyApps", "maxColumns",
         "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
         "alwaysShowTitles", "tileCorner", "titleFontSize",
@@ -229,6 +231,11 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var hotkey: Hotkey {
         didSet { storeHotkey(hotkey, oldValue, Key.hotkeyKeyCode, Key.hotkeyModifiers) }
+    }
+    /// Which displays the switcher appears on. Separate from `panelPosition`, which is where on a
+    /// display it sits.
+    @Published var panelScreens: PanelScreens {
+        didSet { store(panelScreens.rawValue, Key.panelScreens, oldValue != panelScreens) }
     }
     /// Keeps the switcher open after the trigger modifier is released, so it can be driven with the
     /// mouse or the arrow keys instead of held chords. Commits on click or Return.
@@ -307,6 +314,7 @@ final class BehaviorStore: ObservableObject {
         highlightColor =
             d.string(forKey: Key.highlightColor).flatMap(Color.init(hex:)) ?? Self.defaultHighlight
         hotkey = Self.loadHotkey(d, Key.hotkeyKeyCode, Key.hotkeyModifiers, default: .commandTab)
+        panelScreens = d.string(forKey: Key.panelScreens).flatMap(PanelScreens.init) ?? .automatic
         stickyMode = d.bool(forKey: Key.stickyMode)
         sameAppCycle = d.bool(forKey: Key.sameAppCycle)
         sameAppHotkey = Self.loadHotkey(
@@ -351,6 +359,7 @@ final class BehaviorStore: ObservableObject {
         highlightColor =
             d.string(forKey: Key.highlightColor).flatMap(Color.init(hex:)) ?? Self.defaultHighlight
         hotkey = Self.loadHotkey(d, Key.hotkeyKeyCode, Key.hotkeyModifiers, default: .commandTab)
+        panelScreens = d.string(forKey: Key.panelScreens).flatMap(PanelScreens.init) ?? .automatic
         stickyMode = d.bool(forKey: Key.stickyMode)
         sameAppCycle = d.bool(forKey: Key.sameAppCycle)
         sameAppHotkey = Self.loadHotkey(
