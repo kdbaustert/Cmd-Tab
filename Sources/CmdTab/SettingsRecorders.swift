@@ -124,12 +124,45 @@ struct ActionShortcutRecorder: View {
             if event.keyCode == 53 { stop(); return nil }  // Esc aborts without binding
             let extras = Self.extras(from: event.modifierFlags)
             guard extras.contains(.maskAlternate) || extras.contains(.maskControl) else { return nil }
-            store.set(
-                ActionShortcut(keyCode: Int(event.keyCode), modifierRaw: extras.rawValue),
-                for: action)
             stop()
+            apply(keyCode: Int(event.keyCode), extras: extras)
             return nil
         }
+    }
+
+    /// Saves the binding, refusing one built on a modifier the current trigger already holds.
+    ///
+    /// The trigger recorder has always checked this from its side, but the check has to exist on
+    /// both: recording ⌥W here while the trigger is ⌘⌥-Tab produced a binding that can never match,
+    /// because the trigger's ⌥ is subtracted before matching. The key then falls through to
+    /// type-to-filter and types "w" instead of closing the window — the exact silent failure the
+    /// conflict alert was introduced to make impossible.
+    private func apply(keyCode: Int, extras: CGEventFlags) {
+        let trigger = BehaviorStore.shared.hotkey
+        let claimed = SwitcherShortcuts.modifiersClaimed(by: trigger).intersection(extras)
+        guard claimed.isEmpty else {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "That shortcut can't fire while \(trigger.displayString) opens the switcher"
+            alert.informativeText = """
+                The trigger holds \(Self.name(for: claimed)) for the whole session, so a binding that \
+                also needs it is indistinguishable from typing — this would filter the list instead \
+                of running "\(action.title)".
+
+                Use a combination built on \(Self.name(for: SwitcherShortcuts.freeModifier(under: trigger) ?? .maskControl)) instead.
+                """
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        store.set(ActionShortcut(keyCode: keyCode, modifierRaw: extras.rawValue), for: action)
+    }
+
+    private static func name(for flags: CGEventFlags) -> String {
+        var parts: [String] = []
+        if flags.contains(.maskControl) { parts.append("⌃") }
+        if flags.contains(.maskAlternate) { parts.append("⌥") }
+        return parts.isEmpty ? "no modifier" : parts.joined(separator: " and ")
     }
 
     private func stop() {

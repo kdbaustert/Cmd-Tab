@@ -64,6 +64,11 @@ final class SwitcherController {
     private var pendingSameApp = false
     private var pendingSameAppReleased = false
 
+    /// Bumped whenever a session begins or ends. Async work started by one session carries the token
+    /// it was launched under and drops itself if the token has moved on, so a slow fetch can never
+    /// reach in and mutate a session it does not belong to.
+    private var sessionToken = 0
+
     /// Whether the current session stays up after the trigger modifier is released.
     private var isSticky = false
     private var stickyOutsideMonitor: Any?
@@ -326,6 +331,7 @@ final class SwitcherController {
         guard !isVisible else { return }
         let targets = provider.snapshot()
         guard !targets.isEmpty else { return }
+        beginSession()
         activeHeld = []
         isSticky = true
         showWith(targets: targets, backwards: false)
@@ -378,9 +384,10 @@ final class SwitcherController {
             if type == .keyUp { return true }
             if !stillHeld(flags, activeHeld) { releaseTrigger(); return true }
             showFromArm()
+            // `advance` rather than a bare `layout()`: this runs on the tap callback, where a full
+            // NSHostingView rebuild is the one thing that must not happen inline.
             if code == hotkey.keyCode {
-                model.step(flags.contains(.maskShift) ? -1 : 1)
-                panels.layout()
+                advance(flags.contains(.maskShift) ? -1 : 1)
             }
             return true
         }
@@ -525,13 +532,17 @@ final class SwitcherController {
     /// to swallow — only when there is nothing to show.
     @discardableResult
     private func open(backwards: Bool) -> Bool {
-        activeHeld = hotkey.heldModifiers
-        isSticky = stickyMode
         let targets = provider.snapshot()
         guard !targets.isEmpty else {
             Log.targets.error("trigger with an empty list; cache not warm?")
             return false
         }
+        // Only past the guard: assigning session state before the bail-out left `isSticky` latched
+        // true after a press that never opened anything, so the *next* session — including one from
+        // a different hotkey — silently came up sticky.
+        beginSession()
+        activeHeld = hotkey.heldModifiers
+        isSticky = stickyMode
         if showDelay > 0 {
             armed = true
             armedBackwards = backwards
@@ -554,13 +565,21 @@ final class SwitcherController {
     /// and letting the chord through would fire it in the app behind us a moment later.
     private func openSameApp(backwards: Bool) -> Bool {
         guard !pendingSameApp, !isVisible, !armed else { return true }
+        let token = beginSession()
         activeHeld = sameAppHotkey?.heldModifiers ?? [.maskCommand]
+        // Never inherits stickiness from the main trigger's setting — this hotkey was not the one
+        // the user asked to stay open.
+        isSticky = false
         pendingSameApp = true
         pendingSameAppReleased = false
         startWatchdog()
 
         provider.frontAppWindowTargets { [weak self] targets in
-            guard let self, self.pendingSameApp else { return }
+            // The fetch is unbounded (an Accessibility walk against a possibly wedged app), so by
+            // the time it lands the user may have abandoned this cycle and opened a normal session.
+            // Acting on it then would stop *that* session's watchdog — deleting the failsafe that
+            // stands between a missed modifier-release and a machine-wide keyboard lockout.
+            guard let self, self.pendingSameApp, token == self.sessionToken else { return }
             self.pendingSameApp = false
 
             // One window is nothing to cycle between, and zero means the app exposes none.
@@ -580,6 +599,15 @@ final class SwitcherController {
             DispatchQueue.main.async { target.focus() }
         }
         return true
+    }
+
+    /// Invalidates anything still in flight from a previous session and returns the new token.
+    @discardableResult
+    private func beginSession() -> Int {
+        sessionToken &+= 1
+        pendingSameApp = false
+        pendingSameAppReleased = false
+        return sessionToken
     }
 
     /// The show-delay elapsed (or a re-press arrived) while still held: actually draw the panels.
@@ -606,7 +634,15 @@ final class SwitcherController {
         isVisible = true
         // The two session shapes get different safety nets: a held-modifier session is watched by
         // polling the hardware, a sticky one has no modifier to poll and relies on the guards below.
-        if isSticky { startStickyGuards() } else { startWatchdog() }
+        // The `stopWatchdog` is load-bearing: arriving through the show-delay arm path means `open()`
+        // already started a watchdog, and leaving it running would have it commit the session the
+        // instant the modifier came up — which is exactly what sticky mode exists not to do.
+        if isSticky {
+            stopWatchdog()
+            startStickyGuards()
+        } else {
+            startWatchdog()
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
@@ -625,6 +661,8 @@ final class SwitcherController {
     private func hide() {
         isVisible = false
         isSticky = false
+        // Anything still in flight belongs to the session just ended.
+        beginSession()
         stopWatchdog()
         stopStickyGuards()
         panels.hide()
@@ -690,8 +728,7 @@ final class SwitcherController {
         armed = false
         armWorkItem?.cancel()
         armWorkItem = nil
-        pendingSameApp = false
-        pendingSameAppReleased = false
+        beginSession()
         stopWatchdog()
         guard isVisible else { return }
         hide()

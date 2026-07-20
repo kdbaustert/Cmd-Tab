@@ -154,6 +154,18 @@ final class TargetProvider {
     /// without waiting; this trigger is rarer, and keeping a second list warm would mean running the
     /// per-window Accessibility walk on every refresh for a feature most sessions never use.
     func frontAppWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
+        // Hops off the caller's turn before touching anything. The only caller is the same-app
+        // hotkey, which is handled inside the CGEventTap callback, and the prelude below is not
+        // cheap: `switchableApps()` enumerates every running application and faults in each one's
+        // icon. Run inline that is the same overrun hazard `showWith` moves `provider.refresh` off
+        // the callback to avoid — and an overrun costs the user every keystroke on the machine.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return handler([]) }
+            self.collectFrontAppWindowTargets(then: handler)
+        }
+    }
+
+    private func collectFrontAppWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
             let app = switchableApps().first(where: { $0.pid == pid })
         else { return handler([]) }

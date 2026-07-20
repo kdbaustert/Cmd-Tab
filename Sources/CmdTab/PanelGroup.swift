@@ -78,10 +78,15 @@ final class PanelGroup {
         return panels.first { $0.frame.contains(mouse) } ?? panels.first
     }
 
-    /// Union of every panel's frame, so the preview can be kept clear of all of them.
+    /// Union of every panel's frame. Only meaningful for logging — anything positioning itself
+    /// against the switcher wants `anchorFrame`, since the union spans displays and describes a
+    /// region no single screen contains.
     var frame: NSRect {
         panels.dropFirst().reduce(panels.first?.frame ?? .zero) { $0.union($1.frame) }
     }
+
+    /// The frame of the panel the cursor is on — what the preview strip should keep clear of.
+    var anchorFrame: NSRect { anchor?.frame ?? frame }
 
     var effectiveAppearance: NSAppearance? { anchor?.effectiveAppearance }
 
@@ -208,9 +213,15 @@ final class PanelGroup {
         return .tile(pid: model.targets[index].pid, rect: rect)
     }
 
-    /// The screen rect of tile `index` on whichever panel has reported one.
+    /// The screen rect of tile `index`, preferring the panel the cursor is on.
+    ///
+    /// The preference matters under mirroring: taking the first panel that happens to have geometry
+    /// returns display 0's copy of the tile, so a preview for a tile hovered on the second monitor
+    /// gets positioned against coordinates on the first. `selectedTileScreenRect` already resolved
+    /// through `anchor`, so the two disagreed about where the same tile was.
     private func tileScreenRect(for index: Int) -> NSRect? {
-        panels.lazy.compactMap { $0.tileScreenRect(for: index) }.first
+        if let rect = anchor?.tileScreenRect(for: index) { return rect }
+        return panels.lazy.compactMap { $0.tileScreenRect(for: index) }.first
     }
 
     /// Emits a target change (only in app mode with previews on), deduped so an unchanged target
@@ -227,12 +238,22 @@ final class PanelGroup {
     /// — which is the normal case, since `advance()` relayouts and asks in the same turn.
     private var pendingSelectedTile = false
 
-    /// Replays a deferred keyboard preview now that fresh frames have landed.
+    /// Re-resolves the preview now that fresh frames have landed.
+    ///
+    /// Both paths need this, not just the deferred keyboard one. Callers relayout and ask about the
+    /// cursor in the same turn, but the frames arrive a turn or two later — so a filter keystroke
+    /// that reflows the grid leaves the hover answer computed from the *previous* list's rects
+    /// against the already-moved panel, pointing the strip at the wrong app until the mouse happens
+    /// to move again.
     private func geometryDidChange() {
-        guard pendingSelectedTile, windowPreviewEnabled, model.mode == .apps else { return }
-        guard let target = target(overPreview: false, index: model.selection) else { return }
-        pendingSelectedTile = false
-        emitPreview(target)
+        guard windowPreviewEnabled, model.mode == .apps else { return }
+        if pendingSelectedTile {
+            guard let target = target(overPreview: false, index: model.selection) else { return }
+            pendingSelectedTile = false
+            emitPreview(target)
+        } else {
+            refreshHoverPreview()
+        }
     }
 
     /// Re-evaluates the preview against whatever tile is under the cursor now. Called after the
