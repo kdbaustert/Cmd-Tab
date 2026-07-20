@@ -32,7 +32,7 @@ struct Metrics: Equatable {
     static let titleSpacingRange: ClosedRange<CGFloat> = 0...28
 
     static let `default` = Metrics(
-        iconSize: 88, iconSpacing: 6, titleSpacing: 2)
+        iconSize: 88, iconSpacing: 2, titleSpacing: 2)
 
     /// Icon edge length in app mode.
     let iconSize: CGFloat
