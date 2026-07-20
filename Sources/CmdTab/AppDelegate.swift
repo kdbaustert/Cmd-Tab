@@ -96,6 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.showDelay = behavior.showDelay / 1000
         controller.windowPreview = behavior.windowPreview
         controller.hotkey = behavior.hotkey
+        controller.sameAppHotkey = behavior.sameAppCycle ? behavior.sameAppHotkey : nil
+        controller.stickyMode = behavior.stickyMode
         updateStatusItem(behavior)
     }
 
@@ -169,9 +171,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
+        // Opens a session that stays up without a held chord — the only way in for anyone who can't
+        // comfortably hold one, and useful for browsing the list with the mouse.
+        if controller.isRunning {
+            menu.addItem(action("Open Switcher", #selector(openSwitcher)))
+            menu.addItem(.separator())
+        }
+
         menu.addItem(action("About Cmd-Tab", #selector(showAbout)))
         menu.addItem(action("Settings…", #selector(openSettingsWindow)))
         menu.addItem(action("Quit Cmd-Tab", #selector(quit)))
+    }
+
+    @objc private func openSwitcher() {
+        controller.openSticky()
     }
 
     private func disabled(_ title: String) -> NSMenuItem {

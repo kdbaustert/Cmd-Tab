@@ -46,6 +46,10 @@ final class PreviewCoordinator {
     /// Reacts to what the cursor points at. A tile (re)captures after the debounce; sitting on the
     /// strip cancels any teardown; leaving both schedules the grace-delayed dismissal.
     func hover(_ target: PreviewHoverTarget) {
+        // While the keyboard is steering the strip, cursor drift must not re-target or dismiss it —
+        // the pointer is usually sitting still over whichever tile the drill started from, and a
+        // stray hover would swap the strip out from under the arrow keys.
+        guard !isSteering else { return }
         dismissWork?.cancel()
         dismissWork = nil
         switch target {
@@ -68,6 +72,46 @@ final class PreviewCoordinator {
         }
     }
 
+    // MARK: - Keyboard drill-down
+
+    /// Whether the strip is currently being steered by the keyboard rather than the cursor.
+    private(set) var isSteering = false
+
+    /// The window the keyboard has selected inside the strip.
+    var selectedThumb: WindowThumb? { strip.selectedThumb }
+
+    /// Takes keyboard control of the strip for `pid`'s windows, capturing immediately if the strip
+    /// isn't already up for that app.
+    ///
+    /// Returns false when there is nothing to steer — no Screen Recording permission, or an app with
+    /// a single window, where drilling in would just be a slower way to press Return. The caller uses
+    /// that to leave the keypress unhandled rather than entering a mode with nothing in it.
+    @discardableResult
+    func beginSteering(pid: pid_t, tileRect: NSRect) -> Bool {
+        // A pending hover capture would land mid-drill and clear the selection underneath us.
+        cancelPendingCapture()
+        dismissWork?.cancel()
+        dismissWork = nil
+
+        if strip.hasThumbs, strip.beginKeyboardSelection() {
+            isSteering = true
+            return true
+        }
+        // Nothing captured yet: go straight to the capture, skipping the hover debounce, and enter
+        // steering when it lands. `isSteering` is set up front so the capture knows to select.
+        isSteering = true
+        capture(pid: pid, tileRect: tileRect)
+        return true
+    }
+
+    /// Hands control back to the cursor, leaving the strip up as a passive preview.
+    func endSteering() {
+        isSteering = false
+        strip.endKeyboardSelection()
+    }
+
+    func moveSteering(_ delta: Int) { strip.moveSelection(delta) }
+
     /// Tears the strip down at once, skipping the grace period.
     ///
     /// The switcher's own `hide()` only *schedules* a delayed dismiss, which would leave the strip
@@ -77,6 +121,8 @@ final class PreviewCoordinator {
         cancelPendingCapture()
         dismissWork?.cancel()
         dismissWork = nil
+        isSteering = false
+        strip.endKeyboardSelection()
         strip.dismiss()
     }
 
@@ -95,11 +141,16 @@ final class PreviewCoordinator {
             let thumbs = await WindowCapture.shared.thumbnails(for: pid)
             guard !Task.isCancelled, let self, self.isActive() else { return }
             if thumbs.isEmpty {
+                // Nothing to show, so there is nothing to steer either — drop back to the tiles
+                // rather than stranding the user in a mode with no content.
+                self.isSteering = false
                 self.strip.dismiss()
             } else {
                 self.strip.present(
                     thumbs: thumbs, appName: appName, over: tileRect,
                     clearOf: self.switcher.frame, appearance: self.switcher.effectiveAppearance)
+                // `present` clears any selection; re-enter it if this capture was started by a drill.
+                if self.isSteering { self.strip.beginKeyboardSelection() }
             }
         }
     }

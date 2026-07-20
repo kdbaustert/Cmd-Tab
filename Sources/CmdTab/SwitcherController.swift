@@ -8,6 +8,9 @@ private enum Key {
     static let delete = 51
     static let leftArrow = 123
     static let rightArrow = 124
+    static let downArrow = 125
+    static let upArrow = 126
+    static let enter = 36
 
     /// Keycodes for 1–9 on the number row and again on the keypad. The number row is not
     /// sequential — 5, 6, 7, 8 and 9 are 23, 22, 26, 28, 25 — so this has to be a table.
@@ -52,6 +55,21 @@ final class SwitcherController {
     private var armWorkItem: DispatchWorkItem?
     /// Modifiers of whichever hotkey opened the current session; releasing them ends it.
     private var activeHeld: CGEventFlags = [.maskCommand]
+
+    // A same-app cycle whose window list is still being fetched. The list can't be built on the tap
+    // callback (per-window Accessibility walk), so the trigger is swallowed before there is anything
+    // to show — which means a modifier released inside that window has to be remembered and acted on
+    // when the list lands. Without that, a quick tap — by far the most common way this key is used —
+    // would do nothing at all.
+    private var pendingSameApp = false
+    private var pendingSameAppReleased = false
+
+    /// Whether the current session stays up after the trigger modifier is released.
+    private var isSticky = false
+    private var stickyOutsideMonitor: Any?
+    private var stickyIdleTimer: Timer?
+    /// How long a sticky session may sit untouched before it dismisses itself.
+    private let stickyIdleTimeout: TimeInterval = 20
 
     var mode: SwitcherMode {
         get { provider.mode }
@@ -215,6 +233,16 @@ final class SwitcherController {
         set { panel.windowPreviewEnabled = newValue }
     }
 
+    /// Keeps a session open after the trigger modifier is released, for driving the switcher with
+    /// the mouse or arrows instead of a held chord. See `startStickyGuards` for how such a session
+    /// is guaranteed to end.
+    var stickyMode = false
+
+    /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
+    /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
+    /// themselves.
+    var sameAppHotkey: Hotkey?
+
     /// User-configurable key bindings for the in-switcher window actions.
     var shortcuts: SwitcherShortcuts = .defaults {
         didSet { warnAboutShadowedActions() }
@@ -285,6 +313,17 @@ final class SwitcherController {
         return true
     }
 
+    /// Opens a sticky session from outside the keyboard — the menu bar item. Always sticky, since
+    /// there is no held modifier that could end it.
+    func openSticky() {
+        guard !isVisible else { return }
+        let targets = provider.snapshot()
+        guard !targets.isEmpty else { return }
+        activeHeld = []
+        isSticky = true
+        showWith(targets: targets, backwards: false)
+    }
+
     func stop() {
         cancel()
         tap?.stop()
@@ -309,7 +348,11 @@ final class SwitcherController {
         // Modifier events are never swallowed — other apps need to track modifier state, and this
         // is also the escape hatch that guarantees the panel can always be dismissed.
         if type == .flagsChanged {
-            if (isVisible || armed) && !stillHeld(flags, activeHeld) { releaseTrigger() }
+            // A sticky session is defined by *not* ending here — releasing the modifier is how the
+            // user gets their hands back, not how they commit.
+            if !isSticky, (isVisible || armed || pendingSameApp), !stillHeld(flags, activeHeld) {
+                releaseTrigger()
+            }
             return false
         }
 
@@ -317,8 +360,9 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            if !stillHeld(flags, activeHeld) { commit(); return false }
+            if !isSticky, !stillHeld(flags, activeHeld) { commit(); return false }
             if type == .keyUp { return true }
+            resetStickyIdle()
             return handleVisibleKey(code, flags, event)
         }
 
@@ -340,6 +384,11 @@ final class SwitcherController {
         if code == hotkey.keyCode, modifiersMatch(flags, hotkey.heldModifiers) {
             return open(backwards: backwards)
         }
+        // Checked after the main trigger, so binding both to the same chord keeps the switcher.
+        if let sameApp = sameAppHotkey, code == sameApp.keyCode,
+            modifiersMatch(flags, sameApp.heldModifiers) {
+            return openSameApp(backwards: backwards)
+        }
         return false
     }
 
@@ -355,10 +404,28 @@ final class SwitcherController {
     }
 
     private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
-        // The trigger advances the selection.
+        // The trigger advances the selection. Moving to another app abandons any drill-down — the
+        // strip belongs to the app you left.
         if code == hotkey.keyCode {
+            preview.endSteering()
             advance(flags.contains(.maskShift) ? -1 : 1)
             return true
+        }
+
+        // While the window strip is steered, the arrows and Return drive it instead of the tiles.
+        // Escape deliberately falls through to the unconditional cancel below: it is the failsafe
+        // out of a state that swallows every key on the machine, so it must never be repurposed
+        // into "leave this sub-mode". ↑ is the way back to the tiles.
+        if preview.isSteering {
+            switch code {
+            case Key.escape: break
+            case Key.leftArrow: preview.moveSteering(-1); return true
+            case Key.rightArrow, Key.downArrow: preview.moveSteering(1); return true
+            case Key.upArrow: preview.endSteering(); return true
+            case Key.enter: commit(); return true
+            // ⌘ is held, so anything else would fire a shortcut in the app behind us.
+            default: return true
+            }
         }
         // Configurable window actions. Each is bound to a key plus *extra* modifiers on top of the
         // held trigger; ⌥/⌃ keep the action keys clear of the type-to-filter query. Subtract the
@@ -382,6 +449,8 @@ final class SwitcherController {
             return true
         case Key.rightArrow: advance(1); return true
         case Key.leftArrow: advance(-1); return true
+        case Key.downArrow: enterDrill(); return true
+        case Key.enter: commit(); return true
         case Key.delete:
             if !model.query.isEmpty { setQuery(String(model.query.dropLast())) }
             return true
@@ -450,6 +519,7 @@ final class SwitcherController {
     @discardableResult
     private func open(backwards: Bool) -> Bool {
         activeHeld = hotkey.heldModifiers
+        isSticky = stickyMode
         let targets = provider.snapshot()
         guard !targets.isEmpty else {
             Log.targets.error("trigger with an empty list; cache not warm?")
@@ -469,6 +539,39 @@ final class SwitcherController {
             return true
         }
         showWith(targets: targets, backwards: backwards)
+        return true
+    }
+
+    /// Opens the frontmost app's windows — the same-app cycle. Always swallows the key: the window
+    /// list arrives asynchronously, so there is no way to know yet whether there is anything to show,
+    /// and letting the chord through would fire it in the app behind us a moment later.
+    private func openSameApp(backwards: Bool) -> Bool {
+        guard !pendingSameApp, !isVisible, !armed else { return true }
+        activeHeld = sameAppHotkey?.heldModifiers ?? [.maskCommand]
+        pendingSameApp = true
+        pendingSameAppReleased = false
+        startWatchdog()
+
+        provider.frontAppWindowTargets { [weak self] targets in
+            guard let self, self.pendingSameApp else { return }
+            self.pendingSameApp = false
+
+            // One window is nothing to cycle between, and zero means the app exposes none.
+            guard targets.count > 1 else {
+                self.pendingSameAppReleased = false
+                self.stopWatchdog()
+                return
+            }
+            guard self.pendingSameAppReleased else {
+                self.showWith(targets: targets, backwards: backwards)
+                return
+            }
+            // Tapped and released before the list landed: do the switch without ever drawing.
+            self.pendingSameAppReleased = false
+            self.stopWatchdog()
+            let target = targets[backwards ? targets.count - 1 : 1]
+            DispatchQueue.main.async { target.focus() }
+        }
         return true
     }
 
@@ -494,7 +597,9 @@ final class SwitcherController {
         // queue. All of that was running inside the event-tap callback, which is the one place in
         // this app where being slow costs the user every keystroke on the machine.
         isVisible = true
-        startWatchdog()
+        // The two session shapes get different safety nets: a held-modifier session is watched by
+        // polling the hardware, a sticky one has no modifier to poll and relies on the guards below.
+        if isSticky { startStickyGuards() } else { startWatchdog() }
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
@@ -512,23 +617,53 @@ final class SwitcherController {
 
     private func hide() {
         isVisible = false
+        isSticky = false
         stopWatchdog()
+        stopStickyGuards()
         panel.hide()
         preview.teardown()
     }
 
+    /// ↓ hands the arrows to the selected app's window strip — the gesture people bring over from
+    /// the native ⌘-Tab, which expands an app's windows the same way.
+    ///
+    /// Requires app mode with previews on, because the strip *is* the feature: there is nothing to
+    /// steer without it. A launch tile has no windows either. Both cases no-op rather than entering
+    /// an empty mode.
+    private func enterDrill() {
+        guard model.mode == .apps, panel.windowPreviewEnabled,
+            let target = model.selected, !target.isLaunchable,
+            let rect = panel.selectedTileScreenRect
+        else { return }
+        preview.beginSteering(pid: target.pid, tileRect: rect)
+    }
+
     private func commit() {
         guard isVisible else { return }
+        // A steered strip means the user picked a specific window, not the app. Read it before
+        // `hide()`, which tears the strip down and clears the selection.
+        let thumb = preview.selectedThumb
         let target = model.selected
         hide()
         // Off the tap callback — activating an app is an AX / NSWorkspace round-trip against a
         // process that may not answer promptly.
-        DispatchQueue.main.async { target?.focus() }
+        DispatchQueue.main.async {
+            if let thumb {
+                SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
+            } else {
+                target?.focus()
+            }
+        }
     }
 
     /// Modifier released. In the tap window this is a quick-switch to the previous target with no
     /// panel; once the panel is up it is a normal commit.
     private func releaseTrigger() {
+        // The list is still in flight; remember the release so the fetch can act on it.
+        if pendingSameApp {
+            pendingSameAppReleased = true
+            return
+        }
         if armed {
             armWorkItem?.cancel()
             armWorkItem = nil
@@ -548,6 +683,8 @@ final class SwitcherController {
         armed = false
         armWorkItem?.cancel()
         armWorkItem = nil
+        pendingSameApp = false
+        pendingSameAppReleased = false
         stopWatchdog()
         guard isVisible else { return }
         hide()
@@ -581,8 +718,53 @@ final class SwitcherController {
         watchdog = nil
     }
 
+    // MARK: - Sticky session guards
+
+    /// A sticky session has no held modifier, so `startWatchdog`'s hardware poll has nothing to
+    /// check — and this is still a state that swallows every key on the machine. These two guards
+    /// are what replace it: a click anywhere outside the panel, and a hard inactivity ceiling.
+    /// Escape stays the immediate manual exit, as everywhere else.
+    private func startStickyGuards() {
+        // A global monitor only sees events bound for *other* apps. Our panels are non-activating
+        // and receive their clicks through `sendEvent`, so anything arriving here is by definition
+        // a click outside the switcher.
+        stickyOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isSticky else { return }
+                self.cancel()
+            }
+        }
+        resetStickyIdle()
+    }
+
+    private func stopStickyGuards() {
+        if let stickyOutsideMonitor { NSEvent.removeMonitor(stickyOutsideMonitor) }
+        stickyOutsideMonitor = nil
+        stickyIdleTimer?.invalidate()
+        stickyIdleTimer = nil
+    }
+
+    /// Restarts the inactivity countdown. Called on every keystroke the panel handles, so the ceiling
+    /// only bites when the switcher has genuinely been abandoned — walked away from, or opened by
+    /// accident and forgotten.
+    private func resetStickyIdle() {
+        guard isSticky else { return }
+        stickyIdleTimer?.invalidate()
+        let timer = Timer(timeInterval: stickyIdleTimeout, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isSticky else { return }
+                Log.tap.notice("sticky session idle; dismissing so the keyboard is not held")
+                self.cancel()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        stickyIdleTimer = timer
+    }
+
     private func watchdogTick() {
-        guard isVisible || armed else {
+        guard isVisible || armed || pendingSameApp else {
             stopWatchdog()
             return
         }

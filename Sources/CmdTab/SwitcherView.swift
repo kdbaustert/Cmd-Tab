@@ -276,10 +276,34 @@ private struct TargetTile: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if let display = target.displayIndex {
-                DisplayBadge(number: display + 1)  // 1-based for humans
+            // Stacked rather than side by side: a window can carry both, and the tile is too narrow
+            // to put them in a row without crowding the icon.
+            VStack(alignment: .trailing, spacing: 1) {
+                if let display = target.displayIndex {
+                    DisplayBadge(number: display + 1)  // 1-based for humans
+                }
+                if let space = target.spaceIndex {
+                    SpaceBadge(number: space + 1)
+                }
             }
         }
+    }
+}
+
+/// Marks which Space a window is on, shown only in window mode with more than one Space.
+private struct SpaceBadge: View {
+    let number: Int
+
+    var body: some View {
+        HStack(spacing: 1) {
+            Image(systemName: "square.on.square")
+            Text("\(number)")
+        }
+        .font(.system(size: 7, weight: .bold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 3)
+        .frame(height: 14)
+        .background(Capsule().fill(Color.black.opacity(0.55)))
     }
 }
 

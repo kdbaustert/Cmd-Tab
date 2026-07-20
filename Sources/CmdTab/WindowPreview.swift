@@ -176,6 +176,12 @@ final class WindowPreviewModel: ObservableObject {
     @Published var thumbs: [WindowThumb] = []
     /// The app whose windows are shown, as a heading over the strip.
     @Published var appName: String = ""
+    /// The keyboard-selected thumbnail, or nil while the strip is a passive hover preview.
+    ///
+    /// Nil and 0 are meaningfully different here: the strip appears on hover with nothing selected,
+    /// and only takes a selection once the user presses ↓ to steer it with the keyboard. Highlighting
+    /// the first window merely because the strip is visible would suggest Return picks it.
+    @Published var selection: Int?
     /// Each thumbnail's frame in the panel's content coordinates (top-left origin), reported by the
     /// view so the panel can hit-test a click against it. Not `@Published` — it only feeds the panel.
     var thumbFrames: [CGWindowID: CGRect] = [:]
@@ -217,10 +223,10 @@ private struct WindowPreviewView: View {
                     .padding(.horizontal, 2)
             }
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                     HStack(alignment: .top, spacing: 10) {
-                        ForEach(row) { thumb in
-                            thumbnail(thumb)
+                        ForEach(Array(row.enumerated()), id: \.element.id) { column, thumb in
+                            thumbnail(thumb, index: rowIndex * Self.perRow + column)
                         }
                     }
                 }
@@ -238,7 +244,8 @@ private struct WindowPreviewView: View {
     }
 
     @ViewBuilder
-    private func thumbnail(_ thumb: WindowThumb) -> some View {
+    private func thumbnail(_ thumb: WindowThumb, index: Int) -> some View {
+        let isSelected = model.selection == index
         VStack(spacing: 4) {
             Image(nsImage: thumb.image)
                 .resizable()
@@ -247,11 +254,13 @@ private struct WindowPreviewView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                        .strokeBorder(
+                            isSelected ? Color.accentColor : Color.primary.opacity(0.15),
+                            lineWidth: isSelected ? 3 : 1))
             if !thumb.title.isEmpty {
                 Text(thumb.title)
                     .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(1)
                     .frame(maxWidth: 160)
             }
@@ -302,6 +311,37 @@ final class WindowPreviewPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    // MARK: - Keyboard selection
+
+    /// Whether there is anything to steer with the keyboard.
+    var hasThumbs: Bool { !content.thumbs.isEmpty }
+
+    /// The keyboard-selected window, if the strip is being steered.
+    var selectedThumb: WindowThumb? {
+        guard let index = content.selection, content.thumbs.indices.contains(index) else {
+            return nil
+        }
+        return content.thumbs[index]
+    }
+
+    /// Takes keyboard control of the strip, landing on the first window. No-op with nothing to show,
+    /// so the caller can offer the gesture unconditionally and let it decline.
+    @discardableResult
+    func beginKeyboardSelection() -> Bool {
+        guard hasThumbs else { return false }
+        content.selection = 0
+        return true
+    }
+
+    func endKeyboardSelection() { content.selection = nil }
+
+    /// Moves the keyboard selection, wrapping like the switcher's own tile navigation does.
+    func moveSelection(_ delta: Int) {
+        guard hasThumbs, let current = content.selection else { return }
+        let count = content.thumbs.count
+        content.selection = (current + delta + count) % count
+    }
+
     /// A non-activating panel receives clicks without bringing our app forward, so a click on a
     /// thumbnail becomes a pick — like the switcher panel, and for the same reason (never key, so
     /// SwiftUI's own gesture recognisers stay dormant).
@@ -348,6 +388,9 @@ final class WindowPreviewPanel: NSPanel {
         // its intrinsic-size sizing tracking the model rather than being rebuilt each hover.
         content.thumbs = thumbs
         content.appName = appName
+        // A fresh set of windows invalidates any keyboard selection — index 2 of the last app's
+        // strip means nothing here. The coordinator re-enters it if the user is still steering.
+        content.selection = nil
         self.appearance = appearance
 
         let host: NSHostingView<WindowPreviewView>

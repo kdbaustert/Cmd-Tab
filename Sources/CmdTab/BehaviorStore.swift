@@ -114,6 +114,9 @@ struct Hotkey: Equatable {
 
     static let commandTab = Hotkey(keyCode: 48, modifierRaw: CGEventFlags.maskCommand.rawValue)
 
+    /// Default for the same-app window cycle, matching the system's own ⌘-` for that job.
+    static let commandBacktick = Hotkey(keyCode: 50, modifierRaw: CGEventFlags.maskCommand.rawValue)
+
     /// True when this is exactly ⌘-Tab, the one combination that also needs the system switcher
     /// suppressed. Shift is ignored here — it is the reverse-direction modifier, not part of the
     /// trigger identity.
@@ -168,6 +171,10 @@ final class BehaviorStore: ObservableObject {
         static let highlightColor = "highlightColorHex"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
+        static let stickyMode = "stickyMode"
+        static let sameAppCycle = "sameAppCycle"
+        static let sameAppKeyCode = "sameAppHotkeyKeyCode"
+        static let sameAppModifiers = "sameAppHotkeyModifiers"
         static let showDelay = "showDelayMs"
         static let windowScope = "windowScope"
         static let hideEmptyApps = "hideEmptyApps"
@@ -190,6 +197,7 @@ final class BehaviorStore: ObservableObject {
     static let ownedDefaultsKeys = [
         "mode", "sortOrder", "skipMinimized", "panelAppearance", "panelPosition",
         "highlightColorHex", "hotkeyKeyCode", "hotkeyModifiers",
+        "stickyMode", "sameAppCycle", "sameAppHotkeyKeyCode", "sameAppHotkeyModifiers",
         "showDelayMs", "windowScope", "hideEmptyApps", "maxColumns",
         "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
         "alwaysShowTitles", "tileCorner", "titleFontSize",
@@ -221,6 +229,20 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var hotkey: Hotkey {
         didSet { storeHotkey(hotkey, oldValue, Key.hotkeyKeyCode, Key.hotkeyModifiers) }
+    }
+    /// Keeps the switcher open after the trigger modifier is released, so it can be driven with the
+    /// mouse or the arrow keys instead of held chords. Commits on click or Return.
+    @Published var stickyMode: Bool {
+        didSet { store(stickyMode, Key.stickyMode, oldValue != stickyMode) }
+    }
+    /// Whether the same-app window cycle is bound at all. Off by default: it takes over a
+    /// combination (⌘-`) that apps themselves use, so it should be opted into rather than
+    /// silently intercepted.
+    @Published var sameAppCycle: Bool {
+        didSet { store(sameAppCycle, Key.sameAppCycle, oldValue != sameAppCycle) }
+    }
+    @Published var sameAppHotkey: Hotkey {
+        didSet { storeHotkey(sameAppHotkey, oldValue, Key.sameAppKeyCode, Key.sameAppModifiers) }
     }
     @Published var showDelay: Double {
         didSet { store(showDelay, Key.showDelay, oldValue != showDelay) }
@@ -285,6 +307,10 @@ final class BehaviorStore: ObservableObject {
         highlightColor =
             d.string(forKey: Key.highlightColor).flatMap(Color.init(hex:)) ?? Self.defaultHighlight
         hotkey = Self.loadHotkey(d, Key.hotkeyKeyCode, Key.hotkeyModifiers, default: .commandTab)
+        stickyMode = d.bool(forKey: Key.stickyMode)
+        sameAppCycle = d.bool(forKey: Key.sameAppCycle)
+        sameAppHotkey = Self.loadHotkey(
+            d, Key.sameAppKeyCode, Key.sameAppModifiers, default: .commandBacktick)
         showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         windowScope = d.string(forKey: Key.windowScope).flatMap(WindowScope.init) ?? .allSpaces
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)
@@ -325,6 +351,10 @@ final class BehaviorStore: ObservableObject {
         highlightColor =
             d.string(forKey: Key.highlightColor).flatMap(Color.init(hex:)) ?? Self.defaultHighlight
         hotkey = Self.loadHotkey(d, Key.hotkeyKeyCode, Key.hotkeyModifiers, default: .commandTab)
+        stickyMode = d.bool(forKey: Key.stickyMode)
+        sameAppCycle = d.bool(forKey: Key.sameAppCycle)
+        sameAppHotkey = Self.loadHotkey(
+            d, Key.sameAppKeyCode, Key.sameAppModifiers, default: .commandBacktick)
         showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         windowScope = d.string(forKey: Key.windowScope).flatMap(WindowScope.init) ?? .allSpaces
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)

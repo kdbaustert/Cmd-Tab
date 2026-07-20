@@ -34,6 +34,9 @@ struct SwitchTarget: Identifiable {
     /// Which display (0-based) a window is on, set only in window mode with more than one display.
     /// nil the rest of the time, which is what suppresses the display badge.
     var displayIndex: Int? = nil
+    /// Which Space (0-based) a window is on, set only in window mode with more than one Space.
+    /// nil the rest of the time, which is what suppresses the Space badge.
+    var spaceIndex: Int? = nil
 
     var pid: pid_t {
         switch kind {

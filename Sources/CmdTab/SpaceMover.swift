@@ -61,6 +61,46 @@ enum SpaceMover {
         }
     }
 
+    /// Every user Space in order, flattened across displays.
+    ///
+    /// Flattened deliberately: the badge numbers Spaces the way the user counts them ("Desktop 3"),
+    /// and on the single-display setups where Spaces are actually numbered that is exactly right.
+    /// `move` does *not* use this — it has to stay within one display's list to clamp correctly.
+    private static func userSpaceIDs() -> [UInt64] {
+        guard let mainConnection, let copyManaged,
+            let displays = copyManaged(mainConnection())?.takeRetainedValue() as? [[String: Any]]
+        else { return [] }
+        return displays.flatMap { display -> [UInt64] in
+            guard let spaces = display["Spaces"] as? [[String: Any]] else { return [] }
+            return spaces.filter { ($0["type"] as? Int) == 0 }.compactMap(spaceID(from:))
+        }
+    }
+
+    /// The 0-based user-Space index each window sits on, for the Space badge.
+    ///
+    /// Returns empty when there is only one Space, which is both a cost saving and the right
+    /// display behaviour — a badge reading "1" on every tile is pure noise. Costs one cheap CGS
+    /// call per window and no Accessibility round-trips, but is still meant for the background
+    /// refresh rather than anything on the key path.
+    static func spaceIndices(of windows: [CGWindowID]) -> [CGWindowID: Int] {
+        guard !windows.isEmpty, let mainConnection, let copySpacesForWindows else { return [:] }
+        let ordered = userSpaceIDs()
+        guard ordered.count > 1 else { return [:] }
+
+        let cid = mainConnection()
+        var out: [CGWindowID: Int] = [:]
+        for window in windows {
+            guard
+                let raw = copySpacesForWindows(cid, 0x7, [NSNumber(value: window)] as CFArray)?
+                    .takeRetainedValue(),
+                let space = (raw as? [NSNumber])?.first?.uint64Value,
+                let index = ordered.firstIndex(of: space)
+            else { continue }
+            out[window] = index
+        }
+        return out
+    }
+
     private static func spaceID(from space: [String: Any]) -> UInt64? {
         (space["ManagedSpaceID"] as? NSNumber)?.uint64Value
             ?? (space["id64"] as? NSNumber)?.uint64Value

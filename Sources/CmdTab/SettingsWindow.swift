@@ -31,6 +31,26 @@ struct GeneralSettings: View {
                 }
 
                 field(
+                    "Stay open",
+                    help: "Keep the switcher up after the modifier is released; pick with a click "
+                        + "or Return. Escape always closes it, as does clicking away."
+                ) {
+                    Toggle("", isOn: $behavior.stickyMode).labelsHidden()
+                }
+
+                field(
+                    "Cycle app windows",
+                    help: "A second shortcut that shows only the frontmost app's windows. "
+                        + "Off by default — the usual ⌘` is a shortcut apps use themselves."
+                ) {
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: $behavior.sameAppCycle).labelsHidden()
+                        HotkeyRecorder(hotkey: $behavior.sameAppHotkey)
+                            .disabled(!behavior.sameAppCycle)
+                    }
+                }
+
+                field(
                     "Show delay",
                     help: "Wait before drawing the panel; a quick tap switches with no flash. "
                         + "0 = instant."

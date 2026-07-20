@@ -213,6 +213,9 @@ final class SwitcherPanel: NSPanel {
         emitPreview(target(overPreview: false, index: model.selection))
     }
 
+    /// The highlighted tile's screen rect, for positioning a keyboard-driven preview against it.
+    var selectedTileScreenRect: NSRect? { tileScreenRect(for: model.selection) }
+
     /// The screen rect of tile `index`, in bottom-up screen coordinates — the reported content-space
     /// frame flipped back out to the screen.
     private func tileScreenRect(for index: Int) -> NSRect? {

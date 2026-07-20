@@ -137,11 +137,38 @@ final class TargetProvider {
                         targets, scope: scope,
                         onScreenBounds: Self.onScreenBounds(), activeScreen: activeScreenCG)
                 }
+                // After scoping, so a filtered-out window is never paid for.
+                targets = Self.withSpaceBadges(targets)
             }
             DispatchQueue.main.async {
                 self?.cache = targets
                 handler?(targets)
             }
+        }
+    }
+
+    /// The frontmost app's windows, for the same-app cycle. Independent of the switcher's global
+    /// mode: this shows one app's windows whether the switcher is normally in app or window mode.
+    ///
+    /// Deliberately not cached like `snapshot()`. The cache exists so the trigger can draw the panel
+    /// without waiting; this trigger is rarer, and keeping a second list warm would mean running the
+    /// per-window Accessibility walk on every refresh for a feature most sessions never use.
+    func frontAppWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            let app = switchableApps().first(where: { $0.pid == pid })
+        else { return handler([]) }
+
+        let sortOrder = self.sortOrder
+        let windowMRU = self.windowMRU
+        let skipMinimized = self.skipMinimized
+        let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
+
+        axQueue.async {
+            var targets = Self.windowTargets(
+                [app], order: [pid], sortOrder: sortOrder,
+                windowMRU: windowMRU, screenFrames: screenFrames)
+            if skipMinimized { targets.removeAll { $0.isMinimized } }
+            DispatchQueue.main.async { handler(targets) }
         }
     }
 
@@ -367,6 +394,21 @@ final class TargetProvider {
                 built.sort { $0.rank == $1.rank ? $0.axIndex < $1.axIndex : $0.rank < $1.rank }
             }
             return built.map(\.target)
+        }
+    }
+
+    /// Tags each window with the Space it lives on. A no-op with a single Space, which is what keeps
+    /// the badge off the tiles for everyone who doesn't use them.
+    private static func withSpaceBadges(_ targets: [SwitchTarget]) -> [SwitchTarget] {
+        let indices = SpaceMover.spaceIndices(of: targets.compactMap { windowID(fromTargetID: $0.id) })
+        guard !indices.isEmpty else { return targets }
+        return targets.map { target in
+            guard let id = windowID(fromTargetID: target.id), let index = indices[id] else {
+                return target
+            }
+            var tagged = target
+            tagged.spaceIndex = index
+            return tagged
         }
     }
 
