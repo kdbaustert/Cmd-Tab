@@ -175,8 +175,9 @@ final class SwitcherPanel: NSPanel {
         scrollMonitor = nil
         scrollAccumulator = 0
         lastHoverLocation = nil
-        // Tear down any live preview and reset so the next session starts clean.
-        emitPreview(.away)
+        // Reset unconditionally (not via emitPreview, which is gated on the setting) so the next
+        // session starts clean. The controller dismisses the preview panel itself on hide.
+        lastPreviewTarget = .away
     }
 
     /// The preview target for the given cursor state — the preview panel, a tile, or nothing.
@@ -225,6 +226,10 @@ final class SwitcherPanel: NSPanel {
         return NSRect(
             x: left, y: top - laidOutTile.height, width: laidOutTile.width, height: laidOutTile.height)
     }
+
+    /// A scroll that landed on the floating preview instead of the switcher, forwarded here so it
+    /// still moves the selection.
+    func forwardScroll(_ event: NSEvent) { handleScroll(event) }
 
     /// Turns accumulated scroll travel into discrete selection steps. The threshold keeps a single
     /// flick of an inertial trackpad from racing through the whole list.

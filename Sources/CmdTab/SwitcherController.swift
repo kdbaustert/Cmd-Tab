@@ -249,6 +249,7 @@ final class SwitcherController {
             SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
             self?.cancel()
         }
+        previewPanel.onScroll = { [weak self] event in self?.panel.forwardScroll(event) }
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
         // hotkey leaves the native switcher alone.
         let disabled = hotkey.isCommandTab ? SystemSwitcher.setNativeEnabled(false) : false
@@ -456,6 +457,16 @@ final class SwitcherController {
     private func hide() {
         isVisible = false
         panel.hide()
+        // Tear the preview down at once. `panel.hide()` only *schedules* the grace dismiss, which
+        // would leave the strip floating over the just-activated app — and, if the switcher reopens
+        // within that window, let a stale preview be pinned into the new session.
+        previewWork?.cancel()
+        previewWork = nil
+        previewTask?.cancel()
+        previewTask = nil
+        previewDismissWork?.cancel()
+        previewDismissWork = nil
+        previewPanel.dismiss()
     }
 
     private func commit() {
@@ -654,7 +665,7 @@ final class SwitcherController {
                 self.previewPanel.dismiss()
             } else {
                 self.previewPanel.present(
-                    thumbs: thumbs, appName: appName, over: tileRect,
+                    thumbs: thumbs, appName: appName, over: tileRect, clearOf: self.panel.frame,
                     appearance: self.panel.effectiveAppearance)
             }
         }

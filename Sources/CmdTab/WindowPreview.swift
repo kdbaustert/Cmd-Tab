@@ -254,6 +254,9 @@ final class WindowPreviewPanel: NSPanel {
 
     /// Invoked when a thumbnail is clicked. The controller focuses that window and dismisses.
     var onPick: ((WindowThumb) -> Void)?
+    /// A scroll that landed on the preview instead of the switcher — forwarded so scroll-to-navigate
+    /// keeps working (the switcher's global scroll monitor can't see events delivered to our panel).
+    var onScroll: ((NSEvent) -> Void)?
 
     init() {
         super.init(
@@ -279,9 +282,19 @@ final class WindowPreviewPanel: NSPanel {
     /// thumbnail becomes a pick — like the switcher panel, and for the same reason (never key, so
     /// SwiftUI's own gesture recognisers stay dormant).
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown, let thumb = thumb(at: NSEvent.mouseLocation) {
-            onPick?(thumb)
+        switch event.type {
+        case .leftMouseDown:
+            if let thumb = thumb(at: NSEvent.mouseLocation) {
+                onPick?(thumb)
+                return
+            }
+        case .scrollWheel:
+            // Forward to the switcher rather than swallowing it, so scrolling over the strip still
+            // moves the selection.
+            onScroll?(event)
             return
+        default:
+            break
         }
         super.sendEvent(event)
     }
@@ -304,7 +317,8 @@ final class WindowPreviewPanel: NSPanel {
     /// Shows `thumbs` for `appName`, centred over `tileRect` (screen coordinates) and preferring the
     /// space above it, dropping below when there is no room. Matches the switcher's forced appearance.
     func present(
-        thumbs: [WindowThumb], appName: String, over tileRect: NSRect, appearance: NSAppearance?
+        thumbs: [WindowThumb], appName: String, over tileRect: NSRect, clearOf switcherFrame: NSRect,
+        appearance: NSAppearance?
     ) {
         // Drive the content through the observed model; the hosting view is built once and reused,
         // its intrinsic-size sizing tracking the model rather than being rebuilt each hover.
@@ -326,9 +340,12 @@ final class WindowPreviewPanel: NSPanel {
         setContentSize(size)
 
         let visible = NSScreen.underCursor.visibleFrame
+        // Centre horizontally on the hovered tile, but sit above/below the *whole* switcher panel so
+        // the strip never floats over other tiles (which — now that it takes clicks — would make
+        // those tiles unhoverable and unclickable).
         var x = tileRect.midX - size.width / 2
-        var y = tileRect.maxY + gap  // above the tile
-        if y + size.height > visible.maxY { y = tileRect.minY - gap - size.height }  // else below
+        var y = switcherFrame.maxY + gap  // above the switcher
+        if y + size.height > visible.maxY { y = switcherFrame.minY - gap - size.height }  // else below
         let maxX = max(visible.minX, visible.maxX - size.width)
         x = x.clamped(to: visible.minX...maxX)
         y = max(visible.minY, y)
