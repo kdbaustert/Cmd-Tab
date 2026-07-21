@@ -1,6 +1,22 @@
 import AppKit
 import SwiftUI
 
+/// Resolves the user's chosen title font family.
+///
+/// Shared so the switcher and the Settings preview agree — a preview that renders in a different
+/// font than the thing it is previewing is worse than no preview.
+enum TitleFont {
+    /// Falls back to the system font when the family can't be resolved, not only when none is set:
+    /// a font can be uninstalled between launches, and `Font.custom` with an unknown name silently
+    /// substitutes something arbitrary rather than failing, so the check has to happen here.
+    static func resolve(_ family: String, size: CGFloat) -> Font {
+        guard !family.isEmpty, NSFont(name: family, size: size) != nil else {
+            return .system(size: size)
+        }
+        return .custom(family, size: size)
+    }
+}
+
 @MainActor
 final class SwitcherModel: ObservableObject {
     /// The visible list — `allTargets` narrowed by `query`. Everything downstream (tiles, hover,
@@ -28,6 +44,11 @@ final class SwitcherModel: ObservableObject {
     @Published var tileCorner: CGFloat = 12
     /// Point size of tile titles.
     @Published var titleFontSize: CGFloat = 10
+    /// Font family for tile titles and the caption. Empty means the system font.
+    @Published var titleFontName: String = ""
+
+    /// The title font at `size`. See `TitleFont.resolve`.
+    func titleFont(size: CGFloat) -> Font { TitleFont.resolve(titleFontName, size: size) }
 
     /// Whether tiles carry a title in the current mode.
     var showsTitle: Bool { mode == .windows || alwaysShowTitles }

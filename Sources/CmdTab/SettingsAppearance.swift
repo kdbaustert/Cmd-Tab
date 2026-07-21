@@ -10,105 +10,161 @@ struct AppearanceSettings: View {
     private var metrics: Metrics { appearance.metrics }
     private static let customLabel = "Custom…"
 
+    /// Fixed rather than adaptive, so controls stay aligned down the pane instead of reflowing
+    /// around whichever label happens to be longest.
+    private static let twoColumns = [
+        GridItem(.flexible(), spacing: 18, alignment: .leading),
+        GridItem(.flexible(), spacing: 18, alignment: .leading),
+    ]
+
+    /// Installed families, resolved once. `availableFontFamilies` walks the font registry, which is
+    /// slow enough to be worth keeping out of a view body that re-evaluates on every slider drag.
+    /// Families that can't be resolved by name are dropped here rather than offered and then
+    /// silently substituted at render time.
+    private static let fontFamilies: [String] = NSFontManager.shared.availableFontFamilies
+        .filter { NSFont(name: $0, size: 12) != nil }
+        .sorted()
+
+    /// Panel translucency. Separate from `SliderRow` because it is a fraction, not a point size.
+    private var opacityRow: some View {
+        HStack(spacing: 8) {
+            Text("Opacity")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 86, alignment: .leading)
+            Slider(value: $behavior.panelOpacity, in: 0.3...1.0)
+            Text("\(Int(behavior.panelOpacity * 100))")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .trailing)
+        }
+        .help("How much of the desktop shows through the panel.")
+    }
+
+    /// A label paired with any single control, matching the picker rows' shape.
+    private func labelledRow(_ title: String, @ViewBuilder control: () -> some View) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.system(size: 12, weight: .medium))
+            Spacer(minLength: 4)
+            control()
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             preview
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                // Paired into two columns throughout, and the per-control explanations moved to
+                // tooltips. Each slider used to occupy three stacked lines (label, track, prose) —
+                // with a dozen controls that pushed most of the pane below the fold for the sake of
+                // text you read once. The window is wide enough now to carry two of everything.
+                VStack(alignment: .leading, spacing: 10) {
                     themeBar
                     Divider()
 
-                    SliderRow(
-                        title: "Icon size",
-                        help: "Window mode uses a smaller icon, and scales in step.",
-                        value: $appearance.iconSize,
-                        range: Metrics.iconSizeRange,
-                        step: 8)
-                    SliderRow(
-                        title: "Icon spacing",
-                        help: "Slack around each icon, inside its highlight.",
-                        value: $appearance.iconSpacing,
-                        range: Metrics.iconSpacingRange,
-                        step: 2)
-                    SliderRow(
-                        title: "Title spacing",
-                        help: "Gap between an icon and its name.",
-                        value: $appearance.titleSpacing,
-                        range: Metrics.titleSpacingRange,
-                        step: 1)
+                    LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 8) {
+                        SliderRow(
+                            title: "Icon size",
+                            help: "Window mode uses a smaller icon, and scales in step.",
+                            value: $appearance.iconSize,
+                            range: Metrics.iconSizeRange,
+                            step: 8)
+                        SliderRow(
+                            title: "Icon spacing",
+                            help: "Slack around each icon, inside its highlight.",
+                            value: $appearance.iconSpacing,
+                            range: Metrics.iconSpacingRange,
+                            step: 2)
+                        SliderRow(
+                            title: "Title spacing",
+                            help: "Gap between an icon and its name.",
+                            value: $appearance.titleSpacing,
+                            range: Metrics.titleSpacingRange,
+                            step: 1)
+                        SliderRow(
+                            title: "Corner radius",
+                            help: "Roundness of the selected tile's highlight.",
+                            value: $behavior.tileCorner,
+                            range: 0...24,
+                            step: 1)
+                        SliderRow(
+                            title: "Title size",
+                            help: "Point size of tile titles and the caption.",
+                            value: $behavior.titleFontSize,
+                            range: 8...16,
+                            step: 1)
+                        opacityRow
+                    }
 
                     Divider()
 
-                    HStack {
-                        Text("Highlight colour").font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        ColorPicker("", selection: $behavior.highlightColor, supportsOpacity: false)
-                            .labelsHidden()
-                    }
-                    pickerRow("Appearance", selection: $behavior.panelAppearance) {
-                        ForEach(PanelAppearance.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    pickerRow("Position", selection: $behavior.panelPosition) {
-                        ForEach(PanelPosition.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    pickerRow("Show on", selection: $behavior.panelScreens) {
-                        ForEach(PanelScreens.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    pickerRow("Material", selection: $behavior.panelMaterial) {
-                        ForEach(PanelMaterial.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    HStack {
-                        Text("Opacity").font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Slider(value: $behavior.panelOpacity, in: 0.3...1.0).frame(width: 160)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Toggle("Custom blur", isOn: $behavior.blurOverride)
-                                .toggleStyle(.checkbox)
-                            Spacer()
-                            Slider(value: $behavior.blurRadius, in: 0...50)
-                                .frame(width: 160)
-                                .disabled(!behavior.blurOverride)
+                    LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 8) {
+                        pickerRow("Appearance", selection: $behavior.panelAppearance) {
+                            ForEach(PanelAppearance.allCases, id: \.self) { Text($0.title).tag($0) }
                         }
-                        Text("Override the material's built-in glass blur. 0 = none, 50 = heavy.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("Max columns").font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Stepper(
-                            behavior.maxColumns == 0 ? "Auto" : "\(behavior.maxColumns)",
-                            value: $behavior.maxColumns, in: 0...20)
+                        pickerRow("Position", selection: $behavior.panelPosition) {
+                            ForEach(PanelPosition.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        pickerRow("Show on", selection: $behavior.panelScreens) {
+                            ForEach(PanelScreens.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        pickerRow("Material", selection: $behavior.panelMaterial) {
+                            ForEach(PanelMaterial.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        labelledRow("Highlight") {
+                            ColorPicker("", selection: $behavior.highlightColor, supportsOpacity: false)
+                                .labelsHidden()
+                        }
+                        pickerRow("Title font", selection: $behavior.titleFontName) {
+                            Text("System").tag("")
+                            Divider()
+                            ForEach(Self.fontFamilies, id: \.self) { Text($0).tag($0) }
+                        }
+                        labelledRow("Max columns") {
+                            Stepper(
+                                behavior.maxColumns == 0 ? "Auto" : "\(behavior.maxColumns)",
+                                value: $behavior.maxColumns, in: 0...20)
+                        }
                     }
 
-                    HStack {
-                        Text("Corner radius").font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Slider(value: $behavior.tileCorner, in: 0...24, step: 1).frame(width: 160)
+                    Divider()
+
+                    // Full width: the checkbox gates the slider, so they have to read as one control.
+                    HStack(spacing: 8) {
+                        Toggle("Custom blur", isOn: $behavior.blurOverride)
+                            .toggleStyle(.checkbox)
+                            .frame(width: 110, alignment: .leading)
+                        Slider(value: $behavior.blurRadius, in: 0...50)
+                            .disabled(!behavior.blurOverride)
+                        Text("\(Int(behavior.blurRadius))")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24, alignment: .trailing)
                     }
-                    HStack {
-                        Text("Title size").font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Slider(value: $behavior.titleFontSize, in: 8...16, step: 1).frame(width: 160)
+                    .help("Override the material's built-in glass blur. 0 = none, 50 = heavy.")
+
+                    Divider()
+
+                    LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 4) {
+                        Toggle("Number badges", isOn: $behavior.showNumbers)
+                            .toggleStyle(.checkbox)
+                        Toggle("Always show titles", isOn: $behavior.alwaysShowTitles)
+                            .toggleStyle(.checkbox)
+                            .help("Show each tile's name in app mode too, not just the selected one.")
+                        Toggle("Preview windows on hover", isOn: $behavior.windowPreview)
+                            .toggleStyle(.checkbox)
+                            .help(
+                                "App mode: hover a tile to float live thumbnails of that app's "
+                                    + "windows. Needs Screen Recording permission.")
+                            .onChange(of: behavior.windowPreview) {
+                                if behavior.windowPreview {
+                                    Permissions.ensureScreenCaptureForPreview()
+                                }
+                            }
+                        Toggle("Fade in and out", isOn: $behavior.fade)
+                            .toggleStyle(.checkbox)
                     }
-                    Toggle("Show number badges", isOn: $behavior.showNumbers)
-                        .toggleStyle(.checkbox)
-                    Toggle("Always show titles under icons", isOn: $behavior.alwaysShowTitles)
-                        .toggleStyle(.checkbox)
-                        .help("Show each tile's name in app mode too, not just the selected one.")
-                    Toggle("Preview windows on hover", isOn: $behavior.windowPreview)
-                        .toggleStyle(.checkbox)
-                        .help(
-                            "App mode: hover a tile to float live thumbnails of that app's windows. "
-                                + "Needs Screen Recording permission.")
-                        .onChange(of: behavior.windowPreview) {
-                            if behavior.windowPreview { Permissions.ensureScreenCaptureForPreview() }
-                        }
-                    Toggle("Fade the panel in and out", isOn: $behavior.fade)
-                        .toggleStyle(.checkbox)
                 }
                 .padding(12)
             }
@@ -144,7 +200,10 @@ struct AppearanceSettings: View {
                     }
                 }
                 Text(entries.count > 1 ? entries[1].name : "Preview")
-                    .font(.system(size: 13, weight: .semibold))
+                    // Tracks the real caption: same resolver, same size offset, so choosing a font
+                    // or dragging the size slider shows here exactly what the switcher will do.
+                    .font(TitleFont.resolve(behavior.titleFontName, size: behavior.titleFontSize + 3))
+                    .fontWeight(.semibold)
                     .lineLimit(1)
             }
             .padding(Metrics.panelPadding)
@@ -234,35 +293,41 @@ struct AppearanceSettings: View {
     private func pickerRow<T: Hashable>(
         _ title: String, selection: Binding<T>, @ViewBuilder content: () -> some View
     ) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             Text(title).font(.system(size: 12, weight: .medium))
-            Spacer()
+            Spacer(minLength: 4)
             Picker("", selection: selection, content: content)
                 .labelsHidden()
-                .frame(width: 160)
+                // Narrower than before: these now sit two to a row, so 160 crowded the label out.
+                .frame(width: 130)
         }
     }
 }
 
-private struct SliderRow: View {
+/// Label, track and value on one line, with the explanation as a tooltip.
+///
+/// The prose used to sit under every slider. It is worth reading once and then costs a line forever,
+/// which is most of why this pane needed scrolling — so it moved to `.help`, where it is still there
+/// on hover for anyone who wants it.
+private struct SliderRow<V: BinaryFloatingPoint>: View where V.Stride: BinaryFloatingPoint {
     let title: String
     let help: String
-    @Binding var value: CGFloat
-    let range: ClosedRange<CGFloat>
-    let step: CGFloat
+    @Binding var value: V
+    let range: ClosedRange<V>
+    let step: V.Stride
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(title).font(.system(size: 12, weight: .medium))
-                Spacer()
-                Text("\(Int(value)) pt")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 86, alignment: .leading)
             Slider(value: $value, in: range, step: step)
-            Text(help).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text("\(Int(Double(value)))")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .trailing)
         }
+        .help(help)
     }
 }
 

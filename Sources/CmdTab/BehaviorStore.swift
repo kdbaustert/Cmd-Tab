@@ -188,6 +188,7 @@ final class BehaviorStore: ObservableObject {
         static let alwaysShowTitles = "alwaysShowTitles"
         static let tileCorner = "tileCorner"
         static let titleFontSize = "titleFontSize"
+        static let titleFontName = "titleFontName"
         static let fade = "fadeAnimation"
         static let showMenuBarIcon = "showMenuBarIcon"
         static let reflectMode = "reflectModeInMenuBar"
@@ -202,7 +203,7 @@ final class BehaviorStore: ObservableObject {
         "sameAppCycle", "sameAppHotkeyKeyCode", "sameAppHotkeyModifiers",
         "showDelayMs", "windowScope", "hideEmptyApps", "maxColumns",
         "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
-        "alwaysShowTitles", "tileCorner", "titleFontSize",
+        "alwaysShowTitles", "tileCorner", "titleFontSize", "titleFontName",
         "fadeAnimation", "showMenuBarIcon", "reflectModeInMenuBar", "windowPreviewOnHover",
         "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs", "favoriteBundleIDs",
         "switcherShortcuts",
@@ -287,6 +288,10 @@ final class BehaviorStore: ObservableObject {
     @Published var titleFontSize: Double {
         didSet { store(titleFontSize, Key.titleFontSize, oldValue != titleFontSize) }
     }
+    /// Font family for tile titles and the caption. Empty = the system font.
+    @Published var titleFontName: String {
+        didSet { store(titleFontName, Key.titleFontName, oldValue != titleFontName) }
+    }
     @Published var fade: Bool {
         didSet { store(fade, Key.fade, oldValue != fade) }
     }
@@ -340,6 +345,7 @@ final class BehaviorStore: ObservableObject {
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
+        titleFontName = d.string(forKey: Key.titleFontName) ?? ""
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true
@@ -384,6 +390,7 @@ final class BehaviorStore: ObservableObject {
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
+        titleFontName = d.string(forKey: Key.titleFontName) ?? ""
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true

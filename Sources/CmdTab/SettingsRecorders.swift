@@ -12,7 +12,9 @@ struct HotkeyRecorder: View {
         Button(recording ? "Press keys…" : hotkey.displayString) {
             recording ? stop() : start()
         }
-        .frame(width: 220)
+        // Narrower than before: these sit two rows to a line now, and one of them shares its cell
+        // with an enable checkbox.
+        .frame(width: 120)
         .onDisappear(perform: stop)
     }
 
@@ -28,8 +30,12 @@ struct HotkeyRecorder: View {
                 return nil
             }
             let candidate = Hotkey(keyCode: Int(event.keyCode), modifierRaw: mods.rawValue)
-            stop()
-            apply(candidate)
+            // Off the handler: `stop()` removes the monitor currently executing this block, and
+            // `apply` may raise a modal. Neither belongs inside event dispatch.
+            DispatchQueue.main.async {
+                stop()
+                apply(candidate)
+            }
             return nil
         }
     }
@@ -103,41 +109,31 @@ struct HotkeyRecorder: View {
 struct ActionShortcutRecorder: View {
     let action: SwitcherAction
     @ObservedObject var store: SwitcherShortcutsStore
-    @State private var recording = false
-    @State private var monitor: Any?
 
     private var current: ActionShortcut {
         store.shortcuts.bindings[action] ?? action.defaultShortcut
     }
 
+    /// Derived from the store rather than held locally, so arming one recorder visibly disarms the
+    /// rest instead of leaving a row of buttons all claiming to be listening.
+    private var isRecording: Bool { store.recordingAction == action }
+
     var body: some View {
-        Button(recording ? "Press keys…" : current.displayString) {
-            recording ? stop() : start()
+        Button(isRecording ? "Press keys…" : current.displayString) {
+            isRecording ? store.stopRecording() : store.beginRecording(action, validate: validate)
         }
         .frame(width: 120)
-        .onDisappear(perform: stop)
+        .onDisappear { if isRecording { store.stopRecording() } }
     }
 
-    private func start() {
-        recording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
-            if event.keyCode == 53 { stop(); return nil }  // Esc aborts without binding
-            let extras = Self.extras(from: event.modifierFlags)
-            guard extras.contains(.maskAlternate) || extras.contains(.maskControl) else { return nil }
-            stop()
-            apply(keyCode: Int(event.keyCode), extras: extras)
-            return nil
-        }
-    }
-
-    /// Saves the binding, refusing one built on a modifier the current trigger already holds.
+    /// Rejects a binding built on a modifier the current trigger already holds.
     ///
     /// The trigger recorder has always checked this from its side, but the check has to exist on
     /// both: recording ⌥W here while the trigger is ⌘⌥-Tab produced a binding that can never match,
     /// because the trigger's ⌥ is subtracted before matching. The key then falls through to
     /// type-to-filter and types "w" instead of closing the window — the exact silent failure the
     /// conflict alert was introduced to make impossible.
-    private func apply(keyCode: Int, extras: CGEventFlags) {
+    private func validate(keyCode: Int, extras: CGEventFlags) -> Bool {
         let trigger = BehaviorStore.shared.hotkey
         let claimed = SwitcherShortcuts.modifiersClaimed(by: trigger).intersection(extras)
         guard claimed.isEmpty else {
@@ -153,9 +149,9 @@ struct ActionShortcutRecorder: View {
                 """
             alert.addButton(withTitle: "OK")
             alert.runModal()
-            return
+            return false
         }
-        store.set(ActionShortcut(keyCode: keyCode, modifierRaw: extras.rawValue), for: action)
+        return true
     }
 
     private static func name(for flags: CGEventFlags) -> String {
@@ -176,20 +172,6 @@ struct ActionShortcutRecorder: View {
                 """
         }
         return "Use a combination built on \(name(for: free)) instead."
-    }
-
-    private func stop() {
-        recording = false
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-    }
-
-    private static func extras(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
-        var out: CGEventFlags = []
-        if flags.contains(.option) { out.insert(.maskAlternate) }
-        if flags.contains(.control) { out.insert(.maskControl) }
-        if flags.contains(.shift) { out.insert(.maskShift) }
-        return out
     }
 }
 

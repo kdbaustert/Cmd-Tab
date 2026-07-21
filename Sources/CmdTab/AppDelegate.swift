@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.alwaysShowTitles = behavior.alwaysShowTitles
         controller.tileCorner = behavior.tileCorner
         controller.titleFontSize = behavior.titleFontSize
+        controller.titleFontName = behavior.titleFontName
         controller.fade = behavior.fade
         controller.panelMaterial = behavior.panelMaterial
         controller.panelOpacity = behavior.panelOpacity

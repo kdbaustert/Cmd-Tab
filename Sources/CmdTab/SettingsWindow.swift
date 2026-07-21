@@ -28,77 +28,104 @@ struct GeneralSettings: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                field("Shortcut", help: "Hold to open the switcher; release to switch.") {
-                    HotkeyRecorder(hotkey: $behavior.hotkey)
+            // Same treatment as Appearance: one line per control with the explanation as a tooltip,
+            // and everything paired into two columns. Each `field` used to carry its help text on a
+            // second line, which doubled the height of the pane for prose you read once.
+            VStack(alignment: .leading, spacing: 10) {
+                // App-level switches first: whether Cmd-Tab is in the menu bar and whether it starts
+                // with the session are about the app itself, not about how the switcher behaves, so
+                // they read better before the switcher settings than buried after them.
+                LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 4) {
+                    Toggle("Show menu-bar icon", isOn: $behavior.showMenuBarIcon)
+                        .toggleStyle(.checkbox)
+                        .help(
+                            "Off = no menu bar item. Reopen Cmd-Tab from Finder to get Settings "
+                                + "back.")
+                    Toggle("Show mode in menu bar", isOn: $behavior.reflectMode)
+                        .toggleStyle(.checkbox)
+                        .disabled(!behavior.showMenuBarIcon)
+                    Toggle(
+                        "Start at login",
+                        isOn: Binding(
+                            get: { loginItem.startAtLogin },
+                            set: { loginItem.setStartAtLogin($0) }))
+                        .toggleStyle(.checkbox)
                 }
+                // Breathing room around the group and its rule. Checkboxes sit tight against their
+                // own text box, so without this they read as crowded into the window's top edge and
+                // pressed up against the divider below.
+                .padding(.top, 6)
+                .padding(.bottom, 4)
 
-                field(
-                    "Stay open",
-                    help: "Keep the switcher up after the modifier is released; pick with a click "
-                        + "or Return. Escape always closes it, as does clicking away."
-                ) {
-                    Toggle("", isOn: $behavior.stickyMode).labelsHidden()
-                }
+                Divider()
+                    .padding(.bottom, 4)
 
-                field(
-                    "Cycle app windows",
-                    help: "A second shortcut that shows only the frontmost app's windows. "
-                        + "Off by default — the usual ⌘` is a shortcut apps use themselves."
-                ) {
-                    HStack(spacing: 8) {
-                        Toggle("", isOn: $behavior.sameAppCycle).labelsHidden()
-                        HotkeyRecorder(hotkey: $behavior.sameAppHotkey)
-                            .disabled(!behavior.sameAppCycle)
+                LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 8) {
+                    field("Shortcut", help: "Hold to open the switcher; release to switch.") {
+                        HotkeyRecorder(hotkey: $behavior.hotkey)
+                    }
+
+                    field(
+                        "Show delay",
+                        help: "Wait before drawing the panel; a quick tap switches with no flash. "
+                            + "0 = instant."
+                    ) {
+                        HStack(spacing: 6) {
+                            Slider(value: $behavior.showDelay, in: 0...400, step: 25)
+                            Text("\(Int(behavior.showDelay))")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 26, alignment: .trailing)
+                        }
+                    }
+
+                    field(
+                        "Cycle app windows",
+                        help: "A second shortcut that shows only the frontmost app's windows. "
+                            + "Off by default — the usual ⌘` is a shortcut apps use themselves."
+                    ) {
+                        HStack(spacing: 6) {
+                            Toggle("", isOn: $behavior.sameAppCycle).labelsHidden()
+                            HotkeyRecorder(hotkey: $behavior.sameAppHotkey)
+                                .disabled(!behavior.sameAppCycle)
+                        }
+                    }
+
+                    field(
+                        "Stay open",
+                        help: "Keep the switcher up after the modifier is released; pick with a "
+                            + "click or Return. Escape always closes it, as does clicking away."
+                    ) {
+                        Toggle("", isOn: $behavior.stickyMode).labelsHidden()
+                    }
+
+                    field("Order", help: "How tiles are sorted.") {
+                        Picker("", selection: $behavior.sortOrder) {
+                            ForEach(SortOrder.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 140)
+                    }
+
+                    field("Window scope", help: "Which Spaces or displays window mode draws from.") {
+                        Picker("", selection: $behavior.windowScope) {
+                            ForEach(WindowScope.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 140)
                     }
                 }
 
-                field(
-                    "Show delay",
-                    help: "Wait before drawing the panel; a quick tap switches with no flash. "
-                        + "0 = instant."
-                ) {
-                    HStack(spacing: 8) {
-                        Slider(value: $behavior.showDelay, in: 0...400, step: 25).frame(width: 170)
-                        Text("\(Int(behavior.showDelay)) ms")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 52, alignment: .trailing)
-                    }
+                LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 4) {
+                    Toggle("Skip minimized windows", isOn: $behavior.skipMinimized)
+                        .toggleStyle(.checkbox)
+                        .help("Window mode only: leave minimized windows out of the switcher.")
+                    Toggle("Hide apps with no windows", isOn: $behavior.hideEmptyApps)
+                        .toggleStyle(.checkbox)
+                        .help(
+                            "App mode only. Note: an app whose windows are all minimized counts "
+                                + "as empty.")
                 }
-
-                field("Switch between", help: "Applications, or individual windows.") {
-                    Picker("", selection: $behavior.mode) {
-                        Text("Applications").tag(SwitcherMode.apps)
-                        Text("Windows").tag(SwitcherMode.windows)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
-
-                field("Order", help: "How tiles are sorted.") {
-                    Picker("", selection: $behavior.sortOrder) {
-                        ForEach(SortOrder.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
-
-                field("Window scope", help: "Which Spaces or displays window mode draws from.") {
-                    Picker("", selection: $behavior.windowScope) {
-                        ForEach(WindowScope.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
-
-                Toggle("Skip minimized windows", isOn: $behavior.skipMinimized)
-                    .toggleStyle(.checkbox)
-                    .help("Window mode only: leave minimized windows out of the switcher.")
-                Toggle("Hide apps with no open windows", isOn: $behavior.hideEmptyApps)
-                    .toggleStyle(.checkbox)
-                    .help("App mode only. Note: an app whose windows are all minimized counts as empty.")
 
                 Divider()
 
@@ -107,21 +134,6 @@ struct GeneralSettings: View {
                 Divider()
 
                 shortcutsSection
-
-                Divider()
-
-                Toggle("Show menu-bar icon", isOn: $behavior.showMenuBarIcon)
-                    .toggleStyle(.checkbox)
-                    .help("Off = no menu bar item. Reopen Cmd-Tab from Finder to get Settings back.")
-                Toggle("Show current mode in the menu bar", isOn: $behavior.reflectMode)
-                    .toggleStyle(.checkbox)
-                    .disabled(!behavior.showMenuBarIcon)
-                Toggle(
-                    "Start at login",
-                    isOn: Binding(
-                        get: { loginItem.startAtLogin },
-                        set: { loginItem.setStartAtLogin($0) }))
-                    .toggleStyle(.checkbox)
 
                 Divider()
 
@@ -195,11 +207,25 @@ struct GeneralSettings: View {
                 + "each also needs ⌥ or ⌃ to stay clear of type-to-filter.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            ForEach(SwitcherAction.allCases) { action in
-                HStack {
-                    Text(action.title).font(.system(size: 12))
-                    Spacer()
-                    ActionShortcutRecorder(action: action, store: shortcutsStore)
+            // Two per row. Eleven actions stacked one-per-line dominated the pane; paired up they
+            // fit the width the window gained and the section stops burying everything below it.
+            // A fixed two-column grid rather than an adaptive one so the recorder buttons stay
+            // aligned down the pane instead of reflowing with the longest title.
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 16, alignment: .leading),
+                    GridItem(.flexible(), spacing: 16, alignment: .leading),
+                ],
+                alignment: .leading, spacing: 6
+            ) {
+                ForEach(SwitcherAction.allCases) { action in
+                    HStack(spacing: 8) {
+                        Text(action.title)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        ActionShortcutRecorder(action: action, store: shortcutsStore)
+                    }
                 }
             }
         }
@@ -233,19 +259,25 @@ struct GeneralSettings: View {
         SettingsIO.reset()
     }
 
-    /// A labelled settings row: caption on the left, control on the right, help underneath.
-    @ViewBuilder
+    /// Fixed rather than adaptive, so controls stay aligned down the pane instead of reflowing
+    /// around whichever label happens to be longest.
+    private static let twoColumns = [
+        GridItem(.flexible(), spacing: 18, alignment: .leading),
+        GridItem(.flexible(), spacing: 18, alignment: .leading),
+    ]
+
+    /// Label and control on one line, with the explanation as a tooltip rather than a second line.
     private func field(
         _ title: String, help: String, @ViewBuilder control: () -> some View
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(title).font(.system(size: 12, weight: .medium))
-                Spacer()
-                control()
-            }
-            Text(help).font(.system(size: 10)).foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            control()
         }
+        .help(help)
     }
 }
 

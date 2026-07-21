@@ -151,7 +151,7 @@ struct SwitcherView: View {
                     isSelected: index == model.selection,
                     highlightColor: model.highlightColor,
                     corner: model.tileCorner,
-                    titleFontSize: model.titleFontSize,
+                    titleFont: model.titleFont(size: model.titleFontSize),
                     // The ⌘-number jump is disabled while filtering (digits type into the query),
                     // so the badges come off too.
                     number: model.showNumbers && model.query.isEmpty && index < 9 ? index + 1 : nil)
@@ -200,11 +200,12 @@ struct SwitcherView: View {
             // the original 13pt title / 11pt subtitle.
             VStack(spacing: 1) {
                 Text(selected.title)
-                    .font(.system(size: model.titleFontSize + 3, weight: .semibold))
+                    .font(model.titleFont(size: model.titleFontSize + 3))
+                    .fontWeight(.semibold)
                     .lineLimit(1)
                 if model.mode == .windows {
                     Text(selected.appName)
-                        .font(.system(size: model.titleFontSize + 1))
+                        .font(model.titleFont(size: model.titleFontSize + 1))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -223,7 +224,8 @@ private struct TargetTile: View {
     let isSelected: Bool
     let highlightColor: Color
     let corner: CGFloat
-    let titleFontSize: CGFloat
+    /// Resolved by the model, so the family fallback happens in one place rather than per tile.
+    let titleFont: Font
     /// 1–9, or nil past the ninth tile, which has no key to jump to it.
     let number: Int?
 
@@ -232,7 +234,7 @@ private struct TargetTile: View {
             icon
             if showsTitle {
                 Text(target.title)
-                    .font(.system(size: titleFontSize))
+                    .font(titleFont)
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)

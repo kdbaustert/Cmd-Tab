@@ -200,6 +200,15 @@ final class SwitcherController {
         set { model.tileCorner = newValue }
     }
 
+    var titleFontName: String {
+        get { model.titleFontName }
+        set {
+            guard newValue != model.titleFontName else { return }
+            model.titleFontName = newValue
+            if isVisible { panels.layout() }
+        }
+    }
+
     var titleFontSize: CGFloat {
         get { model.titleFontSize }
         set {

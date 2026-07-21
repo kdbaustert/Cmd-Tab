@@ -141,7 +141,67 @@ final class SwitcherShortcutsStore: ObservableObject {
 
     @Published private(set) var shortcuts: SwitcherShortcuts = .defaults
 
+    /// The action currently armed for recording, if any.
+    @Published private(set) var recordingAction: SwitcherAction?
+    private var recordingMonitor: Any?
+
     var onChange: ((SwitcherShortcuts) -> Void)?
+
+    // MARK: - Recording
+
+    /// Arms `action`, disarming whatever was armed before.
+    ///
+    /// The monitor lives here rather than in each recorder view because there is only one keyboard.
+    /// Eleven views each holding their own local monitor meant clicking a second recorder without
+    /// pressing a key left the first still listening; both then received the next keyDown and
+    /// whichever handler ran first consumed it, so the combination landed on the wrong action or on
+    /// none at all. One owner, one monitor, no race.
+    ///
+    /// `validate` returns false to reject the combination (the caller shows its own explanation).
+    func beginRecording(
+        _ action: SwitcherAction, validate: @escaping (Int, CGEventFlags) -> Bool
+    ) {
+        stopRecording()
+        recordingAction = action
+        recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
+            [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 53 {  // Esc aborts without binding
+                self.stopRecording()
+                return nil
+            }
+            let extras = Self.extras(from: event.modifierFlags)
+            // ⌥ or ⌃ is required so the binding can't be mistaken for type-to-filter input.
+            guard extras.contains(.maskAlternate) || extras.contains(.maskControl) else { return nil }
+
+            let keyCode = Int(event.keyCode)
+            self.stopRecording()
+            // Hop off the handler before doing anything else: this tears down the very monitor that
+            // is running, and `validate` may raise a modal — neither belongs inside event dispatch.
+            DispatchQueue.main.async {
+                guard validate(keyCode, extras) else { return }
+                self.set(
+                    ActionShortcut(keyCode: keyCode, modifierRaw: extras.rawValue), for: action)
+            }
+            return nil
+        }
+    }
+
+    func stopRecording() {
+        if let recordingMonitor { NSEvent.removeMonitor(recordingMonitor) }
+        recordingMonitor = nil
+        recordingAction = nil
+    }
+
+    /// The extra modifiers of a recorded event. ⌘ is excluded — it is the held trigger, so it is
+    /// neither recorded nor required.
+    static func extras(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
+        var out: CGEventFlags = []
+        if flags.contains(.option) { out.insert(.maskAlternate) }
+        if flags.contains(.control) { out.insert(.maskControl) }
+        if flags.contains(.shift) { out.insert(.maskShift) }
+        return out
+    }
 
     private init() { shortcuts = Self.load() }
 
