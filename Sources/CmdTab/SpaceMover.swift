@@ -52,7 +52,10 @@ enum SpaceMover {
         }
 
         // Walk the displays to the one holding this Space, and take its ordered user Spaces.
-        guard let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]] else { return }
+        guard let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]] else {
+            Log.general.error("space move: could not read the display/Space layout")
+            return
+        }
         for display in displays {
             guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
             let ids =
@@ -71,6 +74,12 @@ enum SpaceMover {
             moveWindows(cid, windowArray, ids[target])
             return
         }
+        // Fell through every display without matching. The usual cause is a fullscreen or tiled
+        // window: its Space is not `type == 0`, so the filter above drops it and no display claims
+        // it. Logged because the caller has already reported success by this point, and silence here
+        // is indistinguishable from the action never running.
+        Log.general.notice(
+            "space move: window \(window, privacy: .public) is on no standard Space (fullscreen?)")
     }
 
     /// Every user Space in order, flattened across displays.

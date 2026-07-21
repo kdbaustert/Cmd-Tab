@@ -220,13 +220,22 @@ extension SwitchTarget {
     /// switchable window. Runs off the main thread — the Accessibility lookup can block.
     func moveToSpace(_ delta: Int) {
         let kind = self.kind
+        let pid = self.pid
         let parsedWindowID = windowID
         Self.focusQueue.async {
             if case .launch = kind { return }
-            // Resolve the window's number from its element (robust for the Electron apps whose
-            // AXWindows list is empty), falling back to the id parsed from a window target.
-            let id = Self.resolveWindow(kind).flatMap(TargetProvider.windowID) ?? parsedWindowID
-            guard let id else { return }
+            // Three routes, because each fails on its own set of apps. The AX element is most
+            // accurate; the parsed `"win:<id>"` only exists for window targets; and the window-server
+            // list is the backstop for apps where `_AXUIElementGetWindow` returns 0 — since window
+            // mode was removed, the main switcher has only `.app` targets, so without that backstop
+            // this action silently no-ops on Electron and Catalyst apps.
+            let id = Self.resolveWindow(kind).flatMap(TargetProvider.windowID)
+                ?? parsedWindowID
+                ?? TargetProvider.frontWindowID(for: pid)
+            guard let id else {
+                Log.general.error("space move: no window id for pid \(pid, privacy: .public)")
+                return
+            }
             SpaceMover.move(window: id, bySpaces: delta)
         }
     }

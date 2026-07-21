@@ -139,11 +139,38 @@ final class TargetProvider {
             let targets = Self.windowTargets(
                 [app], order: [pid], sortOrder: sortOrder,
                 windowMRU: windowMRU, screenFrames: screenFrames)
-            DispatchQueue.main.async { handler(Self.withSpaceBadges(targets)) }
+            // Badged here, not in the hop below: `spaceIndices` is a CGS round-trip per window, and
+            // evaluating it inside the `main.async` body put that IPC on the thread that services
+            // the event tap.
+            let badged = Self.withSpaceBadges(targets)
+            DispatchQueue.main.async { handler(badged) }
         }
     }
 
     // MARK: - Window helpers
+
+    /// The frontmost on-screen window id belonging to `pid`, straight from the window server.
+    ///
+    /// A fallback for the Accessibility route. `_AXUIElementGetWindow` maps an AX element to a
+    /// `CGWindowID`, but returns 0 for plenty of apps — Electron and Catalyst hosts especially — and
+    /// removing window mode took away the `"win:<id>"` targets that used to cover for it. Without
+    /// this, any action needing a window id silently no-ops on exactly those apps.
+    ///
+    /// `CGWindowListCopyWindowInfo` returns front-to-back, so the first layer-0 match is the one the
+    /// user is looking at.
+    static func frontWindowID(for pid: pid_t) -> CGWindowID? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+        for window in info {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                window[kCGWindowOwnerPID as String] as? pid_t == pid,
+                let number = window[kCGWindowNumber as String] as? CGWindowID
+            else { continue }
+            return number
+        }
+        return nil
+    }
 
     /// PIDs owning at least one real window on ANY Space (no on-screen restriction). Used by the
     /// "hide apps with no open windows" filter so fullscreen / other-Space apps are not dropped.

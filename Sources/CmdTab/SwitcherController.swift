@@ -377,8 +377,12 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            if !staysOpenOnRelease, !stillHeld(flags, activeHeld) { commit(); return false }
+            // keyUp first. This check used to sit above it, so in a stay-open session the keyUp of
+            // the very Tab that armed commit-on-release satisfied it and closed the panel after a
+            // single step — and it fired before `handleVisibleKey` could see Escape, so there was no
+            // way to abort either.
             if type == .keyUp { return true }
+            if !staysOpenOnRelease, !stillHeld(flags, activeHeld) { commit(); return false }
             resetStickyIdle()
             return handleVisibleKey(code, flags, event)
         }
@@ -391,6 +395,9 @@ final class SwitcherController {
             // `advance` rather than a bare `layout()`: this runs on the tap callback, where a full
             // NSHostingView rebuild is the one thing that must not happen inline.
             if code == hotkey.keyCode {
+                // Same rule as the visible path: a Tab pressed through the show-delay window is
+                // still cycling, and was previously missed entirely.
+                if stillHeld(flags, activeHeld) { cycledWithTab = true }
                 advance(flags.contains(.maskShift) ? -1 : 1)
             }
             return true
@@ -430,7 +437,10 @@ final class SwitcherController {
         // strip belongs to the app you left.
         if code == hotkey.keyCode {
             preview.endSteering()
-            cycledWithTab = true
+            // Only while the chord is still down. "Tab to cycle, release to go" presupposes
+            // something to release; tabbing in an already-released stay-open session is plain
+            // navigation, and arming commit-on-release there would fire on this key's own keyUp.
+            if stillHeld(flags, activeHeld) { cycledWithTab = true }
             advance(flags.contains(.maskShift) ? -1 : 1)
             return true
         }
@@ -463,11 +473,13 @@ final class SwitcherController {
                 perform(action)
                 return true
             }
-            // Only ever reached with a modifier held on top of the trigger, so this is rare enough
-            // to log: it is the difference between "the binding did not match" and "the action ran
-            // but did nothing", which is otherwise invisible from outside.
-            Log.tap.notice(
-                "no action for key \(code, privacy: .public) extra \(extra.rawValue, privacy: .public)")
+            // Only when ⌥/⌃ is involved. Shift alone means a typed capital going to type-to-filter,
+            // which is once per keystroke — far too hot for the tap callback, where the file's own
+            // header insists the work stays trivial.
+            if !extra.intersection([.maskAlternate, .maskControl]).isEmpty {
+                Log.tap.notice(
+                    "no action for key \(code, privacy: .public) extra \(extra.rawValue, privacy: .public)")
+            }
         }
         // Navigation and editing keys.
         switch code {
@@ -872,10 +884,10 @@ final class SwitcherController {
         // acting on it quick-switches out of a session the user asked to stay open. `flagsChanged`
         // already carries this guard; the watchdog is the other half and was missing it, which made
         // sticky mode silently do nothing whenever a show-delay let the watchdog start first.
-        guard !staysOpenOnRelease else {
-            stopWatchdog()
-            return
-        }
+        // Skipped, not stopped. `staysOpenOnRelease` flips the moment Tab-cycling arms
+        // commit-on-release, and a stopped timer is never restarted — so stopping here left exactly
+        // the Tab-cycled sticky session with no hardware poll, which is the case it was added for.
+        guard !staysOpenOnRelease else { return }
         guard isVisible || armed || pendingSameApp else {
             stopWatchdog()
             return
@@ -957,8 +969,10 @@ final class SwitcherController {
     }
 
     private func execute(_ action: SwitcherAction) {
+        // pid, not title: titles carry document names, mail subjects and URLs, and `.public` would
+        // persist them in the unified log for anything that can run `log show` to read.
         Log.tap.notice(
-            "execute \(action.rawValue, privacy: .public) on \(self.model.selected?.title ?? "nil", privacy: .public)")
+            "execute \(action.rawValue, privacy: .public) on pid \(self.model.selected?.pid ?? -1, privacy: .public)")
         switch action {
         case .quit: quitSelected()
         case .forceQuit: forceQuitSelected()
