@@ -103,12 +103,11 @@ the keys *labelled* 1–9 on ANSI-style layouts.
 | Switch between | Applications or individual windows. | Applications |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
 | Skip minimized windows | Window mode only: leave minimized windows out of the list rather than showing them dimmed. | Off |
-| Favorite apps | Apps pinned via **Add…**. In app mode a favourite that isn't running still appears as a launchable tile (dimmed, with an ↗ badge) at the end of the list; picking it launches the app instead of switching. Keyed by bundle id, persisted as `favoriteBundleIDs`. | None |
 | Switcher shortcuts | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
 | Start at login | Registers the app as a login item via `SMAppService`. | Off |
 
 Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `mode`, `sortOrder`,
-`skipMinimized`, `favoriteBundleIDs`); Start at login lives in the system's Login Items, not our
+`skipMinimized`); Start at login lives in the system's Login Items, not our
 defaults.
 
 ### Appearance
@@ -166,18 +165,32 @@ window that can't be shown is a **minimized** one: it has no live surface, so it
 is dropped. Captures are debounced per hovered tile, run concurrently, and reuse a briefly cached
 window list so a cursor sweeping across tiles does not re-enumerate the system each time.
 
-### Excluded apps
+### Apps
 
-The Excluded Apps tab lists every running app with a switch to exclude it. Excluded apps never
-appear in the switcher in either mode — excluding an app also removes all of its windows from
-window mode.
+One list of every running app, with two controls per row. They are opposite answers to the same
+question — should this app be in the switcher — so they share a row rather than two panes listing
+the same apps twice.
 
-Exclusions are keyed by bundle identifier, not pid, so they survive the app quitting, relaunching
-under a new pid, and Cmd-Tab restarting. They persist in `UserDefaults` under `excludedBundleIDs`.
+**Favorite** (the star) pins an app. In app mode a favourite that isn't running still appears as a
+launchable tile (dimmed, with an ↗ badge) at the end of the list; picking it launches the app
+instead of switching.
 
-Excluded apps stay in the settings list even once they quit, so an exclusion can always be undone.
-**Add App…** picks an app that isn't running, since by definition it can't be in the list. An app
-with no bundle identifier can never be excluded — there is nothing stable to key it on.
+**Exclude** (the switch) keeps an app out of the switcher in either mode — excluding an app also
+removes all of its windows from window mode.
+
+The two are mutually exclusive: setting one clears the other, so a row can never claim an app is
+both pinned into the switcher and kept out of it.
+
+Both are keyed by bundle identifier, not pid, so they survive the app quitting, relaunching under a
+new pid, and Cmd-Tab restarting. They persist in `UserDefaults` under `favoriteBundleIDs` (an array,
+in the order added — that is the order the launch tiles appear in) and `excludedBundleIDs`.
+
+An app with either setting stays in the list once it quits, so the setting can always be undone; an
+app that has since been uninstalled shows its raw bundle id and a placeholder icon rather than
+vanishing. **Add App…** reaches an app that isn't running, since by definition it can't be in the
+list — it lands as a favourite, that being the reason to reach for a non-running app, and the
+switch on its row overrides that. An app with no bundle identifier can never be set either way —
+there is nothing stable to key it on.
 
 ## Switching to an app whose windows are all minimized
 
@@ -317,7 +330,8 @@ after that. Remove the identity in Keychain Access to undo it.
 | `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |
 | `ExclusionStore.swift` | The set of excluded apps, persisted by bundle identifier |
 | `AppearanceStore.swift` | The four appearance values, persisted |
-| `SettingsWindow.swift` | Settings window — the appearance sliders and the exclusion list |
+| `SettingsWindow.swift` | Settings window shell and the General tab |
+| `SettingsApps.swift` | The Apps tab — the app list with its favourite and exclude controls |
 | `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
 
 ## Design notes

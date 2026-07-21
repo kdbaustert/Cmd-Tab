@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// One row in the settings list: an app that can be excluded from the switcher.
+/// One row in the settings list: an app that can be favourited or excluded.
 struct AppEntry: Identifiable {
-    /// The bundle identifier, which is also what the exclusion is keyed on.
+    /// The bundle identifier, which is also what both settings are keyed on.
     let id: String
     let name: String
     let icon: NSImage?
@@ -12,8 +12,8 @@ struct AppEntry: Identifiable {
 }
 
 /// The list of apps offered in settings: everything currently running, plus anything already
-/// excluded. Excluded apps have to appear even when they are not running, or an exclusion could
-/// never be undone once the app quit.
+/// favourited or excluded. Those have to appear even when they are not running — a favourite is
+/// *about* not running, and an exclusion could never be undone once the app quit.
 @MainActor
 final class AppListModel: ObservableObject {
     @Published private(set) var entries: [AppEntry] = []
@@ -40,7 +40,6 @@ final class AppListModel: ObservableObject {
     }
 
     func reload() {
-        let excluded = ExclusionStore.shared.excluded
         var byID: [String: AppEntry] = [:]
 
         for app in NSWorkspace.shared.runningApplications {
@@ -52,8 +51,9 @@ final class AppListModel: ObservableObject {
                 id: id, name: app.localizedName ?? id, icon: app.icon, isRunning: true)
         }
 
-        // Fold in excluded apps that are not running right now.
-        for id in excluded where byID[id] == nil {
+        // Fold in settings-bearing apps that are not running right now.
+        let pinned = ExclusionStore.shared.excluded.union(FavoritesStore.shared.favorites)
+        for id in pinned where byID[id] == nil {
             byID[id] = Self.installedEntry(for: id)
         }
 
@@ -76,9 +76,12 @@ final class AppListModel: ObservableObject {
     }
 }
 
-
-struct ExcludedAppsSettings: View {
+/// Favourites and exclusions in one list. They are opposite answers to the same question — should
+/// this app be in the switcher — so they belong on the same row rather than in two panes listing
+/// the same apps twice.
+struct AppsSettings: View {
     @ObservedObject var store: ExclusionStore
+    @ObservedObject var favorites: FavoritesStore
     @StateObject private var apps = AppListModel()
     @State private var query = ""
 
@@ -97,17 +100,21 @@ struct ExcludedAppsSettings: View {
             footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // A newly excluded app that is not running needs a row of its own, so the list is rebuilt
-        // rather than just re-rendered.
+        // An app that is not running needs a row of its own once it is favourited or excluded, so
+        // the list is rebuilt rather than just re-rendered.
         .onChange(of: store.excluded) { apps.reload() }
+        .onChange(of: favorites.favorites) { apps.reload() }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Excluded Apps").font(.system(size: 13, weight: .semibold))
-            Text("Apps ticked here never appear in the switcher, in either mode.")
+            Text("Apps").font(.system(size: 13, weight: .semibold))
+            Text(
+                "Star an app to keep it in the switcher even when it isn't running; picking it "
+                + "launches it. Excluded apps never appear, in either mode.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
@@ -147,12 +154,26 @@ struct ExcludedAppsSettings: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    // Column captions, so the star and the switch are not two unlabelled controls.
+                    HStack(spacing: 12) {
+                        Spacer()
+                        Text("Favorite").frame(width: 52, alignment: .center)
+                        Text("Exclude").frame(width: 40, alignment: .center)
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+
                     ForEach(filtered) { entry in
                         AppRow(
                             entry: entry,
+                            isFavorite: Binding(
+                                get: { favorites.favorites.contains(entry.id) },
+                                set: { setFavorite($0, for: entry.id) }),
                             isExcluded: Binding(
                                 get: { store.isExcluded(entry.id) },
-                                set: { store.setExcluded($0, for: entry.id) }))
+                                set: { setExcluded($0, for: entry.id) }))
                         Divider().padding(.leading, 44)
                     }
                 }
@@ -161,41 +182,80 @@ struct ExcludedAppsSettings: View {
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 8) {
             Button("Add App…", action: addApps)
             Spacer()
-            Text(store.excluded.isEmpty ? "None excluded" : "\(store.excluded.count) excluded")
+            Text(summary)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-            Button("Include All", action: store.removeAll)
-                .disabled(store.excluded.isEmpty)
+            Button("Clear All", action: clearAll)
+                .disabled(store.excluded.isEmpty && favorites.favorites.isEmpty)
         }
         .padding(12)
     }
 
-    /// Lets the user exclude an app that is not running, which by definition cannot be in the list.
+    private var summary: String {
+        let stars = favorites.favorites.count
+        let hidden = store.excluded.count
+        guard stars > 0 || hidden > 0 else { return "None set" }
+        return "\(stars) favorite\(stars == 1 ? "" : "s") · \(hidden) excluded"
+    }
+
+    /// The two settings are contradictory — a favourite is pinned *into* the switcher and an
+    /// exclusion keeps the app out of it — so turning one on turns the other off rather than
+    /// leaving a row whose state does not describe what the switcher will do.
+    private func setFavorite(_ on: Bool, for id: String) {
+        if on {
+            store.setExcluded(false, for: id)
+            favorites.add(id)
+        } else {
+            favorites.remove(id)
+        }
+    }
+
+    private func setExcluded(_ on: Bool, for id: String) {
+        if on { favorites.remove(id) }
+        store.setExcluded(on, for: id)
+    }
+
+    private func clearAll() {
+        let alert = NSAlert()
+        alert.messageText = "Clear all favorites and exclusions?"
+        alert.informativeText = "Every app goes back to the switcher's default behaviour."
+        alert.addButton(withTitle: "Clear")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        store.removeAll()
+        favorites.removeAll()
+    }
+
+    /// Lets the user reach an app that is not running, which by definition cannot be in the list.
+    /// It is added as a favourite: a row only survives a reload once something is set on it, and
+    /// pinning is the reason to reach for an app that is not running — excluding one that never
+    /// appears in the switcher anyway is a no-op. The switch on the row overrides it.
     private func addApps() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.application]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.message = "Choose apps to exclude from the switcher"
-        panel.prompt = "Exclude"
+        panel.message = "Choose apps to add as favourites"
+        panel.prompt = "Add"
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
             guard let id = Bundle(url: url)?.bundleIdentifier else { continue }
-            store.setExcluded(true, for: id)
+            favorites.add(id)
         }
     }
 }
 
 private struct AppRow: View {
     let entry: AppEntry
+    @Binding var isFavorite: Bool
     @Binding var isExcluded: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             Group {
                 if let icon = entry.icon {
                     Image(nsImage: icon).resizable().interpolation(.high)
@@ -214,14 +274,29 @@ private struct AppRow: View {
             }
 
             Spacer()
+
+            Button {
+                isFavorite.toggle()
+            } label: {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .font(.system(size: 12))
+                    .foregroundStyle(isFavorite ? Color.accentColor : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 52, alignment: .center)
+            .help("Show in the switcher even when not running; picking it launches the app.")
+
             Toggle("", isOn: $isExcluded)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
+                .frame(width: 40, alignment: .center)
+                .help("Never show this app in the switcher.")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        // The whole row used to toggle the exclusion switch. With two controls on it there is no
+        // single thing a row-wide tap should mean, so each control is hit on its own now.
         .contentShape(Rectangle())
-        .onTapGesture { isExcluded.toggle() }
     }
 }

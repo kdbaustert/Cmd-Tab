@@ -9,8 +9,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             AppearanceSettings(appearance: .shared, behavior: .shared)
                 .tabItem { Label("Appearance", systemImage: "slider.horizontal.3") }
-            ExcludedAppsSettings(store: .shared)
-                .tabItem { Label("Excluded Apps", systemImage: "eye.slash") }
+            AppsSettings(store: .shared, favorites: .shared)
+                .tabItem { Label("Apps", systemImage: "square.grid.2x2") }
         }
         .padding(12)
         // Rows are label — spacer — control, so width is what keeps the two columns apart and gives
@@ -23,7 +23,6 @@ struct SettingsView: View {
 struct GeneralSettings: View {
     @ObservedObject var loginItem: LoginItemStore
     @ObservedObject var behavior: BehaviorStore
-    @ObservedObject private var favorites = FavoritesStore.shared
     @ObservedObject private var shortcutsStore = SwitcherShortcutsStore.shared
 
     var body: some View {
@@ -115,10 +114,6 @@ struct GeneralSettings: View {
 
                 Divider()
 
-                favoritesSection
-
-                Divider()
-
                 shortcutsSection
 
                 Divider()
@@ -142,41 +137,6 @@ struct GeneralSettings: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .onAppear { loginItem.refresh() }
-    }
-
-    /// Pinned apps that appear in the switcher even when not running, launching on select.
-    @ViewBuilder
-    private var favoritesSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Favorite apps").font(.system(size: 12, weight: .medium))
-                Spacer()
-                Button("Add…", action: addFavorites)
-            }
-            Text("Shown even when not running; picking one launches it.")
-                .font(.system(size: 10)).foregroundStyle(.secondary)
-            ForEach(favorites.favorites, id: \.self) { id in
-                HStack(spacing: 8) {
-                    let info = FavoritesStore.appInfo(for: id)
-                    Group {
-                        if let icon = info?.icon {
-                            Image(nsImage: icon).resizable().interpolation(.high)
-                        } else {
-                            Image(systemName: "app.dashed").resizable().foregroundStyle(.secondary)
-                        }
-                    }
-                    .scaledToFit().frame(width: 18, height: 18)
-                    Text(info?.name ?? id).font(.system(size: 12)).lineLimit(1)
-                    Spacer()
-                    Button {
-                        favorites.remove(id)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
     }
 
     /// Rebindable keys for the in-switcher window actions.
@@ -214,21 +174,6 @@ struct GeneralSettings: View {
                     }
                 }
             }
-        }
-    }
-
-    private func addFavorites() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.application]
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.message = "Choose apps to pin as favourites"
-        panel.prompt = "Add"
-        guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            guard let id = Bundle(url: url)?.bundleIdentifier else { continue }
-            favorites.add(id)
         }
     }
 
