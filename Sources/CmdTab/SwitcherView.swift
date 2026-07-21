@@ -246,8 +246,18 @@ private struct TargetTile: View {
         }
         .frame(width: size.width, height: size.height)
         .background {
-            RoundedRectangle(cornerRadius: corner, style: .continuous)
+            // The tint alone cannot carry the selection: `highlightColor` is a fixed sRGB value —
+            // the user's, or the default — while the panel behind it is light or dark depending on
+            // `panelAppearance` and the system setting. A pale tint at 30% over a light panel is
+            // nearly invisible, a dark one over a dark panel likewise. The border is drawn in
+            // `.primary`, which inverts with the panel's appearance, so there is always a legible
+            // marker whatever tint it is paired with.
+            let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
+            shape
                 .fill(highlightColor.opacity(isSelected ? 0.30 : 0))
+                .overlay {
+                    shape.strokeBorder(.primary.opacity(isSelected ? 0.28 : 0), lineWidth: 1)
+                }
         }
     }
 

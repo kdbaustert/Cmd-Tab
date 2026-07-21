@@ -283,13 +283,14 @@ final class BehaviorStore: ObservableObject {
         didSet { store(windowPreview, Key.windowPreview, oldValue != windowPreview) }
     }
 
-    /// Tint of the selected/hovered tile. A neutral grey rather than the system accent: the
+    /// Tint of the selected/hovered tile. A pale neutral rather than the system accent: the
     /// highlight sits directly behind app icons of every colour, and an accent-tinted one fights
     /// whichever icon it lands on.
     ///
     /// Force-unwrapped deliberately — a malformed literal here is a build-time mistake, not a
     /// runtime condition worth carrying a fallback for.
-    static let defaultHighlight = Color(hex: "#434648")!
+    static let defaultHighlightHex = "#CDD7DD"
+    static let defaultHighlight = Color(hex: defaultHighlightHex)!
 
     private init() {
         let d = UserDefaults.standard
@@ -333,8 +334,10 @@ final class BehaviorStore: ObservableObject {
     /// (and the UI bound to them) follow the file rather than staying on what was in memory.
     func reload() {
         suppressOnChange = true
+        isReloading = true
         defer {
             suppressOnChange = false
+            isReloading = false
             onChange?()  // one coalesced notification after the whole batch
         }
         let d = UserDefaults.standard
@@ -384,6 +387,15 @@ final class BehaviorStore: ObservableObject {
     /// fires the (expensive) callback once at the end rather than ~27 times.
     private var suppressOnChange = false
 
+    /// Suppresses the *write* half of the `didSet` handlers during `reload()`. Every value assigned
+    /// there was just read back out of `UserDefaults`, so re-persisting it is at best a no-op — and
+    /// at worst destructive: for a key that is absent, the assignment falls through to the current
+    /// build's default and the write would store that default as though the user had picked it.
+    /// `resetAll()` + `reload()` would then pin today's defaults forever, and no future default
+    /// change could ever reach anyone who had reset or imported. Distinct from `suppressOnChange`,
+    /// which `batch()` also sets — a theme apply *does* need its values persisted.
+    private var isReloading = false
+
     private func notify() {
         guard !suppressOnChange else { return }
         onChange?()
@@ -399,19 +411,23 @@ final class BehaviorStore: ObservableObject {
     }
 
     private func store(_ value: Any, _ key: String, _ changed: Bool) {
-        guard changed else { return }
+        guard changed, !isReloading else { return }
         UserDefaults.standard.set(value, forKey: key)
         notify()
     }
 
     private func storeColor(_ new: Color, _ old: Color) {
-        guard new != old else { return }
-        UserDefaults.standard.set(new.hexString, forKey: Key.highlightColor)
+        guard new != old, !isReloading else { return }
+        // A colour that will not convert to sRGB has no `#RRGGBB` form. Keep the previously stored
+        // hex rather than writing a stand-in, so a one-off conversion failure cannot silently
+        // replace the user's choice on the next launch.
+        guard let hex = new.hexString else { return }
+        UserDefaults.standard.set(hex, forKey: Key.highlightColor)
         notify()
     }
 
     private func storeHotkey(_ new: Hotkey, _ old: Hotkey, _ codeKey: String, _ modKey: String) {
-        guard new != old else { return }
+        guard new != old, !isReloading else { return }
         let d = UserDefaults.standard
         d.set(new.keyCode, forKey: codeKey)
         d.set(Int(Int64(bitPattern: new.modifierRaw)), forKey: modKey)
@@ -444,15 +460,23 @@ extension Color {
     init?(hex: String) {
         var s = hex
         if s.hasPrefix("#") { s.removeFirst() }
-        guard s.count == 6, let value = Int(s, radix: 16) else { return nil }
+        // `allSatisfy(\.isHexDigit)` is not redundant with the `Int` parse: `Int(_:radix:)` also
+        // accepts a leading `+`/`-`, so a six-character "-CDD7D" would parse to a negative value and
+        // yield an arbitrary colour instead of the nil that callers fall back on.
+        guard s.count == 6, s.allSatisfy(\.isHexDigit), let value = Int(s, radix: 16) else {
+            return nil
+        }
         self.init(
             red: Double((value >> 16) & 0xFF) / 255,
             green: Double((value >> 8) & 0xFF) / 255,
             blue: Double(value & 0xFF) / 255)
     }
 
-    var hexString: String {
-        let ns = NSColor(self).usingColorSpace(.sRGB) ?? .systemBlue
+    /// Nil when the colour has no sRGB representation — pattern-backed and catalog colours, both of
+    /// which the macOS colour panel can hand back through `ColorPicker`. Callers keep whatever they
+    /// already had rather than persisting a substitute over the user's actual selection.
+    var hexString: String? {
+        guard let ns = NSColor(self).usingColorSpace(.sRGB) else { return nil }
         let r = Int((ns.redComponent * 255).rounded())
         let g = Int((ns.greenComponent * 255).rounded())
         let b = Int((ns.blueComponent * 255).rounded())

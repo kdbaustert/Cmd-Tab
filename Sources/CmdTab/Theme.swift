@@ -66,7 +66,7 @@ final class ThemeStore: ObservableObject {
         let a = AppearanceStore.shared
         return Theme(
             name: name,
-            highlightHex: b.highlightColor.hexString,
+            highlightHex: b.highlightColor.hexString ?? BehaviorStore.defaultHighlightHex,
             appearance: b.panelAppearance.rawValue,
             material: b.panelMaterial.rawValue,
             opacity: b.panelOpacity,

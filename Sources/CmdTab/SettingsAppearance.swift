@@ -359,8 +359,13 @@ private struct PreviewTile: View {
         .frame(width: iconSize, height: iconSize)
         .frame(width: tile.width, height: tile.height)
         .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            // Mirrors `TargetTile`'s selection treatment — see the reasoning there.
+            let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+            shape
                 .fill(highlightColor.opacity(isSelected ? 0.30 : 0))
+                .overlay {
+                    shape.strokeBorder(.primary.opacity(isSelected ? 0.28 : 0), lineWidth: 1)
+                }
         }
     }
 }
