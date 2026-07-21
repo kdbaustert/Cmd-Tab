@@ -37,6 +37,8 @@ struct SwitchTarget: Identifiable {
     /// Which Space (0-based) a window is on, set only in window mode with more than one Space.
     /// nil the rest of the time, which is what suppresses the Space badge.
     var spaceIndex: Int? = nil
+    /// The app's Dock notification badge ("3", "•"), when it has one.
+    var badge: String? = nil
 
     var pid: pid_t {
         switch kind {
@@ -54,11 +56,7 @@ struct SwitchTarget: Identifiable {
     }
 
     /// The `CGWindowID` parsed back out of a window target's id, when it carries a resolved one.
-    var windowID: CGWindowID? {
-        let parts = id.split(separator: ":")
-        guard parts.count == 2, parts[0] == "win", let value = UInt32(parts[1]) else { return nil }
-        return value
-    }
+    var windowID: CGWindowID? { TargetProvider.windowID(fromTargetID: id) }
 }
 
 extension SwitchTarget {
@@ -224,14 +222,14 @@ extension SwitchTarget {
         let parsedWindowID = windowID
         Self.focusQueue.async {
             if case .launch = kind { return }
-            // Three routes, because each fails on its own set of apps. The AX element is most
-            // accurate; the parsed `"win:<id>"` only exists for window targets; and the window-server
-            // list is the backstop for apps where `_AXUIElementGetWindow` returns 0 — since window
-            // mode was removed, the main switcher has only `.app` targets, so without that backstop
-            // this action silently no-ops on Electron and Catalyst apps.
-            let id = Self.resolveWindow(kind).flatMap(TargetProvider.windowID)
+            // Three routes, each failing on a different set of apps, and all three resolve *this*
+            // window rather than guessing at the app's frontmost one. The AX element is most direct;
+            // the parsed `"win:<id>"` only exists for window targets; the frame match is the backstop
+            // for hosts where `_AXUIElementGetWindow` returns 0.
+            let element = Self.resolveWindow(kind)
+            let id = element.flatMap(TargetProvider.windowID)
                 ?? parsedWindowID
-                ?? TargetProvider.frontWindowID(for: pid)
+                ?? element.flatMap { TargetProvider.windowID(matching: $0, pid: pid) }
             guard let id else {
                 Log.general.error("space move: no window id for pid \(pid, privacy: .public)")
                 return

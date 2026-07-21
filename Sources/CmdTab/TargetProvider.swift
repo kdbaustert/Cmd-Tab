@@ -19,11 +19,15 @@ final class TargetProvider {
     /// How tiles are ordered. Recently-used keeps the MRU list; alphabetical ignores it.
     var sortOrder: SortOrder = .recentlyUsed
 
-    /// Hide apps that own no on-screen window.
-    var hideEmptyApps: Bool = false
+    /// Read the Dock for notification badges during refresh. Off skips the Accessibility walk
+    /// entirely rather than merely hiding the result.
+    var notificationBadges: Bool = true
 
     /// Bundle identifiers the user has excluded. Also keeps their windows out of the same-app cycle.
     var excludedBundleIDs: Set<String> = []
+
+    /// Hide apps that own no on-screen window.
+    var hideEmptyApps: Bool = false
 
     /// Favourited apps, in the user's order. Any that aren't running are appended as launchable
     /// tiles.
@@ -87,13 +91,17 @@ final class TargetProvider {
     func refresh(then handler: (([SwitchTarget]) -> Void)? = nil) {
         let sortOrder = self.sortOrder
         let hideEmptyApps = self.hideEmptyApps
+        let wantsBadges = self.notificationBadges
         let apps = switchableApps()
         let order = mru
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
         let launchTargets = Self.launchFavorites(favoriteBundleIDs, excluded: excludedBundleIDs)
 
         axQueue.async { [weak self] in
-            var targets = Self.appTargets(apps, order: order, sortOrder: sortOrder)
+            // On the background queue: reading the Dock is Accessibility IPC to another process.
+            let badges = wantsBadges ? DockBadges.current() : [:]
+            var targets = Self.appTargets(
+                apps, order: order, sortOrder: sortOrder, badges: badges)
             if hideEmptyApps {
                 // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
                 // counts as non-empty rather than being dropped.
@@ -149,25 +157,38 @@ final class TargetProvider {
 
     // MARK: - Window helpers
 
-    /// The frontmost on-screen window id belonging to `pid`, straight from the window server.
+    /// The `CGWindowID` for an Accessibility window element, for the apps where
+    /// `_AXUIElementGetWindow` returns 0 (Electron and Catalyst hosts, mainly).
     ///
-    /// A fallback for the Accessibility route. `_AXUIElementGetWindow` maps an AX element to a
-    /// `CGWindowID`, but returns 0 for plenty of apps — Electron and Catalyst hosts especially — and
-    /// removing window mode took away the `"win:<id>"` targets that used to cover for it. Without
-    /// this, any action needing a window id silently no-ops on exactly those apps.
+    /// Matches on pid *and* frame, not "the app's frontmost window". An app-scoped guess moves
+    /// whichever window happens to be in front — during a same-app cycle that is rarely the one
+    /// selected, and under key-repeat it picks a different window each time, scattering several
+    /// windows across Spaces instead of walking one.
     ///
-    /// `CGWindowListCopyWindowInfo` returns front-to-back, so the first layer-0 match is the one the
-    /// user is looking at.
-    static func frontWindowID(for pid: pid_t) -> CGWindowID? {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
+    /// Deliberately no `.optionOnScreenOnly`: the entire point of a move-to-Space is that the window
+    /// may be on a Space you are not currently looking at, which that flag excludes.
+    static func windowID(matching element: AXUIElement, pid: pid_t) -> CGWindowID? {
+        guard let origin = AX.position(element), let size = AX.size(element) else { return nil }
+        guard
+            let info = CGWindowListCopyWindowInfo([.excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]]
         else { return nil }
+
         for window in info {
             guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
                 window[kCGWindowOwnerPID as String] as? pid_t == pid,
-                let number = window[kCGWindowNumber as String] as? CGWindowID
+                let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary)
             else { continue }
-            return number
+            // AX position/size and CGWindowList bounds share a top-left origin space. A couple of
+            // points of slack absorbs rounding rather than requiring exact equality.
+            let tolerance: CGFloat = 2
+            guard abs(bounds.origin.x - origin.x) < tolerance,
+                abs(bounds.origin.y - origin.y) < tolerance,
+                abs(bounds.width - size.width) < tolerance,
+                abs(bounds.height - size.height) < tolerance
+            else { continue }
+            return window[kCGWindowNumber as String] as? CGWindowID
         }
         return nil
     }
@@ -187,7 +208,8 @@ final class TargetProvider {
     }
 
     /// Parses the `CGWindowID` back out of a `"win:<id>"` target id, if it carries one.
-    private static func windowID(fromTargetID id: String) -> CGWindowID? {
+    /// `SwitchTarget.windowID` forwards here so the format is understood in exactly one place.
+    static func windowID(fromTargetID id: String) -> CGWindowID? {
         let parts = id.split(separator: ":")
         guard parts.count == 2, parts[0] == "win", let value = UInt32(parts[1]) else { return nil }
         return value
@@ -200,6 +222,7 @@ final class TargetProvider {
     private struct AppInfo {
         let pid: pid_t
         let name: String
+        let bundleID: String?
         let icon: NSImage?
         let isHidden: Bool
     }
@@ -217,6 +240,7 @@ final class TargetProvider {
             return AppInfo(
                 pid: app.processIdentifier,
                 name: app.localizedName ?? "Unknown",
+                bundleID: app.bundleIdentifier,
                 icon: app.icon,
                 isHidden: app.isHidden)
         }
@@ -281,7 +305,7 @@ final class TargetProvider {
     // MARK: - Target construction
 
     private static func appTargets(
-        _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder
+        _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder, badges: [String: String]
     ) -> [SwitchTarget] {
         sorted(apps, by: order, sortOrder: sortOrder).map { app in
             SwitchTarget(
@@ -291,13 +315,14 @@ final class TargetProvider {
                 appName: app.name,
                 icon: app.icon,
                 isMinimized: false,
-                isHidden: app.isHidden)
+                isHidden: app.isHidden,
+                badge: app.bundleID.flatMap { badges[$0] })
         }
     }
 
     private static func windowTargets(
         _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder,
-        windowMRU: [CGWindowID], screenFrames: [CGRect]
+        windowMRU: [CGWindowID], screenFrames: [CGRect], badges: [String: String] = [:]
     ) -> [SwitchTarget] {
         let mruRank = Dictionary(windowMRU.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
         return sorted(apps, by: order, sortOrder: sortOrder).flatMap { app -> [SwitchTarget] in
@@ -324,7 +349,8 @@ final class TargetProvider {
                     icon: app.icon,
                     isMinimized: minimized,
                     isHidden: app.isHidden,
-                    displayIndex: display)
+                    displayIndex: display,
+                    badge: app.bundleID.flatMap { badges[$0] })
                 built.append((target, index, wid.flatMap { mruRank[$0] } ?? Int.max))
             }
             // Recently-used mode orders an app's windows by our tracked focus recency, falling back

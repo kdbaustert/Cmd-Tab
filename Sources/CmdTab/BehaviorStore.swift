@@ -167,6 +167,8 @@ final class BehaviorStore: ObservableObject {
         static let blurOverride = "blurOverride"
         static let blurRadius = "blurRadius"
         static let showNumbers = "showNumbers"
+        static let showBadges = "showBadges"
+        static let notificationBadges = "notificationBadges"
         static let tileCorner = "tileCorner"
         static let titleFontSize = "titleFontSize"
         static let titleFontName = "titleFontName"
@@ -182,7 +184,7 @@ final class BehaviorStore: ObservableObject {
         "panelScreens", "stickyMode",
         "sameAppCycle", "sameAppHotkeyKeyCode", "sameAppHotkeyModifiers",
         "showDelayMs", "hideEmptyApps", "maxColumns",
-        "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
+        "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers", "showBadges", "notificationBadges",
         "tileCorner", "titleFontSize", "titleFontName",
         "fadeAnimation", "showMenuBarIcon", "windowPreviewOnHover",
         "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs", "favoriteBundleIDs",
@@ -226,11 +228,11 @@ final class BehaviorStore: ObservableObject {
     @Published var sameAppHotkey: Hotkey {
         didSet { storeHotkey(sameAppHotkey, oldValue, Key.sameAppKeyCode, Key.sameAppModifiers) }
     }
-    @Published var showDelay: Double {
-        didSet { store(showDelay, Key.showDelay, oldValue != showDelay) }
-    }
     @Published var hideEmptyApps: Bool {
         didSet { store(hideEmptyApps, Key.hideEmptyApps, oldValue != hideEmptyApps) }
+    }
+    @Published var showDelay: Double {
+        didSet { store(showDelay, Key.showDelay, oldValue != showDelay) }
     }
     @Published var maxColumns: Int {
         didSet { store(maxColumns, Key.maxColumns, oldValue != maxColumns) }
@@ -249,6 +251,16 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var showNumbers: Bool {
         didSet { store(showNumbers, Key.showNumbers, oldValue != showNumbers) }
+    }
+    /// The display and Space badges on window tiles. Defaults on, and they only ever appear when
+    /// there is more than one display or Space to tell apart, so the setting is for turning them
+    /// off rather than on.
+    @Published var showBadges: Bool {
+        didSet { store(showBadges, Key.showBadges, oldValue != showBadges) }
+    }
+    /// Show each app's Dock notification badge (unread counts) on its tile.
+    @Published var notificationBadges: Bool {
+        didSet { store(notificationBadges, Key.notificationBadges, oldValue != notificationBadges) }
     }
     @Published var tileCorner: Double {
         didSet { store(tileCorner, Key.tileCorner, oldValue != tileCorner) }
@@ -293,8 +305,8 @@ final class BehaviorStore: ObservableObject {
         sameAppCycle = d.bool(forKey: Key.sameAppCycle)
         sameAppHotkey = Self.loadHotkey(
             d, Key.sameAppKeyCode, Key.sameAppModifiers, default: .commandBacktick)
-        showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)
+        showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         maxColumns = d.integer(forKey: Key.maxColumns)
         panelMaterial = d.string(forKey: Key.panelMaterial).flatMap(PanelMaterial.init) ?? .hud
         panelOpacity = d.object(forKey: Key.panelOpacity) != nil
@@ -303,6 +315,10 @@ final class BehaviorStore: ObservableObject {
         blurRadius = d.object(forKey: Key.blurRadius) != nil ? d.double(forKey: Key.blurRadius) : 20
         showNumbers = d.object(forKey: Key.showNumbers) != nil
             ? d.bool(forKey: Key.showNumbers) : true
+        showBadges = d.object(forKey: Key.showBadges) != nil
+            ? d.bool(forKey: Key.showBadges) : true
+        notificationBadges = d.object(forKey: Key.notificationBadges) != nil
+            ? d.bool(forKey: Key.notificationBadges) : true
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
@@ -334,8 +350,8 @@ final class BehaviorStore: ObservableObject {
         sameAppCycle = d.bool(forKey: Key.sameAppCycle)
         sameAppHotkey = Self.loadHotkey(
             d, Key.sameAppKeyCode, Key.sameAppModifiers, default: .commandBacktick)
-        showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)
+        showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
         maxColumns = d.integer(forKey: Key.maxColumns)
         panelMaterial = d.string(forKey: Key.panelMaterial).flatMap(PanelMaterial.init) ?? .hud
         panelOpacity = d.object(forKey: Key.panelOpacity) != nil
@@ -343,6 +359,8 @@ final class BehaviorStore: ObservableObject {
         blurOverride = d.bool(forKey: Key.blurOverride)
         blurRadius = d.object(forKey: Key.blurRadius) != nil ? d.double(forKey: Key.blurRadius) : 20
         showNumbers = d.object(forKey: Key.showNumbers) != nil ? d.bool(forKey: Key.showNumbers) : true
+        showBadges = d.object(forKey: Key.showBadges) != nil ? d.bool(forKey: Key.showBadges) : true
+        notificationBadges = d.object(forKey: Key.notificationBadges) != nil ? d.bool(forKey: Key.notificationBadges) : true
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10

@@ -82,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.panelPosition = behavior.panelPosition
         controller.highlightColor = behavior.highlightColor
         controller.showNumbers = behavior.showNumbers
+        controller.showBadges = behavior.showBadges
+        controller.notificationBadges = behavior.notificationBadges
         controller.tileCorner = behavior.tileCorner
         controller.titleFontSize = behavior.titleFontSize
         controller.titleFontName = behavior.titleFontName

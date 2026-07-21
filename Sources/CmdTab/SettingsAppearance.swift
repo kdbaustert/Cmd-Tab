@@ -149,6 +149,18 @@ struct AppearanceSettings: View {
                     LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 4) {
                         Toggle("Number badges", isOn: $behavior.showNumbers)
                             .toggleStyle(.checkbox)
+                            .help("The ⌘-number jump hint on the first nine tiles.")
+                        Toggle("Notification badges", isOn: $behavior.notificationBadges)
+                            .toggleStyle(.checkbox)
+                            .help(
+                                "Unread counts from each app's Dock icon. Read from the Dock over "
+                                    + "Accessibility, so it is best-effort.")
+                        Toggle("Display & Space badges", isOn: $behavior.showBadges)
+                            .toggleStyle(.checkbox)
+                            .help(
+                                "Which display and Desktop a window is on, shown on window tiles in "
+                                    + "the same-app cycle. Only ever appear when you have more than "
+                                    + "one of either.")
                         Toggle("Preview windows on hover", isOn: $behavior.windowPreview)
                             .toggleStyle(.checkbox)
                             .help(

@@ -154,7 +154,8 @@ struct SwitcherView: View {
                     titleFont: model.titleFont(size: model.titleFontSize),
                     // The ⌘-number jump is disabled while filtering (digits type into the query),
                     // so the badges come off too.
-                    number: model.showNumbers && model.query.isEmpty && index < 9 ? index + 1 : nil)
+                    number: model.showNumbers && model.query.isEmpty && index < 9 ? index + 1 : nil,
+                    showsBadges: model.showBadges)
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(
@@ -228,6 +229,8 @@ private struct TargetTile: View {
     let titleFont: Font
     /// 1–9, or nil past the ninth tile, which has no key to jump to it.
     let number: Int?
+    /// Whether the display and Space badges may be drawn at all.
+    let showsBadges: Bool
 
     var body: some View {
         VStack(spacing: titleSpacing) {
@@ -277,6 +280,14 @@ private struct TargetTile: View {
                 Badge(symbol: "arrow.up.forward")
             }
         }
+        .overlay(alignment: .topLeading) {
+            // Top-leading keeps it clear of the ⌘-number badge (bottom-trailing) and the
+            // display/Space badges (top-trailing), so a tile can carry all three without collision.
+            if let badge = target.badge {
+                NotificationBadge(text: badge)
+                    .offset(x: 1, y: 1)
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if let number {
                 // Lifted up the icon's trailing edge rather than left hanging off the corner.
@@ -288,14 +299,33 @@ private struct TargetTile: View {
             // Stacked rather than side by side: a window can carry both, and the tile is too narrow
             // to put them in a row without crowding the icon.
             VStack(alignment: .trailing, spacing: 1) {
-                if let display = target.displayIndex {
+                if showsBadges, let display = target.displayIndex {
                     DisplayBadge(number: display + 1)  // 1-based for humans
                 }
-                if let space = target.spaceIndex {
+                if showsBadges, let space = target.spaceIndex {
                     SpaceBadge(number: space + 1)
                 }
             }
         }
+    }
+}
+
+/// An app's Dock notification badge — an unread count, or a bare dot for apps that badge without a
+/// number. Red-on-white to match the Dock's own treatment, so it reads as the same signal.
+private struct NotificationBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 16, minHeight: 16)
+            .background(Capsule().fill(Color.red))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.85), lineWidth: 1))
+            // Long labels ("999+") must not stretch the tile the hit-test measured.
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
