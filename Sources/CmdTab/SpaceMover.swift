@@ -36,14 +36,20 @@ enum SpaceMover {
     static func move(window: CGWindowID, bySpaces delta: Int) {
         guard delta != 0,
             let mainConnection, let copyManaged, let copySpacesForWindows, let moveWindows
-        else { return }
+        else {
+            Log.general.error("space move: private SkyLight symbols unavailable")
+            return
+        }
         let cid = mainConnection()
         let windowArray = [NSNumber(value: window)] as CFArray
 
         // The window's current Space (mask 0x7 = all Space types).
         guard let spacesRaw = copySpacesForWindows(cid, 0x7, windowArray)?.takeRetainedValue(),
             let currentSpace = (spacesRaw as? [NSNumber])?.first?.uint64Value
-        else { return }
+        else {
+            Log.general.error("space move: could not read window \(window, privacy: .public)'s Space")
+            return
+        }
 
         // Walk the displays to the one holding this Space, and take its ordered user Spaces.
         guard let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]] else { return }
@@ -55,7 +61,13 @@ enum SpaceMover {
                 .compactMap(spaceID(from:))
             guard let index = ids.firstIndex(of: currentSpace) else { continue }
             let target = index + delta
-            guard ids.indices.contains(target) else { return }  // already at an end — nothing to do
+            guard ids.indices.contains(target) else {
+                Log.general.notice(
+                    "space move: at the end (space \(index, privacy: .public) of \(ids.count, privacy: .public))")
+                return
+            }
+            Log.general.notice(
+                "space move: window \(window, privacy: .public) \(index, privacy: .public) -> \(target, privacy: .public)")
             moveWindows(cid, windowArray, ids[target])
             return
         }

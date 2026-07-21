@@ -38,21 +38,6 @@ enum PanelAppearance: String, CaseIterable {
     }
 }
 
-/// Which windows window-mode shows, relative to Spaces and displays.
-enum WindowScope: String, CaseIterable {
-    case allSpaces
-    case currentSpace
-    case activeDisplay
-
-    var title: String {
-        switch self {
-        case .allSpaces: return "All Spaces"
-        case .currentSpace: return "Current Space"
-        case .activeDisplay: return "Active display"
-        }
-    }
-}
-
 /// The frosted material behind the tiles — the glass/blur look. A curated subset of
 /// `NSVisualEffectView.Material`, ordered roughly darkest/most-blurred to lightest.
 enum PanelMaterial: String, CaseIterable {
@@ -163,9 +148,7 @@ final class BehaviorStore: ObservableObject {
     static let shared = BehaviorStore()
 
     private enum Key {
-        static let mode = "mode"
         static let sortOrder = "sortOrder"
-        static let skipMinimized = "skipMinimized"
         static let panelAppearance = "panelAppearance"
         static let panelPosition = "panelPosition"
         static let highlightColor = "highlightColorHex"
@@ -177,7 +160,6 @@ final class BehaviorStore: ObservableObject {
         static let sameAppKeyCode = "sameAppHotkeyKeyCode"
         static let sameAppModifiers = "sameAppHotkeyModifiers"
         static let showDelay = "showDelayMs"
-        static let windowScope = "windowScope"
         static let hideEmptyApps = "hideEmptyApps"
         static let maxColumns = "maxColumns"
         static let panelMaterial = "panelMaterial"
@@ -185,26 +167,24 @@ final class BehaviorStore: ObservableObject {
         static let blurOverride = "blurOverride"
         static let blurRadius = "blurRadius"
         static let showNumbers = "showNumbers"
-        static let alwaysShowTitles = "alwaysShowTitles"
         static let tileCorner = "tileCorner"
         static let titleFontSize = "titleFontSize"
         static let titleFontName = "titleFontName"
         static let fade = "fadeAnimation"
         static let showMenuBarIcon = "showMenuBarIcon"
-        static let reflectMode = "reflectModeInMenuBar"
         static let windowPreview = "windowPreviewOnHover"
     }
 
     /// The keys we own, for export/import/reset.
     static let ownedDefaultsKeys = [
-        "mode", "sortOrder", "skipMinimized", "panelAppearance", "panelPosition",
+        "sortOrder", "panelAppearance", "panelPosition",
         "highlightColorHex", "hotkeyKeyCode", "hotkeyModifiers",
         "panelScreens", "stickyMode",
         "sameAppCycle", "sameAppHotkeyKeyCode", "sameAppHotkeyModifiers",
-        "showDelayMs", "windowScope", "hideEmptyApps", "maxColumns",
+        "showDelayMs", "hideEmptyApps", "maxColumns",
         "panelMaterial", "panelOpacity", "blurOverride", "blurRadius", "showNumbers",
-        "alwaysShowTitles", "tileCorner", "titleFontSize", "titleFontName",
-        "fadeAnimation", "showMenuBarIcon", "reflectModeInMenuBar", "windowPreviewOnHover",
+        "tileCorner", "titleFontSize", "titleFontName",
+        "fadeAnimation", "showMenuBarIcon", "windowPreviewOnHover",
         "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs", "favoriteBundleIDs",
         "switcherShortcuts",
     ]
@@ -212,14 +192,8 @@ final class BehaviorStore: ObservableObject {
     /// Fired after any change so the app can reconfigure the running switcher.
     var onChange: (() -> Void)?
 
-    @Published var mode: SwitcherMode {
-        didSet { store(mode.rawValue, Key.mode, oldValue != mode) }
-    }
     @Published var sortOrder: SortOrder {
         didSet { store(sortOrder.rawValue, Key.sortOrder, oldValue != sortOrder) }
-    }
-    @Published var skipMinimized: Bool {
-        didSet { store(skipMinimized, Key.skipMinimized, oldValue != skipMinimized) }
     }
     @Published var panelAppearance: PanelAppearance {
         didSet { store(panelAppearance.rawValue, Key.panelAppearance, oldValue != panelAppearance) }
@@ -238,8 +212,8 @@ final class BehaviorStore: ObservableObject {
     @Published var panelScreens: PanelScreens {
         didSet { store(panelScreens.rawValue, Key.panelScreens, oldValue != panelScreens) }
     }
-    /// Keeps the switcher open after the trigger modifier is released, so it can be driven with the
-    /// mouse or the arrow keys instead of held chords. Commits on click or Return.
+    /// Keeps the switcher up after the trigger is released — but only once you have actually browsed
+    /// it. A plain hold-and-release still switches; see `SwitcherController.browsed`.
     @Published var stickyMode: Bool {
         didSet { store(stickyMode, Key.stickyMode, oldValue != stickyMode) }
     }
@@ -254,9 +228,6 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var showDelay: Double {
         didSet { store(showDelay, Key.showDelay, oldValue != showDelay) }
-    }
-    @Published var windowScope: WindowScope {
-        didSet { store(windowScope.rawValue, Key.windowScope, oldValue != windowScope) }
     }
     @Published var hideEmptyApps: Bool {
         didSet { store(hideEmptyApps, Key.hideEmptyApps, oldValue != hideEmptyApps) }
@@ -279,9 +250,6 @@ final class BehaviorStore: ObservableObject {
     @Published var showNumbers: Bool {
         didSet { store(showNumbers, Key.showNumbers, oldValue != showNumbers) }
     }
-    @Published var alwaysShowTitles: Bool {
-        didSet { store(alwaysShowTitles, Key.alwaysShowTitles, oldValue != alwaysShowTitles) }
-    }
     @Published var tileCorner: Double {
         didSet { store(tileCorner, Key.tileCorner, oldValue != tileCorner) }
     }
@@ -298,10 +266,7 @@ final class BehaviorStore: ObservableObject {
     @Published var showMenuBarIcon: Bool {
         didSet { store(showMenuBarIcon, Key.showMenuBarIcon, oldValue != showMenuBarIcon) }
     }
-    @Published var reflectMode: Bool {
-        didSet { store(reflectMode, Key.reflectMode, oldValue != reflectMode) }
-    }
-    /// App mode: hovering a tile shows live thumbnails of that app's windows. Needs Screen Recording.
+    /// Hovering a tile shows live thumbnails of that app's windows. Needs Screen Recording.
     @Published var windowPreview: Bool {
         didSet { store(windowPreview, Key.windowPreview, oldValue != windowPreview) }
     }
@@ -316,9 +281,7 @@ final class BehaviorStore: ObservableObject {
 
     private init() {
         let d = UserDefaults.standard
-        mode = d.string(forKey: Key.mode).flatMap(SwitcherMode.init) ?? .apps
         sortOrder = d.string(forKey: Key.sortOrder).flatMap(SortOrder.init) ?? .recentlyUsed
-        skipMinimized = d.bool(forKey: Key.skipMinimized)
         panelAppearance =
             d.string(forKey: Key.panelAppearance).flatMap(PanelAppearance.init) ?? .system
         panelPosition = d.string(forKey: Key.panelPosition).flatMap(PanelPosition.init) ?? .center
@@ -331,7 +294,6 @@ final class BehaviorStore: ObservableObject {
         sameAppHotkey = Self.loadHotkey(
             d, Key.sameAppKeyCode, Key.sameAppModifiers, default: .commandBacktick)
         showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
-        windowScope = d.string(forKey: Key.windowScope).flatMap(WindowScope.init) ?? .allSpaces
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)
         maxColumns = d.integer(forKey: Key.maxColumns)
         panelMaterial = d.string(forKey: Key.panelMaterial).flatMap(PanelMaterial.init) ?? .hud
@@ -341,7 +303,6 @@ final class BehaviorStore: ObservableObject {
         blurRadius = d.object(forKey: Key.blurRadius) != nil ? d.double(forKey: Key.blurRadius) : 20
         showNumbers = d.object(forKey: Key.showNumbers) != nil
             ? d.bool(forKey: Key.showNumbers) : true
-        alwaysShowTitles = d.bool(forKey: Key.alwaysShowTitles)
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
@@ -349,7 +310,6 @@ final class BehaviorStore: ObservableObject {
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true
-        reflectMode = d.bool(forKey: Key.reflectMode)
         windowPreview = d.bool(forKey: Key.windowPreview)
     }
 
@@ -362,9 +322,7 @@ final class BehaviorStore: ObservableObject {
             onChange?()  // one coalesced notification after the whole batch
         }
         let d = UserDefaults.standard
-        mode = d.string(forKey: Key.mode).flatMap(SwitcherMode.init) ?? .apps
         sortOrder = d.string(forKey: Key.sortOrder).flatMap(SortOrder.init) ?? .recentlyUsed
-        skipMinimized = d.bool(forKey: Key.skipMinimized)
         panelAppearance =
             d.string(forKey: Key.panelAppearance).flatMap(PanelAppearance.init) ?? .system
         panelPosition = d.string(forKey: Key.panelPosition).flatMap(PanelPosition.init) ?? .center
@@ -377,7 +335,6 @@ final class BehaviorStore: ObservableObject {
         sameAppHotkey = Self.loadHotkey(
             d, Key.sameAppKeyCode, Key.sameAppModifiers, default: .commandBacktick)
         showDelay = d.object(forKey: Key.showDelay) != nil ? d.double(forKey: Key.showDelay) : 0
-        windowScope = d.string(forKey: Key.windowScope).flatMap(WindowScope.init) ?? .allSpaces
         hideEmptyApps = d.bool(forKey: Key.hideEmptyApps)
         maxColumns = d.integer(forKey: Key.maxColumns)
         panelMaterial = d.string(forKey: Key.panelMaterial).flatMap(PanelMaterial.init) ?? .hud
@@ -386,7 +343,6 @@ final class BehaviorStore: ObservableObject {
         blurOverride = d.bool(forKey: Key.blurOverride)
         blurRadius = d.object(forKey: Key.blurRadius) != nil ? d.double(forKey: Key.blurRadius) : 20
         showNumbers = d.object(forKey: Key.showNumbers) != nil ? d.bool(forKey: Key.showNumbers) : true
-        alwaysShowTitles = d.bool(forKey: Key.alwaysShowTitles)
         tileCorner = d.object(forKey: Key.tileCorner) != nil ? d.double(forKey: Key.tileCorner) : 12
         titleFontSize = d.object(forKey: Key.titleFontSize) != nil
             ? d.double(forKey: Key.titleFontSize) : 10
@@ -394,7 +350,6 @@ final class BehaviorStore: ObservableObject {
         fade = d.bool(forKey: Key.fade)
         showMenuBarIcon = d.object(forKey: Key.showMenuBarIcon) != nil
             ? d.bool(forKey: Key.showMenuBarIcon) : true
-        reflectMode = d.bool(forKey: Key.reflectMode)
         windowPreview = d.bool(forKey: Key.windowPreview)
     }
 
@@ -450,7 +405,13 @@ final class BehaviorStore: ObservableObject {
     /// export/import does not carry dead settings between machines.
     ///
     /// - `titleWeight`: the tile-title font weight picker, removed along with its `Theme` field.
-    static let retiredDefaultsKeys = ["titleWeight"]
+    /// - `mode`, `windowScope`, `skipMinimized`, `reflectModeInMenuBar`: window mode and everything
+    ///   that only applied to it. The switcher is app-only now; one app's windows are still reachable
+    ///   through the same-app cycle and the ↓ drill-down, neither of which is a mode.
+    static let retiredDefaultsKeys = [
+        "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
+        "alwaysShowTitles",
+    ]
 
     /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,
     /// which republishes the defaults and notifies once.

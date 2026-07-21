@@ -72,8 +72,27 @@ final class SwitcherController {
     /// reach in and mutate a session it does not belong to.
     private var sessionToken = 0
 
-    /// Whether the current session stays up after the trigger modifier is released.
+    /// Whether this session is *allowed* to stay up after the trigger is released.
     private var isSticky = false
+    /// Whether Tab has been pressed since the panel appeared — i.e. the user is cycling.
+    ///
+    /// Deliberately *not* counting the Tab that opened the session: that one is part of the trigger
+    /// chord, so counting it would make every session commit on release and Stay open would never
+    /// hold. Only a Tab pressed with the panel already up means "I am picking from this list".
+    private var cycledWithTab = false
+
+    /// Whether releasing the trigger should leave the panel up rather than commit.
+    ///
+    /// With Stay open on, letting go is normally just letting go — Return or a click is what
+    /// switches. The exception is Tab-cycling: reaching for Tab is the classic ⌘-Tab gesture and
+    /// carries the classic expectation that release takes you there, so it opts this session back
+    /// into commit-on-release. The arrows and the mouse do not; they leave the panel up.
+    ///
+    /// A menu-bar session has no modifier to release, so none of this applies to it.
+    private var staysOpenOnRelease: Bool { isSticky && !cycledWithTab }
+
+    /// Set from Settings: whether a session stays up when the trigger is released.
+    var stickyMode = false
     private var stickyOutsideMonitor: Any?
     private var stickyIdleTimer: Timer?
     private var stickyCeilingTimer: Timer?
@@ -84,15 +103,6 @@ final class SwitcherController {
     /// machine is swallowed — so someone typing at a panel they cannot see (on another display, say)
     /// held their own keyboard captive indefinitely, which is the failure that started all of this.
     private let stickyMaxDuration: TimeInterval = 60
-
-    var mode: SwitcherMode {
-        get { provider.mode }
-        set {
-            provider.mode = newValue
-            model.mode = newValue
-            provider.refresh()
-        }
-    }
 
     /// Relayouts immediately when the panel is already up, so dragging a slider in settings
     /// resizes a visible switcher live.
@@ -125,22 +135,6 @@ final class SwitcherController {
         get { provider.sortOrder }
         set {
             provider.sortOrder = newValue
-            provider.refresh()
-        }
-    }
-
-    var skipMinimized: Bool {
-        get { provider.skipMinimized }
-        set {
-            provider.skipMinimized = newValue
-            provider.refresh()
-        }
-    }
-
-    var windowScope: WindowScope {
-        get { provider.windowScope }
-        set {
-            provider.windowScope = newValue
             provider.refresh()
         }
     }
@@ -184,15 +178,6 @@ final class SwitcherController {
     var showNumbers: Bool {
         get { model.showNumbers }
         set { model.showNumbers = newValue }
-    }
-
-    var alwaysShowTitles: Bool {
-        get { model.alwaysShowTitles }
-        set {
-            guard newValue != model.alwaysShowTitles else { return }
-            model.alwaysShowTitles = newValue
-            if isVisible { panels.layout() }
-        }
     }
 
     var tileCorner: CGFloat {
@@ -262,11 +247,6 @@ final class SwitcherController {
         get { panels.windowPreviewEnabled }
         set { panels.windowPreviewEnabled = newValue }
     }
-
-    /// Keeps a session open after the trigger modifier is released, for driving the switcher with
-    /// the mouse or arrows instead of a held chord. See `startStickyGuards` for how such a session
-    /// is guaranteed to end.
-    var stickyMode = false
 
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
@@ -387,7 +367,7 @@ final class SwitcherController {
         if type == .flagsChanged {
             // A sticky session is defined by *not* ending here — releasing the modifier is how the
             // user gets their hands back, not how they commit.
-            if !isSticky, (isVisible || armed || pendingSameApp), !stillHeld(flags, activeHeld) {
+            if !staysOpenOnRelease, (isVisible || armed || pendingSameApp), !stillHeld(flags, activeHeld) {
                 releaseTrigger()
             }
             return false
@@ -397,7 +377,7 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            if !isSticky, !stillHeld(flags, activeHeld) { commit(); return false }
+            if !staysOpenOnRelease, !stillHeld(flags, activeHeld) { commit(); return false }
             if type == .keyUp { return true }
             resetStickyIdle()
             return handleVisibleKey(code, flags, event)
@@ -450,6 +430,7 @@ final class SwitcherController {
         // strip belongs to the app you left.
         if code == hotkey.keyCode {
             preview.endSteering()
+            cycledWithTab = true
             advance(flags.contains(.maskShift) ? -1 : 1)
             return true
         }
@@ -475,9 +456,18 @@ final class SwitcherController {
         // key look like an action and swallow the query.
         let extra = flags.intersection([.maskAlternate, .maskShift, .maskControl])
             .subtracting(activeHeld)
-        if !extra.isEmpty, let action = shortcuts.action(code: code, extra: extra) {
-            perform(action)
-            return true
+        if !extra.isEmpty {
+            if let action = shortcuts.action(code: code, extra: extra) {
+                Log.tap.notice(
+                    "action \(action.rawValue, privacy: .public) (key \(code, privacy: .public))")
+                perform(action)
+                return true
+            }
+            // Only ever reached with a modifier held on top of the trigger, so this is rare enough
+            // to log: it is the difference between "the binding did not match" and "the action ran
+            // but did nothing", which is otherwise invisible from outside.
+            Log.tap.notice(
+                "no action for key \(code, privacy: .public) extra \(extra.rawValue, privacy: .public)")
         }
         // Navigation and editing keys.
         switch code {
@@ -571,6 +561,7 @@ final class SwitcherController {
         beginSession()
         activeHeld = hotkey.heldModifiers
         isSticky = stickyMode
+        cycledWithTab = false
         if showDelay > 0 {
             armed = true
             armedBackwards = backwards
@@ -632,7 +623,7 @@ final class SwitcherController {
                 return
             }
             guard self.pendingSameAppReleased else {
-                self.showWith(targets: targets, backwards: backwards)
+                self.showWith(targets: targets, backwards: backwards, mode: .windows)
                 return
             }
             // Tapped and released before the list landed: do the switch without ever drawing.
@@ -664,8 +655,13 @@ final class SwitcherController {
         showWith(targets: armedTargets, backwards: armedBackwards)
     }
 
-    private func showWith(targets: [SwitchTarget], backwards: Bool) {
-        model.mode = provider.mode
+    /// `mode` is presentation only now that the user-facing mode setting is gone: the normal trigger
+    /// always shows apps, and the same-app cycle always shows one app's windows. It drives whether
+    /// tiles carry titles and whether the caption shows an owning app name.
+    private func showWith(
+        targets: [SwitchTarget], backwards: Bool, mode: SwitcherMode = .apps
+    ) {
+        model.mode = mode
         model.begin(targets)
         // The frontmost app/window is index 0, so a plain tap lands on the previous one.
         model.selection = backwards ? targets.count - 1 : min(1, targets.count - 1)
@@ -682,12 +678,11 @@ final class SwitcherController {
         // The `stopWatchdog` is load-bearing: arriving through the show-delay arm path means `open()`
         // already started a watchdog, and leaving it running would have it commit the session the
         // instant the modifier came up — which is exactly what sticky mode exists not to do.
-        if isSticky {
-            stopWatchdog()
-            startStickyGuards()
-        } else {
-            startWatchdog()
-        }
+        if isSticky { startStickyGuards() }
+        // The watchdog runs whenever there is a modifier to watch: a sticky session can still end on
+        // release once Tab-cycling has opted it back in, and the poll is what catches that release
+        // when the event itself goes missing.
+        if !activeHeld.isEmpty { startWatchdog() }
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
@@ -706,6 +701,7 @@ final class SwitcherController {
     private func hide() {
         isVisible = false
         isSticky = false
+        cycledWithTab = false
         // Anything still in flight belongs to the session just ended.
         beginSession()
         stopWatchdog()
@@ -876,7 +872,7 @@ final class SwitcherController {
         // acting on it quick-switches out of a session the user asked to stay open. `flagsChanged`
         // already carries this guard; the watchdog is the other half and was missing it, which made
         // sticky mode silently do nothing whenever a show-delay let the watchdog start first.
-        guard !isSticky else {
+        guard !staysOpenOnRelease else {
             stopWatchdog()
             return
         }
@@ -961,6 +957,8 @@ final class SwitcherController {
     }
 
     private func execute(_ action: SwitcherAction) {
+        Log.tap.notice(
+            "execute \(action.rawValue, privacy: .public) on \(self.model.selected?.title ?? "nil", privacy: .public)")
         switch action {
         case .quit: quitSelected()
         case .forceQuit: forceQuitSelected()

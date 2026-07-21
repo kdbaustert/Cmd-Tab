@@ -41,9 +41,6 @@ struct GeneralSettings: View {
                         .help(
                             "Off = no menu bar item. Reopen Cmd-Tab from Finder to get Settings "
                                 + "back.")
-                    Toggle("Show mode in menu bar", isOn: $behavior.reflectMode)
-                        .toggleStyle(.checkbox)
-                        .disabled(!behavior.showMenuBarIcon)
                     Toggle(
                         "Start at login",
                         isOn: Binding(
@@ -55,10 +52,10 @@ struct GeneralSettings: View {
                 // own text box, so without this they read as crowded into the window's top edge and
                 // pressed up against the divider below.
                 .padding(.top, 6)
-                .padding(.bottom, 4)
+                .padding(.bottom, 12)
 
                 Divider()
-                    .padding(.bottom, 4)
+                    .padding(.bottom, 8)
 
                 LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 8) {
                     field("Shortcut", help: "Hold to open the switcher; release to switch.") {
@@ -93,8 +90,9 @@ struct GeneralSettings: View {
 
                     field(
                         "Stay open",
-                        help: "Keep the switcher up after the modifier is released; pick with a "
-                            + "click or Return. Escape always closes it, as does clicking away."
+                        help: "Releasing the trigger leaves the switcher up instead of switching — "
+                            + "unless you cycled with Tab, which still goes to the app on release. "
+                            + "Arrows and the mouse keep it up; Return or a click switches."
                     ) {
                         Toggle("", isOn: $behavior.stickyMode).labelsHidden()
                     }
@@ -107,24 +105,12 @@ struct GeneralSettings: View {
                         .frame(width: 140)
                     }
 
-                    field("Window scope", help: "Which Spaces or displays window mode draws from.") {
-                        Picker("", selection: $behavior.windowScope) {
-                            ForEach(WindowScope.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                        .labelsHidden()
-                        .frame(width: 140)
-                    }
                 }
 
                 LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 4) {
-                    Toggle("Skip minimized windows", isOn: $behavior.skipMinimized)
-                        .toggleStyle(.checkbox)
-                        .help("Window mode only: leave minimized windows out of the switcher.")
                     Toggle("Hide apps with no windows", isOn: $behavior.hideEmptyApps)
                         .toggleStyle(.checkbox)
-                        .help(
-                            "App mode only. Note: an app whose windows are all minimized counts "
-                                + "as empty.")
+                        .help("Note: an app whose windows are all minimized counts as empty.")
                 }
 
                 Divider()
@@ -158,7 +144,7 @@ struct GeneralSettings: View {
         .onAppear { loginItem.refresh() }
     }
 
-    /// Pinned apps that appear in the switcher (app mode) even when not running, launching on select.
+    /// Pinned apps that appear in the switcher even when not running, launching on select.
     @ViewBuilder
     private var favoritesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -167,7 +153,7 @@ struct GeneralSettings: View {
                 Spacer()
                 Button("Add…", action: addFavorites)
             }
-            Text("Shown in app mode even when not running; picking one launches it.")
+            Text("Shown even when not running; picking one launches it.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             ForEach(favorites.favorites, id: \.self) { id in
                 HStack(spacing: 8) {

@@ -76,16 +76,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Pushes every tunable in `BehaviorStore` onto the running switcher. Cheap enough to run
     /// wholesale on any change rather than tracking which field moved.
     private func applyBehavior(_ behavior: BehaviorStore) {
-        controller.mode = behavior.mode
         controller.sortOrder = behavior.sortOrder
-        controller.skipMinimized = behavior.skipMinimized
-        controller.windowScope = behavior.windowScope
         controller.hideEmptyApps = behavior.hideEmptyApps
         controller.panelAppearance = behavior.panelAppearance
         controller.panelPosition = behavior.panelPosition
         controller.highlightColor = behavior.highlightColor
         controller.showNumbers = behavior.showNumbers
-        controller.alwaysShowTitles = behavior.alwaysShowTitles
         controller.tileCorner = behavior.tileCorner
         controller.titleFontSize = behavior.titleFontSize
         controller.titleFontName = behavior.titleFontName
@@ -149,8 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icon?.isTemplate = true
         item.button?.image = icon
         // Optionally spell out the current mode next to the icon.
-        item.button?.title = behavior.reflectMode ? (behavior.mode == .apps ? " A" : " W") : ""
-        item.button?.imagePosition = behavior.reflectMode ? .imageLeading : .imageOnly
+        item.button?.title = ""
+        item.button?.imagePosition = .imageOnly
         if item.menu == nil { item.menu = NSMenu() }
         statusItem = item
         refreshMenu()

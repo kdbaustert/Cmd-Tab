@@ -32,8 +32,6 @@ final class SwitcherModel: ObservableObject {
     @Published var highlightColor: Color = .accentColor
     /// Show the ⌘-number badge on the first nine tiles.
     @Published var showNumbers: Bool = true
-    /// Show each tile's title, even in app mode.
-    @Published var alwaysShowTitles: Bool = false
     /// The frosted material behind the tiles.
     @Published var material: PanelMaterial = .hud
     /// Panel translucency, 0.3–1.0.
@@ -50,8 +48,9 @@ final class SwitcherModel: ObservableObject {
     /// The title font at `size`. See `TitleFont.resolve`.
     func titleFont(size: CGFloat) -> Font { TitleFont.resolve(titleFontName, size: size) }
 
-    /// Whether tiles carry a title in the current mode.
-    var showsTitle: Bool { mode == .windows || alwaysShowTitles }
+    /// Tiles carry a title only when they represent windows — the same-app cycle. App tiles show
+    /// their name in the caption instead, so repeating it under every icon was pure noise.
+    var showsTitle: Bool { mode == .windows }
 
     var selected: SwitchTarget? {
         targets.indices.contains(selection) ? targets[selection] : nil

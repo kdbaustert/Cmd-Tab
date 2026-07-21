@@ -16,26 +16,17 @@ final class TargetProvider {
     private var cache: [SwitchTarget] = []
     private let axQueue = DispatchQueue(label: "com.cmdtab.accessibility", qos: .userInteractive)
 
-    var mode: SwitcherMode = .apps
-
     /// How tiles are ordered. Recently-used keeps the MRU list; alphabetical ignores it.
     var sortOrder: SortOrder = .recentlyUsed
 
-    /// Window mode only: drop minimized windows entirely rather than showing them dimmed.
-    var skipMinimized: Bool = false
-
-    /// Window mode only: which Spaces/displays the windows may come from.
-    var windowScope: WindowScope = .allSpaces
-
-    /// App mode only: hide apps that own no on-screen window.
+    /// Hide apps that own no on-screen window.
     var hideEmptyApps: Bool = false
 
-    /// Bundle identifiers the user has excluded. Applied in both modes, so excluding an app also
-    /// takes all of its windows out of window mode.
+    /// Bundle identifiers the user has excluded. Also keeps their windows out of the same-app cycle.
     var excludedBundleIDs: Set<String> = []
 
-    /// Favourited apps, in the user's order. Any that aren't running are appended in app mode as
-    /// launchable tiles.
+    /// Favourited apps, in the user's order. Any that aren't running are appended as launchable
+    /// tiles.
     var favoriteBundleIDs: [String] = []
 
     init() {
@@ -94,52 +85,22 @@ final class TargetProvider {
 
     /// Recomputes the list off-thread, then hands the result back on main.
     func refresh(then handler: (([SwitchTarget]) -> Void)? = nil) {
-        let mode = self.mode
         let sortOrder = self.sortOrder
-        let skipMinimized = self.skipMinimized
-        let scope = self.windowScope
         let hideEmptyApps = self.hideEmptyApps
         let apps = switchableApps()
         let order = mru
-        // NSScreen is main-thread-only, so resolve the active screen's CG rect here — but only when
-        // the active-display scope actually needs it.
-        let activeScreenCG = (mode == .windows && scope == .activeDisplay)
-            ? Self.activeScreenCGFrame() : nil
-        let windowMRU = self.windowMRU
-        // Display frames only when window mode has more than one display to distinguish — otherwise
-        // the badge would be pointless and we skip the per-window position lookup entirely.
-        let screenFrames = (mode == .windows && NSScreen.screens.count > 1)
-            ? Self.screenCGFrames() : []
-        // Favourites that aren't running, resolved here on the main thread (NSWorkspace) and appended
-        // in app mode. Empty in window mode — a not-running app has no windows to show.
-        let launchTargets = mode == .apps
-            ? Self.launchFavorites(favoriteBundleIDs, excluded: excludedBundleIDs) : []
+        // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
+        let launchTargets = Self.launchFavorites(favoriteBundleIDs, excluded: excludedBundleIDs)
 
         axQueue.async { [weak self] in
-            var targets: [SwitchTarget]
-            switch mode {
-            case .apps:
-                targets = Self.appTargets(apps, order: order, sortOrder: sortOrder)
-                if hideEmptyApps {
-                    // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
-                    // counts as non-empty rather than being dropped.
-                    let owning = Self.windowOwningPIDs()
-                    targets.removeAll { !owning.contains($0.pid) }
-                }
-                targets += launchTargets  // launchable favourites go last, after the running apps
-            case .windows:
-                targets = Self.windowTargets(
-                    apps, order: order, sortOrder: sortOrder,
-                    windowMRU: windowMRU, screenFrames: screenFrames)
-                if skipMinimized { targets.removeAll { $0.isMinimized } }
-                if scope != .allSpaces {
-                    targets = Self.scoped(
-                        targets, scope: scope,
-                        onScreenBounds: Self.onScreenBounds(), activeScreen: activeScreenCG)
-                }
-                // After scoping, so a filtered-out window is never paid for.
-                targets = Self.withSpaceBadges(targets)
+            var targets = Self.appTargets(apps, order: order, sortOrder: sortOrder)
+            if hideEmptyApps {
+                // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
+                // counts as non-empty rather than being dropped.
+                let owning = Self.windowOwningPIDs()
+                targets.removeAll { !owning.contains($0.pid) }
             }
+            targets += launchTargets  // launchable favourites go last, after the running apps
             DispatchQueue.main.async {
                 self?.cache = targets
                 handler?(targets)
@@ -172,37 +133,17 @@ final class TargetProvider {
 
         let sortOrder = self.sortOrder
         let windowMRU = self.windowMRU
-        let skipMinimized = self.skipMinimized
         let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
 
         axQueue.async {
-            var targets = Self.windowTargets(
+            let targets = Self.windowTargets(
                 [app], order: [pid], sortOrder: sortOrder,
                 windowMRU: windowMRU, screenFrames: screenFrames)
-            if skipMinimized { targets.removeAll { $0.isMinimized } }
-            DispatchQueue.main.async { handler(targets) }
+            DispatchQueue.main.async { handler(Self.withSpaceBadges(targets)) }
         }
     }
 
-    // MARK: - Space / display scoping
-
-    /// Window bounds for everything on screen in the current Space, keyed by `CGWindowID` so callers
-    /// can match against a target's parsed id. Layer-0 windows only; no Screen Recording needed.
-    private static func onScreenBounds() -> [CGWindowID: CGRect] {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
-        else { return [:] }
-
-        var bounds: [CGWindowID: CGRect] = [:]
-        for window in info {
-            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
-                  let number = window[kCGWindowNumber as String] as? CGWindowID,
-                  let rect = window[kCGWindowBounds as String] as? [String: CGFloat],
-                  let cg = CGRect(dictionaryRepresentation: rect as CFDictionary) else { continue }
-            bounds[number] = cg
-        }
-        return bounds
-    }
+    // MARK: - Window helpers
 
     /// PIDs owning at least one real window on ANY Space (no on-screen restriction). Used by the
     /// "hide apps with no open windows" filter so fullscreen / other-Space apps are not dropped.
@@ -216,47 +157,6 @@ final class TargetProvider {
             pids.insert(pid)
         }
         return pids
-    }
-
-    /// Filters window targets to the current Space (present in the on-screen list) or the active
-    /// display (bounds centred on it). Minimized windows are always kept — they belong to a Space
-    /// we cannot see, and dropping them would strand them. Windows whose id could not be resolved
-    /// are kept too: better a stray tile than a missing one.
-    private static func scoped(
-        _ targets: [SwitchTarget], scope: WindowScope,
-        onScreenBounds: [CGWindowID: CGRect], activeScreen: CGRect?
-    ) -> [SwitchTarget] {
-        targets.filter { target in
-            if target.isMinimized { return true }
-            guard let id = windowID(fromTargetID: target.id) else { return true }
-            switch scope {
-            case .allSpaces:
-                return true
-            case .currentSpace:
-                return onScreenBounds[id] != nil
-            case .activeDisplay:
-                guard let bounds = onScreenBounds[id], let screen = activeScreen else { return true }
-                let center = CGPoint(x: bounds.midX, y: bounds.midY)
-                return screen.contains(center)
-            }
-        }
-    }
-
-    /// The active screen (the one owning the frontmost window, else under the cursor) in CoreGraphics
-    /// top-left coordinates, to match `CGWindowList` bounds.
-    private static func activeScreenCGFrame() -> CGRect? {
-        let screen = NSScreen.main
-            ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? NSScreen.screens.first
-        guard let screen else { return nil }
-        // The flip reference is the primary display — the one at AppKit origin (0,0) — not merely
-        // the first in the array, which need not be primary on a multi-display setup.
-        let primary = NSScreen.screens.first { $0.frame.origin == .zero } ?? screen
-        let f = screen.frame
-        // Flip AppKit (bottom-left) to CG (top-left) using the primary display's height.
-        return CGRect(
-            x: f.origin.x, y: primary.frame.height - f.origin.y - f.height,
-            width: f.width, height: f.height)
     }
 
     /// Parses the `CGWindowID` back out of a `"win:<id>"` target id, if it carries one.

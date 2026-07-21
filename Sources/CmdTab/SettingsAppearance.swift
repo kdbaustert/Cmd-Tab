@@ -66,7 +66,7 @@ struct AppearanceSettings: View {
                     LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 8) {
                         SliderRow(
                             title: "Icon size",
-                            help: "Window mode uses a smaller icon, and scales in step.",
+                            help: "Window tiles in the same-app cycle use a smaller icon, and scale in step.",
                             value: $appearance.iconSize,
                             range: Metrics.iconSizeRange,
                             step: 8)
@@ -149,9 +149,6 @@ struct AppearanceSettings: View {
                     LazyVGrid(columns: Self.twoColumns, alignment: .leading, spacing: 4) {
                         Toggle("Number badges", isOn: $behavior.showNumbers)
                             .toggleStyle(.checkbox)
-                        Toggle("Always show titles", isOn: $behavior.alwaysShowTitles)
-                            .toggleStyle(.checkbox)
-                            .help("Show each tile's name in app mode too, not just the selected one.")
                         Toggle("Preview windows on hover", isOn: $behavior.windowPreview)
                             .toggleStyle(.checkbox)
                             .help(
