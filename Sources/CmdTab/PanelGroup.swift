@@ -177,6 +177,7 @@ final class PanelGroup {
         scrollAccumulator = 0
         lastHoverLocation = nil
         pendingSelectedTile = false
+        previewDrivenByKeyboard = false
         // Reset unconditionally (not via `emitPreview`, which is gated on the setting) so the next
         // session starts clean. The controller dismisses the preview strip itself on hide.
         lastPreviewTarget = .away
@@ -188,6 +189,8 @@ final class PanelGroup {
         let location = NSEvent.mouseLocation
         guard location != lastHoverLocation else { return }
         lastHoverLocation = location
+        // The cursor actually moved, so it takes the preview back from the keyboard.
+        previewDrivenByKeyboard = false
         let overPreview = isOverPreview?(location) == true
         // The highlight follows the tile — but not while over the preview, so it stays put there.
         let index = overPreview ? nil : tileIndex(at: location)
@@ -237,6 +240,9 @@ final class PanelGroup {
     /// Set when a keyboard-driven preview was requested before the tiles had reported their geometry
     /// — which is the normal case, since `advance()` relayouts and asks in the same turn.
     private var pendingSelectedTile = false
+    /// Whether the preview currently on screen was chosen by the keyboard rather than the cursor.
+    /// A geometry replay must not hand a keyboard-driven preview back to the resting pointer.
+    private var previewDrivenByKeyboard = false
 
     /// Re-resolves the preview now that fresh frames have landed.
     ///
@@ -251,7 +257,12 @@ final class PanelGroup {
             guard let target = target(overPreview: false, index: model.selection) else { return }
             pendingSelectedTile = false
             emitPreview(target)
-        } else {
+        } else if !previewDrivenByKeyboard {
+            // Only re-resolve the cursor when the cursor is what put the current preview there.
+            // Every panel installs this callback, so under mirroring one layout pass delivers it
+            // several times: the first delivery satisfies the keyboard request, and the rest would
+            // fall through to here and retarget the strip at whatever tile the resting pointer
+            // happens to sit over — showing the wrong app's windows on every arrow press.
             refreshHoverPreview()
         }
     }
@@ -268,6 +279,7 @@ final class PanelGroup {
     /// Previews the tile the *keyboard* has selected, so arrowing through the switcher floats the
     /// same thumbnails hovering does.
     func previewSelectedTile() {
+        previewDrivenByKeyboard = true
         guard let target = target(overPreview: false, index: model.selection) else {
             // Geometry not reported yet — `geometryDidChange` picks this back up.
             pendingSelectedTile = true

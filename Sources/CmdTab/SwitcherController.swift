@@ -63,6 +63,9 @@ final class SwitcherController {
     // would do nothing at all.
     private var pendingSameApp = false
     private var pendingSameAppReleased = false
+    private var sameAppDeadline: DispatchWorkItem?
+    /// How long to wait for the frontmost app's window list before abandoning the cycle.
+    private let sameAppTimeout: TimeInterval = 2
 
     /// Bumped whenever a session begins or ends. Async work started by one session carries the token
     /// it was launched under and drops itself if the token has moved on, so a slow fetch can never
@@ -73,8 +76,14 @@ final class SwitcherController {
     private var isSticky = false
     private var stickyOutsideMonitor: Any?
     private var stickyIdleTimer: Timer?
+    private var stickyCeilingTimer: Timer?
     /// How long a sticky session may sit untouched before it dismisses itself.
     private let stickyIdleTimeout: TimeInterval = 20
+    /// Absolute cap on a sticky session, never extended by activity. The idle timer alone was not a
+    /// bound at all: every keystroke resets it, and while the panel is up every keystroke on the
+    /// machine is swallowed — so someone typing at a panel they cannot see (on another display, say)
+    /// held their own keyboard captive indefinitely, which is the failure that started all of this.
+    private let stickyMaxDuration: TimeInterval = 60
 
     var mode: SwitcherMode {
         get { provider.mode }
@@ -331,6 +340,12 @@ final class SwitcherController {
         guard !isVisible else { return }
         let targets = provider.snapshot()
         guard !targets.isEmpty else { return }
+        // An armed quick-switch is not "visible", so the guard above lets it through — and the arm
+        // would then fire into `showWith` a second time, resetting the model under the panel the
+        // user is already looking at.
+        armed = false
+        armWorkItem?.cancel()
+        armWorkItem = nil
         beginSession()
         activeHeld = []
         isSticky = true
@@ -408,6 +423,10 @@ final class SwitcherController {
 
     /// Moves the highlight and keeps the keyboard-selected preview in step with it.
     private func advance(_ delta: Int) {
+        // Moving the highlight abandons any drill, in flight or engaged. Without this a capture
+        // started for the tile you *were* on lands afterwards, adopts the strip, and Return commits
+        // a window of an app you already arrowed past.
+        preview.endSteering()
         model.step(delta)
         // Off the tap callback — see `scheduleLayout`.
         DispatchQueue.main.async { [weak self] in
@@ -574,12 +593,27 @@ final class SwitcherController {
         pendingSameAppReleased = false
         startWatchdog()
 
+        // The fetch is an Accessibility walk against an app that may be wedged, and it has no bound
+        // of its own. Without a deadline a result landing long after the user gave up still switches
+        // their windows — mid-sentence, in whatever they moved on to. Bumping the token is what makes
+        // the late callback drop itself.
+        let deadline = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingSameApp, token == self.sessionToken else { return }
+            Log.tap.notice("same-app window fetch timed out; abandoning the cycle")
+            self.beginSession()
+            self.stopWatchdog()
+        }
+        sameAppDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + sameAppTimeout, execute: deadline)
+
         provider.frontAppWindowTargets { [weak self] targets in
             // The fetch is unbounded (an Accessibility walk against a possibly wedged app), so by
             // the time it lands the user may have abandoned this cycle and opened a normal session.
             // Acting on it then would stop *that* session's watchdog — deleting the failsafe that
             // stands between a missed modifier-release and a machine-wide keyboard lockout.
             guard let self, self.pendingSameApp, token == self.sessionToken else { return }
+            self.sameAppDeadline?.cancel()
+            self.sameAppDeadline = nil
             self.pendingSameApp = false
 
             // One window is nothing to cycle between, and zero means the app exposes none.
@@ -607,6 +641,8 @@ final class SwitcherController {
         sessionToken &+= 1
         pendingSameApp = false
         pendingSameAppReleased = false
+        sameAppDeadline?.cancel()
+        sameAppDeadline = nil
         return sessionToken
     }
 
@@ -769,6 +805,10 @@ final class SwitcherController {
     /// are what replace it: a click anywhere outside the panel, and a hard inactivity ceiling.
     /// Escape stays the immediate manual exit, as everywhere else.
     private func startStickyGuards() {
+        // Idempotent. `showWith` can run twice for one visible panel (a menu-bar open racing an
+        // in-flight arm), and assigning straight over `stickyOutsideMonitor` orphaned the previous
+        // one — a global mouse monitor that outlived every later session and cancelled them.
+        stopStickyGuards()
         // A global monitor only sees events bound for *other* apps. Our panels are non-activating
         // and receive their clicks through `sendEvent`, so anything arriving here is by definition
         // a click outside the switcher.
@@ -781,6 +821,19 @@ final class SwitcherController {
             }
         }
         resetStickyIdle()
+
+        // The absolute cap, started once and never restarted. This is the piece that actually bounds
+        // how long the keyboard can stay captured; the idle timer only measures *quiet*, and a
+        // session being typed into is never quiet.
+        let ceiling = Timer(timeInterval: stickyMaxDuration, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isSticky else { return }
+                Log.tap.error("sticky session hit its ceiling; dismissing to release the keyboard")
+                self.cancel()
+            }
+        }
+        RunLoop.main.add(ceiling, forMode: .common)
+        stickyCeilingTimer = ceiling
     }
 
     private func stopStickyGuards() {
@@ -788,11 +841,13 @@ final class SwitcherController {
         stickyOutsideMonitor = nil
         stickyIdleTimer?.invalidate()
         stickyIdleTimer = nil
+        stickyCeilingTimer?.invalidate()
+        stickyCeilingTimer = nil
     }
 
-    /// Restarts the inactivity countdown. Called on every keystroke the panel handles, so the ceiling
-    /// only bites when the switcher has genuinely been abandoned — walked away from, or opened by
-    /// accident and forgotten.
+    /// Restarts the inactivity countdown. Called on every keystroke the panel handles, so it only
+    /// bites when the switcher has genuinely been abandoned — walked away from, or opened by accident
+    /// and forgotten. It is *not* the bound on keyboard capture; `stickyCeilingTimer` is.
     private func resetStickyIdle() {
         guard isSticky else { return }
         stickyIdleTimer?.invalidate()
@@ -808,6 +863,14 @@ final class SwitcherController {
     }
 
     private func watchdogTick() {
+        // A sticky session has no modifier to poll, so the release this looks for is meaningless —
+        // acting on it quick-switches out of a session the user asked to stay open. `flagsChanged`
+        // already carries this guard; the watchdog is the other half and was missing it, which made
+        // sticky mode silently do nothing whenever a show-delay let the watchdog start first.
+        guard !isSticky else {
+            stopWatchdog()
+            return
+        }
         guard isVisible || armed || pendingSameApp else {
             stopWatchdog()
             return
@@ -944,6 +1007,10 @@ final class SwitcherController {
     /// A tile was clicked: select and commit it in one go.
     private func pick(_ index: Int) {
         guard isVisible, model.targets.indices.contains(index) else { return }
+        // Clicking a tile is a statement about the *app*, so it has to drop any steered window
+        // selection first — `commit()` prefers a steered thumbnail, and would otherwise focus a
+        // window of the app the drill came from rather than the one just clicked.
+        preview.endSteering()
         model.selection = index
         commit()
     }

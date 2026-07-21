@@ -149,7 +149,7 @@ struct ActionShortcutRecorder: View {
                 also needs it is indistinguishable from typing — this would filter the list instead \
                 of running "\(action.title)".
 
-                Use a combination built on \(Self.name(for: SwitcherShortcuts.freeModifier(under: trigger) ?? .maskControl)) instead.
+                \(Self.remedy(under: trigger))
                 """
             alert.addButton(withTitle: "OK")
             alert.runModal()
@@ -163,6 +163,19 @@ struct ActionShortcutRecorder: View {
         if flags.contains(.maskControl) { parts.append("⌃") }
         if flags.contains(.maskAlternate) { parts.append("⌥") }
         return parts.isEmpty ? "no modifier" : parts.joined(separator: " and ")
+    }
+
+    /// What to actually do about the conflict. A trigger holding *both* ⌥ and ⌃ leaves nothing to
+    /// rebind onto, so naming a modifier there would name one this same check rejects — a dialog
+    /// telling the user to do the thing that just failed, with no way out of the loop.
+    private static func remedy(under trigger: Hotkey) -> String {
+        guard let free = SwitcherShortcuts.freeModifier(under: trigger) else {
+            return """
+                This trigger holds both ⌥ and ⌃, so no action shortcut can work alongside it — \
+                change the trigger before binding actions.
+                """
+        }
+        return "Use a combination built on \(name(for: free)) instead."
     }
 
     private func stop() {

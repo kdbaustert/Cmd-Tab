@@ -68,7 +68,14 @@ final class PreviewCoordinator {
             captureWork = nil
         case .away:
             cancelPendingCapture()
-            let work = DispatchWorkItem { [weak self] in self?.strip.dismiss() }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                // Forget which app the strip held. `dismiss()` only orders the window out — the
+                // thumbnails survive, so without this a later drill sees `hasThumbs` and adopts an
+                // invisible strip, putting the keyboard into a steering mode with nothing on screen.
+                self.shownPID = nil
+                self.strip.dismiss()
+            }
             dismissWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + dismissDelay, execute: work)
         }
@@ -150,6 +157,11 @@ final class PreviewCoordinator {
     /// and the capture was not superseded. Empty (no permission, or nothing to show) hides the strip.
     private func capture(pid: pid_t, tileRect: NSRect) {
         let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
+        // Resolved now rather than after the await. `anchorFrame` follows the live cursor, so reading
+        // it once the capture lands can return a different display's panel than the `tileRect` we are
+        // positioning against — which puts the strip on top of the panel it is meant to clear.
+        let clearOf = switcher.anchorFrame
+        let appearance = switcher.effectiveAppearance
         captureTask = Task { [weak self] in
             let thumbs = await WindowCapture.shared.thumbnails(for: pid)
             guard !Task.isCancelled, let self, self.isActive() else { return }
@@ -167,8 +179,7 @@ final class PreviewCoordinator {
                     // The anchoring panel's frame, not the union of every panel: mirrored across
                     // displays the union spans monitors, and placing the strip clear of *that*
                     // puts it outside any real screen.
-                    clearOf: self.switcher.anchorFrame,
-                    appearance: self.switcher.effectiveAppearance)
+                    clearOf: clearOf, appearance: appearance)
                 // `present` clears any selection; enter it now if a drill was waiting on this capture.
                 if self.wantsSteering || self.isSteering {
                     self.wantsSteering = false
