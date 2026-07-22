@@ -89,9 +89,9 @@ struct GeneralSettings: View {
 
                     field(
                         "Stay open",
-                        help: "Releasing the trigger leaves the switcher up instead of switching — "
-                            + "unless you cycled with Tab, which still goes to the app on release. "
-                            + "Arrows and the mouse keep it up; Return or a click switches."
+                        help: "Releasing the trigger leaves the switcher up instead of switching. "
+                            + "The arrows, ⇧-Tab, scroll and the mouse move the selection; Tab, "
+                            + "Return, a click or 1–9 switches to it. Escape backs out."
                     ) {
                         Toggle("", isOn: $behavior.stickyMode).labelsHidden()
                     }

@@ -74,17 +74,11 @@ final class SwitcherController {
 
     /// Whether this session is *allowed* to stay up after the trigger is released.
     private var isSticky = false
-    /// Whether Tab has been pressed since the panel appeared — i.e. the user is cycling.
-    ///
-    /// Deliberately *not* counting the Tab that opened the session: that one is part of the trigger
-    /// chord, so counting it would make every session commit on release and Stay open would never
-    /// hold. Only a Tab pressed with the panel already up means "I am picking from this list".
-    private var cycledWithTab = false
 
     /// The session's end-of-life rules, as a value. See `SessionRelease` — the logic lives there so
     /// it can be tested without an event tap, a panel or Accessibility.
     private var release: SessionRelease {
-        SessionRelease(isSticky: isSticky, cycledWithTab: cycledWithTab, activeHeld: activeHeld)
+        SessionRelease(isSticky: isSticky, activeHeld: activeHeld)
     }
 
     private var staysOpenOnRelease: Bool { release.staysOpenOnRelease }
@@ -317,9 +311,17 @@ final class SwitcherController {
         panels.onPick = { [weak self] index in self?.pick(index) }
         panels.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
+            // Scroll and hover are the advertised way to move the selection in a stay-open session,
+            // so they have to count as activity. Without this the idle timer measured *keystrokes*,
+            // not use, and dismissed a panel the user was actively browsing with the mouse.
+            self.resetStickyIdle()
             self.advance(step)
         }
-        panels.onPreviewHover = { [weak self] target in self?.preview.hover(target) }
+        panels.onPreviewHover = { [weak self] target in
+            // Deduped upstream to target *changes*, so this is a real navigation, not a mouse twitch.
+            self?.resetStickyIdle()
+            self?.preview.hover(target)
+        }
         panels.isOverPreview = { [weak self] point in self?.preview.isShowing(point) ?? false }
         preview.onPick = { [weak self] thumb in
             SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
@@ -394,7 +396,7 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            if release.shouldCommit(flags: flags, isKeyUp: type == .keyUp) {
+            if release.shouldCommit(flags: flags) {
                 commit()
                 return false
             }
@@ -411,11 +413,6 @@ final class SwitcherController {
             // `advance` rather than a bare `layout()`: this runs on the tap callback, where a full
             // NSHostingView rebuild is the one thing that must not happen inline.
             if code == hotkey.keyCode {
-                // Unconditional: the guard above already returned when the trigger was released, so
-                // reaching here means it is still held. (The visible path needs the check; this one
-                // does not, and pretending otherwise invites reasoning about a branch that cannot
-                // happen.)
-                cycledWithTab = true
                 advance(flags.contains(.maskShift) ? -1 : 1)
             }
             return true
@@ -451,11 +448,30 @@ final class SwitcherController {
     }
 
     private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
-        // The trigger advances the selection. Moving to another app abandons any drill-down — the
-        // strip belongs to the app you left.
+        // The trigger key. While the chord is held it advances the selection, the classic cycle; once
+        // the chord is up — a stay-open session — it switches to whatever is highlighted, because
+        // there is no longer a release to do that job. Deliberately *before* `endSteering`, so a Tab
+        // out of a steered window strip still commits the window the strip has selected.
         if code == hotkey.keyCode {
+            // Only the real Tab key may become the go key, and only on a fresh press.
+            //
+            // A trigger bound to a printable key is legal (`HotkeyRecorder` takes any key with
+            // ⌘/⌥/⌃, so ⌘-E is bindable), and promoting *that* key to "switch now" made it both
+            // uncommittable and untypable once the chord was up: pressing `e` to filter for "Excel"
+            // switched apps instead, with no way back. It cycles the highlight there, as it did
+            // before Tab-commit existed.
+            //
+            // An auto-repeat is the user still leaning on the key from the cycle they started, not a
+            // fresh press meaning "go". Letting ⌘ up a moment before Tab is the ordinary way this
+            // gesture ends, and without this the next repeat commits and closes the panel — exactly
+            // the stay-open failure this predicate was written to fix.
+            let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            if code == Key.tab, !repeated, release.tabCommits(flags: flags) {
+                commit()
+                return true
+            }
+            // Moving to another app abandons any drill-down: the strip belongs to the app you left.
             preview.endSteering()
-            if release.armsCycling(flags: flags) { cycledWithTab = true }
             advance(flags.contains(.maskShift) ? -1 : 1)
             return true
         }
@@ -588,7 +604,6 @@ final class SwitcherController {
         beginSession()
         activeHeld = hotkey.heldModifiers
         isSticky = stickyMode
-        cycledWithTab = false
         if showDelay > 0 {
             armed = true
             armedBackwards = backwards
@@ -599,7 +614,10 @@ final class SwitcherController {
             armWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + showDelay, execute: work)
             // Armed swallows keys too, and gets out the same way — so it needs the same failsafe.
-            startWatchdog()
+            // Not for a sticky session: it does not end on release at all, so the poll can never act
+            // (`watchdogTick` returns at its first guard), and nothing downstream stops it — it just
+            // woke the main runloop 5×/s for the life of the panel, up to the 60 s ceiling.
+            if !isSticky { startWatchdog() }
             return true
         }
         showWith(targets: targets, backwards: backwards)
@@ -700,17 +718,18 @@ final class SwitcherController {
         // queue. All of that was running inside the event-tap callback, which is the one place in
         // this app where being slow costs the user every keystroke on the machine.
         isVisible = true
-        // The two session shapes get different safety nets: a held-modifier session is watched by
-        // polling the hardware, a sticky one has no modifier to poll and relies on the guards below.
-        // Both nets can be live at once. The watchdog polls the hardware for a release the events
-        // may not deliver; the sticky guards (click-away, idle, ceiling) cover a session that no
-        // longer ends on release at all. `watchdogTick` skips rather than stops while the session is
-        // staying open, because Tab-cycling can re-arm commit-on-release mid-session.
-        if isSticky { startStickyGuards() }
-        // The watchdog runs whenever there is a modifier to watch: a sticky session can still end on
-        // release once Tab-cycling has opted it back in, and the poll is what catches that release
-        // when the event itself goes missing.
-        if !activeHeld.isEmpty { startWatchdog() }
+        // The two session shapes get different safety nets. A held-modifier session is watched by
+        // polling the hardware for the release its `flagsChanged` may never deliver; a sticky one
+        // does not end on release at all, so its net is the guards below — click-away, idle, ceiling.
+        if isSticky {
+            // Nothing should have started the poll for a sticky session, but this is the one place
+            // that knows the session shape for certain, and an orphaned watchdog is a timer no later
+            // code owns.
+            stopWatchdog()
+            startStickyGuards()
+        } else if !activeHeld.isEmpty {
+            startWatchdog()
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
@@ -729,7 +748,6 @@ final class SwitcherController {
     private func hide() {
         isVisible = false
         isSticky = false
-        cycledWithTab = false
         // Anything still in flight belongs to the session just ended.
         beginSession()
         stopWatchdog()
@@ -899,10 +917,10 @@ final class SwitcherController {
         // A sticky session has no modifier to poll, so the release this looks for is meaningless —
         // acting on it quick-switches out of a session the user asked to stay open. `flagsChanged`
         // already carries this guard; the watchdog is the other half and was missing it, which made
-        // sticky mode silently do nothing whenever a show-delay let the watchdog start first.
-        // Skipped, not stopped. `staysOpenOnRelease` flips the moment Tab-cycling arms
-        // commit-on-release, and a stopped timer is never restarted — so stopping here left exactly
-        // the Tab-cycled sticky session with no hardware poll, which is the case it was added for.
+        // sticky mode silently do nothing whenever a show-delay let the watchdog start first. Neither
+        // `open` nor `showWith` starts the poll for a sticky session any more, so this is now the
+        // backstop rather than the fix — a session that turns sticky under a running timer stops it
+        // in `showWith`, and this makes the window between the two harmless.
         guard !staysOpenOnRelease else { return }
         guard isVisible || armed || pendingSameApp else {
             stopWatchdog()

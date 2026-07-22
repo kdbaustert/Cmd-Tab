@@ -13,31 +13,25 @@ final class SessionReleaseTests: XCTestCase {
     private let none: CGEventFlags = []
 
     private func session(
-        sticky: Bool = false, cycled: Bool = false, held: CGEventFlags = .maskCommand
+        sticky: Bool = false, held: CGEventFlags = .maskCommand
     ) -> SessionRelease {
-        SessionRelease(isSticky: sticky, cycledWithTab: cycled, activeHeld: held)
+        SessionRelease(isSticky: sticky, activeHeld: held)
     }
 
     // MARK: - Ordinary sessions
 
     func testHoldingTheTriggerKeepsTheSessionOpen() {
-        XCTAssertFalse(session().shouldCommit(flags: command, isKeyUp: false))
+        XCTAssertFalse(session().shouldCommit(flags: command))
     }
 
     func testReleasingTheTriggerCommits() {
-        XCTAssertTrue(session().shouldCommit(flags: none, isKeyUp: false))
-    }
-
-    /// The only event-driven recovery when another head-inserted tap swallows the `flagsChanged`.
-    /// Losing it left the panel holding the keyboard until the next 200 ms watchdog poll.
-    func testANonStickySessionCommitsOnAReleaseSeenViaKeyUp() {
-        XCTAssertTrue(session().shouldCommit(flags: none, isKeyUp: true))
+        XCTAssertTrue(session().shouldCommit(flags: none))
     }
 
     /// Reaching for another modifier mid-session is not letting go of the trigger.
     func testExtraModifiersDoNotEndTheSession() {
-        XCTAssertFalse(session().shouldCommit(flags: command.union(option), isKeyUp: false))
-        XCTAssertFalse(session().shouldCommit(flags: command.union(shift), isKeyUp: false))
+        XCTAssertFalse(session().shouldCommit(flags: command.union(option)))
+        XCTAssertFalse(session().shouldCommit(flags: command.union(shift)))
     }
 
     // MARK: - Stay open
@@ -45,22 +39,55 @@ final class SessionReleaseTests: XCTestCase {
     func testStickySessionStaysOpenOnRelease() {
         let sticky = session(sticky: true)
         XCTAssertTrue(sticky.staysOpenOnRelease)
-        XCTAssertFalse(sticky.shouldCommit(flags: none, isKeyUp: false))
+        XCTAssertFalse(sticky.shouldCommit(flags: none))
     }
 
-    /// Tab-cycling opts back into the classic gesture: let go and you land on the app.
-    func testTabCyclingReArmsCommitOnRelease() {
-        let cycled = session(sticky: true, cycled: true)
-        XCTAssertFalse(cycled.staysOpenOnRelease)
-        XCTAssertTrue(cycled.shouldCommit(flags: none, isKeyUp: false))
+    /// The point of the whole file. Tab-cycling used to re-arm commit-on-release, so ⌘-Tab, Tab,
+    /// release — the way anyone actually uses a switcher — closed the panel and left nothing for a
+    /// bare Tab to cycle. Stay open now means stay open, whatever was pressed on the way there.
+    func testTabCyclingDoesNotEndAStayOpenSession() {
+        let sticky = session(sticky: true)
+        // ⌘-Tab: chord down, so Tab is the cycle and nothing commits.
+        XCTAssertFalse(sticky.tabCommits(flags: command))
+        XCTAssertFalse(sticky.shouldCommit(flags: command))
+        // Tab again, still held. This is the press that used to re-arm commit-on-release.
+        XCTAssertFalse(sticky.tabCommits(flags: command))
+        // ⌘ up. Every event from here looks like a release, since the modifier really is up, and none
+        // of them may close the session — that is the whole of Stay open.
+        XCTAssertFalse(sticky.shouldCommit(flags: none))
+        XCTAssertFalse(sticky.shouldCommit(flags: none))
+        // The session survived, so a bare Tab still has something to act on: now the go key.
+        XCTAssertTrue(sticky.tabCommits(flags: none))
     }
 
-    /// The regression that made Stay open unusable: with the modifier already up, the key-up of the
-    /// very Tab that armed cycling satisfied the release check and closed the panel after one step.
-    /// A sticky session must never treat a keyUp as a release.
-    func testStickySessionNeverCommitsOnAKeyUp() {
-        XCTAssertFalse(session(sticky: true).shouldCommit(flags: none, isKeyUp: true))
-        XCTAssertFalse(session(sticky: true, cycled: true).shouldCommit(flags: none, isKeyUp: true))
+    // MARK: - Tab
+
+    /// Held chord: Tab is the cycle, exactly as the native switcher behaves.
+    func testTabCyclesWhileTheChordIsHeld() {
+        XCTAssertFalse(session(sticky: true).tabCommits(flags: command))
+        XCTAssertFalse(session(sticky: true).tabCommits(flags: command.union(shift)))
+    }
+
+    /// Chord up: nothing is left to release, so Tab is what takes you to the app.
+    func testTabCommitsOnceTheChordIsReleased() {
+        XCTAssertTrue(session(sticky: true).tabCommits(flags: none))
+    }
+
+    /// No chord to hold at all — `stillHeld` says an empty chord is always held, so this needs its
+    /// own answer or Tab would be inert for the whole session.
+    func testTabCommitsInAMenuBarSession() {
+        XCTAssertTrue(session(sticky: true, held: []).tabCommits(flags: none))
+        XCTAssertTrue(session(sticky: true, held: []).tabCommits(flags: command))
+    }
+
+    /// ⇧-Tab steps backwards everywhere else, and it is the *only* keyboard way to reverse-cycle once
+    /// the chord is up. Promoting it to the go key along with plain Tab left an overshoot with no way
+    /// back, in exactly the sessions that stay up long enough to overshoot.
+    func testShiftTabNeverCommits() {
+        XCTAssertFalse(session(sticky: true).tabCommits(flags: shift))
+        XCTAssertFalse(session(sticky: true).tabCommits(flags: command.union(shift)))
+        // Even with no chord to release at all.
+        XCTAssertFalse(session(sticky: true, held: []).tabCommits(flags: shift))
     }
 
     // MARK: - Menu-bar sessions
@@ -68,36 +95,9 @@ final class SessionReleaseTests: XCTestCase {
     /// Opened with no chord, so there is nothing to release. Every event looks like a release and
     /// none of them may close it — it ends on a click, Return or Escape.
     func testMenuBarSessionNeverCommitsOnRelease() {
-        let menuBar = session(sticky: true, held: [])
-        XCTAssertFalse(menuBar.shouldCommit(flags: none, isKeyUp: false))
-        XCTAssertFalse(menuBar.shouldCommit(flags: none, isKeyUp: true))
-    }
-
-    /// Guards the same hole for a session that somehow reaches `cycledWithTab` without a chord:
-    /// `staysOpenOnRelease` would be false, so only the empty-`activeHeld` check prevents a commit.
-    func testMenuBarSessionSurvivesEvenIfCyclingIsSomehowArmed() {
-        XCTAssertFalse(
-            session(sticky: true, cycled: true, held: []).shouldCommit(flags: none, isKeyUp: false))
-    }
-
-    // MARK: - Arming
-
-    func testTabArmsCyclingWhileTheChordIsHeld() {
-        XCTAssertTrue(session(sticky: true).armsCycling(flags: command))
-    }
-
-    /// Tabbing after the chord is already up is navigation inside a stay-open session, not cycling.
-    /// Arming there is what made the panel close on that key's own key-up.
-    func testTabDoesNotArmCyclingOnceTheChordIsReleased() {
-        XCTAssertFalse(session(sticky: true).armsCycling(flags: none))
-    }
-
-    func testMenuBarSessionNeverArmsCycling() {
-        XCTAssertFalse(session(sticky: true, held: []).armsCycling(flags: none))
-    }
-
-    func testArmingToleratesExtraModifiers() {
-        XCTAssertTrue(session(sticky: true).armsCycling(flags: command.union(shift)))
+        XCTAssertFalse(session(sticky: true, held: []).shouldCommit(flags: none))
+        // Even were it somehow non-sticky, the empty chord is what has to save it.
+        XCTAssertFalse(session(held: []).shouldCommit(flags: none))
     }
 
     // MARK: - Multi-modifier triggers
@@ -105,8 +105,8 @@ final class SessionReleaseTests: XCTestCase {
     func testMultiModifierTriggerCommitsWhenEitherModifierIsReleased() {
         let held = command.union(option)
         let s = session(held: held)
-        XCTAssertFalse(s.shouldCommit(flags: held, isKeyUp: false))
-        XCTAssertTrue(s.shouldCommit(flags: command, isKeyUp: false))
-        XCTAssertTrue(s.shouldCommit(flags: option, isKeyUp: false))
+        XCTAssertFalse(s.shouldCommit(flags: held))
+        XCTAssertTrue(s.shouldCommit(flags: command))
+        XCTAssertTrue(s.shouldCommit(flags: option))
     }
 }

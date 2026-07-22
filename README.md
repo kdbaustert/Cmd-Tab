@@ -51,8 +51,9 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | ⌘-⌥-F | Zoom (maximize / restore) the selected window |
 | ⌘-⌥-← / ⌘-⌥-→ | Move the selected window to the previous / next **desktop** (Space) |
 | ⌘-⌥-⇧-← / ⌘-⌥-⇧-→ | Move the selected window to the previous / next **display** |
-| Esc | Clear the filter, or dismiss the switcher when there is none |
-| Release ⌘ | Switch to the selection |
+| Esc | Dismiss the switcher — always, filter or not. While the panel is up it owns every key on the machine, so this is the one exit that must never depend on any other state; ⌫ is how you back out of a query |
+| Release ⌘ | Switch to the selection — unless **Stay open** is on, which keeps the panel up |
+| Tab (⌘ released) | With **Stay open**, switches to the selection, the way releasing ⌘ otherwise would. ⇧-Tab still steps backwards, and a session opened from the menu bar works the same way — it has no chord to release either |
 
 ### Type to filter
 
@@ -103,11 +104,12 @@ the keys *labelled* 1–9 on ANSI-style layouts.
 | Switch between | Applications or individual windows. | Applications |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
 | Skip minimized windows | Window mode only: leave minimized windows out of the list rather than showing them dimmed. | Off |
+| Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9** switch too; Escape backs out). Unconditional: Tab-cycling with ⌘ held used to opt back into switching on release, which meant the ordinary ⌘-Tab-Tab gesture closed the panel the moment ⌘ came up. A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
 | Switcher shortcuts | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
 | Start at login | Registers the app as a login item via `SMAppService`. | Off |
 
 Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `mode`, `sortOrder`,
-`skipMinimized`); Start at login lives in the system's Login Items, not our
+`skipMinimized`, `stickyMode`); Start at login lives in the system's Login Items, not our
 defaults.
 
 ### Appearance
