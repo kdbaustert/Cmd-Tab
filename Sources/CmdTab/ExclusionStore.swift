@@ -27,6 +27,9 @@ final class ExclusionStore: ObservableObject {
         // Excluding ourselves is meaningless — we are never a target — and an entry that can
         // never be seen in the list could never be removed again.
         guard bundleID != Bundle.main.bundleIdentifier else { return }
+        // Callers clear the opposite setting unconditionally, so most calls here change nothing.
+        // Writing anyway would log a change that did not happen and rebuild the switcher's list.
+        guard excluded.contains(bundleID) != isExcluded else { return }
         if isExcluded { excluded.insert(bundleID) } else { excluded.remove(bundleID) }
         persist()
     }

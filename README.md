@@ -178,8 +178,16 @@ instead of switching.
 **Exclude** (the switch) keeps an app out of the switcher in either mode — excluding an app also
 removes all of its windows from window mode.
 
-The two are mutually exclusive: setting one clears the other, so a row can never claim an app is
-both pinned into the switcher and kept out of it.
+The two are mutually exclusive on a row: excluding an app masks its star, so a row can never claim
+an app is both pinned into the switcher and kept out of it. Masking, not deleting — the favourite
+stays on disk, and turning the switch back off brings the star back in the position it always held.
+The switcher agrees either way, since an excluded app is dropped from the launch tiles regardless.
+Starring an app is the answer that moves both settings: with the switch on the star is masked, so
+turning it on can only mean "and stop excluding this".
+
+Nothing has to reconcile the two keys, then — settings written before they shared a pane, or
+imported from a file that sets each one on its own, can contradict each other and still display
+honestly, with no rewriting of anything the user did not ask to change.
 
 Both are keyed by bundle identifier, not pid, so they survive the app quitting, relaunching under a
 new pid, and Cmd-Tab restarting. They persist in `UserDefaults` under `favoriteBundleIDs` (an array,
@@ -188,9 +196,9 @@ in the order added — that is the order the launch tiles appear in) and `exclud
 An app with either setting stays in the list once it quits, so the setting can always be undone; an
 app that has since been uninstalled shows its raw bundle id and a placeholder icon rather than
 vanishing. **Add App…** reaches an app that isn't running, since by definition it can't be in the
-list — it lands as a favourite, that being the reason to reach for a non-running app, and the
-switch on its row overrides that. An app with no bundle identifier can never be set either way —
-there is nothing stable to key it on.
+list, and offers either setting: pre-excluding an app is only possible here, because a row appears
+after the app has run and the switcher has already shown it. An app with no bundle identifier can
+never be set either way — there is nothing stable to key it on.
 
 ## Switching to an app whose windows are all minimized
 

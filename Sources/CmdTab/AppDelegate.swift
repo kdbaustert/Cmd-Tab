@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.excludedBundleIDs = excluded
         }
 
+        // Settings written before favourites and exclusions shared a pane can set both on one app.
+        // Nothing reconciles them here: the provider already drops an excluded app from the launch
+        // tiles, so exclusion wins without either key having to be rewritten.
         let favorites = FavoritesStore.shared
         controller.favoriteBundleIDs = favorites.favorites
         favorites.onChange = { [weak self] ids in
