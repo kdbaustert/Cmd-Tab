@@ -200,7 +200,14 @@ struct AppearanceSettings: View {
                     .lineLimit(1)
             }
             .padding(Metrics.panelPadding)
-            .background(VisualEffectBackground())
+            // The same glass the switcher builds in `SwitcherView.body`, driven from the same
+            // settings. Hard-coding the defaults here meant the Material picker and the blur slider
+            // changed nothing you could see — and with the Opacity slider gone, Material is the only
+            // translucency control left, so this preview is the only feedback it has.
+            .background(
+                VisualEffectBackground(
+                    material: behavior.panelMaterial.nsMaterial,
+                    blurRadius: behavior.blurOverride ? behavior.blurRadius : nil))
             .clipShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
@@ -221,7 +228,9 @@ struct AppearanceSettings: View {
         let selection = Binding<String>(
             get: { themes.currentMatch()?.name ?? Self.customLabel },
             set: { name in
-                if let theme = themes.all.first(where: { $0.name == name }) { themes.apply(theme) }
+                // `theme(named:)` rather than a scan of `all`: a custom theme may share a preset's
+                // name, and picking it has to apply — and select — the user's own.
+                if let theme = themes.theme(named: name) { themes.apply(theme) }
             })
         let match = themes.currentMatch()
         let isCustomEditable = match != nil && !(match?.builtIn ?? true)
