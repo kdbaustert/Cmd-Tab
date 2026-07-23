@@ -9,7 +9,6 @@ struct Theme: Codable, Identifiable, Equatable {
     var highlightHex: String
     var appearance: String
     var material: String
-    var opacity: Double
     var blurOverride: Bool
     var blurRadius: Double
     var showNumbers: Bool
@@ -69,7 +68,6 @@ final class ThemeStore: ObservableObject {
             highlightHex: b.highlightColor.hexString ?? BehaviorStore.defaultHighlightHex,
             appearance: b.panelAppearance.rawValue,
             material: b.panelMaterial.rawValue,
-            opacity: b.panelOpacity,
             blurOverride: b.blurOverride,
             blurRadius: b.blurRadius,
             showNumbers: b.showNumbers,
@@ -90,7 +88,6 @@ final class ThemeStore: ObservableObject {
             b.highlightColor = Color(hex: theme.highlightHex) ?? BehaviorStore.defaultHighlight
             b.panelAppearance = PanelAppearance(rawValue: theme.appearance) ?? .system
             b.panelMaterial = PanelMaterial(rawValue: theme.material) ?? .hud
-            b.panelOpacity = theme.opacity
             b.blurOverride = theme.blurOverride
             b.blurRadius = theme.blurRadius
             b.showNumbers = theme.showNumbers
@@ -186,31 +183,31 @@ final class ThemeStore: ObservableObject {
     static let presets: [Theme] = [
         Theme(
             name: "Classic", highlightHex: "#8A8A8E", appearance: "system", material: "hud",
-            opacity: 1.0, blurOverride: false, blurRadius: 20, showNumbers: true,
+            blurOverride: false, blurRadius: 20, showNumbers: true,
             tileCorner: 12, titleFontSize: 10,
             fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Vibrant", highlightHex: "#0A84FF", appearance: "system", material: "hud",
-            opacity: 1.0, blurOverride: true, blurRadius: 42, showNumbers: true,
+            blurOverride: true, blurRadius: 42, showNumbers: true,
             tileCorner: 16, titleFontSize: 11,
             fade: true, iconSize: 72, iconSpacing: 20, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Minimal", highlightHex: "#8A8A8E", appearance: "system", material: "sidebar",
-            opacity: 0.96, blurOverride: false, blurRadius: 20, showNumbers: false,
+            blurOverride: false, blurRadius: 20, showNumbers: false,
             tileCorner: 8, titleFontSize: 10,
             fade: true, iconSize: 56, iconSpacing: 12, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Midnight", highlightHex: "#BF5AF2", appearance: "dark", material: "hud",
-            opacity: 0.86, blurOverride: true, blurRadius: 30, showNumbers: true,
+            blurOverride: true, blurRadius: 30, showNumbers: true,
             tileCorner: 14, titleFontSize: 10,
             fade: true, iconSize: 64, iconSpacing: 18, titleSpacing: 2,
             builtIn: true),
         Theme(
             name: "Daylight", highlightHex: "#0A84FF", appearance: "light", material: "window",
-            opacity: 1.0, blurOverride: false, blurRadius: 20, showNumbers: true,
+            blurOverride: false, blurRadius: 20, showNumbers: true,
             tileCorner: 12, titleFontSize: 10,
             fade: false, iconSize: 64, iconSpacing: 18, titleSpacing: 3,
             builtIn: true),

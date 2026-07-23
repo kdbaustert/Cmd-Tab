@@ -128,7 +128,6 @@ struct SwitcherView: View {
             RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
-        .opacity(model.opacity)
         .fixedSize()
         .coordinateSpace(name: Self.space)
         .onPreferenceChange(TileFrameKey.self) { onTileFrames($0) }

@@ -230,11 +230,6 @@ final class SwitcherController {
         set { model.material = newValue }
     }
 
-    var panelOpacity: Double {
-        get { model.opacity }
-        set { model.opacity = newValue }
-    }
-
     /// nil = the material's built-in blur; a value overrides it. Relayout so an open panel reflects
     /// the change (the view is rebuilt from scratch on layout).
     var panelBlur: Double? {

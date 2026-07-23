@@ -92,7 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.titleFontName = behavior.titleFontName
         controller.fade = behavior.fade
         controller.panelMaterial = behavior.panelMaterial
-        controller.panelOpacity = behavior.panelOpacity
         controller.panelBlur = behavior.blurOverride ? behavior.blurRadius : nil
         controller.maxColumns = behavior.maxColumns
         controller.showDelay = behavior.showDelay / 1000

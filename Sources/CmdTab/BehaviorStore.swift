@@ -203,7 +203,6 @@ extension Defaults.Keys {
     static let hideEmptyApps = Key<Bool>("hideEmptyApps", default: false)
     static let showDelay = Key<Double>("showDelayMs", default: 0)
     static let maxColumns = Key<Int>("maxColumns", default: 0)
-    static let panelOpacity = Key<Double>("panelOpacity", default: 1)
     static let blurOverride = Key<Bool>("blurOverride", default: false)
     static let blurRadius = Key<Double>("blurRadius", default: 20)
     static let showNumbers = Key<Bool>("showNumbers", default: true)
@@ -236,7 +235,7 @@ final class BehaviorStore: ObservableObject {
         .highlightColorHex,
         .hotkeyKeyCode, .hotkeyModifiers, .sameAppKeyCode, .sameAppModifiers,
         .stickyMode, .sameAppCycle, .hideEmptyApps, .showDelay, .maxColumns,
-        .panelOpacity, .blurOverride, .blurRadius,
+        .blurOverride, .blurRadius,
         .showNumbers, .showBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
         .fade, .showMenuBarIcon, .windowPreview,
@@ -309,9 +308,6 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var panelMaterial: PanelMaterial = Defaults[.panelMaterial] {
         didSet { persist(panelMaterial, oldValue, to: .panelMaterial) }
-    }
-    @Published var panelOpacity: Double = Defaults[.panelOpacity] {
-        didSet { persist(panelOpacity, oldValue, to: .panelOpacity) }
     }
     @Published var blurOverride: Bool = Defaults[.blurOverride] {
         didSet { persist(blurOverride, oldValue, to: .blurOverride) }
@@ -387,7 +383,6 @@ final class BehaviorStore: ObservableObject {
         showDelay = Defaults[.showDelay]
         maxColumns = Defaults[.maxColumns]
         panelMaterial = Defaults[.panelMaterial]
-        panelOpacity = Defaults[.panelOpacity]
         blurOverride = Defaults[.blurOverride]
         blurRadius = Defaults[.blurRadius]
         showNumbers = Defaults[.showNumbers]
@@ -473,9 +468,12 @@ final class BehaviorStore: ObservableObject {
     /// - `mode`, `windowScope`, `skipMinimized`, `reflectModeInMenuBar`: window mode and everything
     ///   that only applied to it. The switcher is app-only now; one app's windows are still reachable
     ///   through the same-app cycle and the ↓ drill-down, neither of which is a mode.
+    /// - `panelOpacity`: the panel translucency slider. The material already decides how much shows
+    ///   through, and a second control fighting it mostly produced washed-out panels; `Theme` lost
+    ///   its matching field with it.
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
-        "alwaysShowTitles",
+        "alwaysShowTitles", "panelOpacity",
     ]
 
     /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,

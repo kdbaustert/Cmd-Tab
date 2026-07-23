@@ -25,21 +25,6 @@ struct AppearanceSettings: View {
         .filter { NSFont(name: $0, size: 12) != nil }
         .sorted()
 
-    /// Panel translucency. Separate from `SliderRow` because it is a fraction, not a point size.
-    private var opacityRow: some View {
-        HStack(spacing: 8) {
-            Text("Opacity")
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 86, alignment: .leading)
-            Slider(value: $behavior.panelOpacity, in: 0.3...1.0)
-            Text("\(Int(behavior.panelOpacity * 100))")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, alignment: .trailing)
-        }
-        .help("How much of the desktop shows through the panel.")
-    }
-
     /// A label paired with any single control, matching the picker rows' shape.
     private func labelledRow(_ title: String, @ViewBuilder control: () -> some View) -> some View {
         HStack(spacing: 8) {
@@ -94,7 +79,6 @@ struct AppearanceSettings: View {
                             value: $behavior.titleFontSize,
                             range: 8...16,
                             step: 1)
-                        opacityRow
                     }
 
                     Divider()

@@ -36,8 +36,6 @@ final class SwitcherModel: ObservableObject {
     @Published var showBadges: Bool = true
     /// The frosted material behind the tiles.
     @Published var material: PanelMaterial = .hud
-    /// Panel translucency, 0.3–1.0.
-    @Published var opacity: Double = 1.0
     /// Blur radius override for the glass, or nil to use the material's built-in blur.
     @Published var blurRadius: Double?
     /// Corner radius of a tile's highlight.
