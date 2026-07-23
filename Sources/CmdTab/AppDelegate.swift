@@ -3,7 +3,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = SwitcherController()
-    private let settings = SettingsWindowController()
+    private let settings = SettingsPresenter()
     private var statusItem: NSStatusItem?
     private var signalSources: [DispatchSourceSignal] = []
 

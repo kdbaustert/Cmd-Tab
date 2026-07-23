@@ -1,22 +1,25 @@
 import AppKit
+import Settings
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct SettingsView: View {
-    var body: some View {
-        TabView {
-            GeneralSettings(loginItem: .shared, behavior: .shared)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            AppearanceSettings(appearance: .shared, behavior: .shared)
-                .tabItem { Label("Appearance", systemImage: "slider.horizontal.3") }
-            AppsSettings(store: .shared, favorites: .shared)
-                .tabItem { Label("Apps", systemImage: "square.grid.2x2") }
-        }
-        .padding(12)
-        // Rows are label — spacer — control, so width is what keeps the two columns apart and gives
-        // the help text under each row a sensible measure. The controls grew (the same-app cycle row
-        // carries a toggle *and* a 220pt recorder), which left the old 470 cramped.
-        .frame(width: 620, height: 620)
+// Nothing here may write the bare name `Settings` — it is ambiguous with SwiftUI's scene of the
+// same name. The package's top-level types (`SettingsWindowController`, `SettingsPane`) are fine;
+// its *nested* ones are reached through `SettingsPaneID` and `SettingsHostedPane`, declared in
+// `SettingsPaneHost.swift`. See that file for the whole story.
+
+extension View {
+    /// Every pane at one size, which is what the old fixed-size window gave.
+    ///
+    /// Rows are label — spacer — control, so width is what keeps the two columns apart and gives
+    /// the help text under each row a sensible measure. The controls grew (the same-app cycle row
+    /// carries a toggle *and* a 220pt recorder), which left the old 470 cramped.
+    ///
+    /// Deliberately uniform rather than letting each pane size itself: this window can resize
+    /// between panes, and three panes that jump to a different shape as you click across the
+    /// toolbar reads as a glitch rather than as a feature.
+    fileprivate func settingsPane() -> some View {
+        padding(12).frame(width: 620, height: 620)
     }
 }
 
@@ -212,24 +215,60 @@ struct GeneralSettings: View {
     }
 }
 
-/// Hosts the settings window. Kept alive by the delegate so the window survives being closed.
+/// Hosts the settings window, as a standard macOS toolbar-tab settings window.
+///
+/// Kept alive by the delegate so the window survives being closed. Named to stay clear of the
+/// `SettingsWindowController` it wraps, which comes from the `Settings` package.
 @MainActor
-final class SettingsWindowController: NSObject {
-    private var window: NSWindow?
+final class SettingsPresenter {
+    private var controller: SettingsWindowController?
 
     func show() {
-        if window == nil {
-            let window = NSWindow(
-                contentViewController: NSHostingController(rootView: SettingsView()))
-            window.title = "Cmd-Tab Settings"
-            window.styleMask = [.titled, .closable]
-            window.isReleasedWhenClosed = false
-            window.center()
-            self.window = window
-        }
-        // We run as an accessory app, so nothing activates us implicitly: without this the
-        // window opens behind the frontmost app and never takes the keyboard.
+        let controller = self.controller ?? Self.makeController()
+        self.controller = controller
+        controller.show()
+        // `show()` activates with the modern `NSApp.activate()` on macOS 14+, which asks the system
+        // to hand over activation rather than taking it. That is the right default for an ordinary
+        // app, but we are `.accessory`: no Dock tile, no menu-bar presence of the usual kind, and
+        // nothing else that would let the user bring the window forward if the request is declined.
+        // The blunt form is what guarantees the window arrives with the keyboard.
         NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Built on first show rather than at launch. `AppsSettings` constructs an `AppListModel`, which
+    /// registers workspace observers and does a LaunchServices lookup plus two disk reads per
+    /// installed app — real work for a window most sessions never open.
+    private static func makeController() -> SettingsWindowController {
+        let panes: [SettingsPane] = [
+            pane(.general, "General", "gearshape") {
+                GeneralSettings(loginItem: .shared, behavior: .shared).settingsPane()
+            },
+            pane(.appearance, "Appearance", "slider.horizontal.3") {
+                AppearanceSettings(appearance: .shared, behavior: .shared).settingsPane()
+            },
+            pane(.apps, "Apps", "square.grid.2x2") {
+                AppsSettings(store: .shared, favorites: .shared).settingsPane()
+            },
+        ]
+        return SettingsWindowController(panes: panes, style: .toolbarItems, animated: true)
+    }
+
+    /// Hosts a SwiftUI pane. The `NSHostingController` is built here, on the SwiftUI side, and
+    /// handed over already type-erased — see `SettingsPaneHost.swift`.
+    private static func pane(
+        _ identifier: SettingsPaneID, _ title: String, _ symbol: String,
+        @ViewBuilder content: () -> some View
+    ) -> SettingsPane {
+        SettingsHostedPane(
+            identifier: identifier, title: title, icon: icon(symbol, title),
+            content: NSHostingController(rootView: content()))
+    }
+
+    /// A toolbar icon, falling back to a blank image rather than force-unwrapping. A symbol renamed
+    /// out from under us in a future macOS should cost one missing icon, not a launch-time crash in
+    /// the only path back to the app's settings.
+    private static func icon(_ symbol: String, _ description: String) -> NSImage {
+        NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+            ?? NSImage(size: NSSize(width: 1, height: 1))
     }
 }
