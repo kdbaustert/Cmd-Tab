@@ -159,6 +159,11 @@ final class PanelGroup {
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateHoverFromCursor() }
         }
+        // Nothing here depends on the tick landing on time — it samples a position rather than
+        // driving an animation. The tolerance lets the run loop batch these wakeups instead of
+        // forcing 60 of its own per second onto the loop that also services the event tap, where an
+        // overrun costs the user every keystroke on the machine.
+        timer.tolerance = 1.0 / 240.0
         RunLoop.main.add(timer, forMode: .common)
         hoverTimer = timer
         // Scroll stays a global monitor — deltas can't be polled. It shares the frontmost-app

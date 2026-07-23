@@ -31,7 +31,25 @@ final class TargetProvider {
 
     /// Favourited apps, in the user's order. Any that aren't running are appended as launchable
     /// tiles.
-    var favoriteBundleIDs: [String] = []
+    var favoriteBundleIDs: [String] = [] {
+        didSet { appInfoCache = appInfoCache.filter { favoriteBundleIDs.contains($0.key) } }
+    }
+
+    /// Resolved metadata for launchable favourites, keyed by bundle id.
+    ///
+    /// `FavoritesStore.appInfo` is a LaunchServices lookup plus two disk reads (display name, icon),
+    /// and it runs on the main thread for every favourite on every refresh — even though the answer
+    /// only changes when the app is moved or uninstalled. Bounded by the favourites list, which the
+    /// `didSet` above prunes it back to.
+    private var appInfoCache: [String: (url: URL, name: String, icon: NSImage)] = [:]
+
+    /// Upper bound on both MRU lists.
+    ///
+    /// Nothing past the switcher's own list length affects ordering, so the tail is dead weight —
+    /// and without a cap `windowMRU` grows by one entry for every window ever focused and never
+    /// sheds any, because a closed window posts no notification. On a machine left up for weeks that
+    /// turned every activation into an O(n) scan over thousands of stale ids.
+    private static let mruLimit = 256
 
     init() {
         mru = Self.zOrderedPIDs()
@@ -51,10 +69,19 @@ final class TargetProvider {
     deinit { NSWorkspace.shared.notificationCenter.removeObserver(self) }
 
     @objc private func workspaceChanged(_ note: Notification) {
-        if note.name == NSWorkspace.didActivateApplicationNotification,
-           let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
-            touch(app.processIdentifier)
-            touchFocusedWindow(of: app.processIdentifier)
+        let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        switch note.name {
+        case NSWorkspace.didActivateApplicationNotification:
+            if let pid = app?.processIdentifier {
+                touch(pid)
+                touchFocusedWindow(of: pid)
+            }
+        case NSWorkspace.didTerminateApplicationNotification:
+            // Drop the pid outright. Nothing else ever removed one, so the list only grew — see
+            // `mruLimit`, which is the backstop rather than the fix.
+            if let pid = app?.processIdentifier { mru.removeAll { $0 == pid } }
+        default:
+            break
         }
         refresh()
     }
@@ -62,6 +89,7 @@ final class TargetProvider {
     private func touch(_ pid: pid_t) {
         mru.removeAll { $0 == pid }
         mru.insert(pid, at: 0)
+        if mru.count > Self.mruLimit { mru.removeLast(mru.count - Self.mruLimit) }
     }
 
     /// Records the just-activated app's focused window as most-recently-used, so window mode can
@@ -78,8 +106,12 @@ final class TargetProvider {
                 let id = Self.windowID(value as! AXUIElement)
             else { return }
             DispatchQueue.main.async {
-                self?.windowMRU.removeAll { $0 == id }
-                self?.windowMRU.insert(id, at: 0)
+                guard let self else { return }
+                self.windowMRU.removeAll { $0 == id }
+                self.windowMRU.insert(id, at: 0)
+                if self.windowMRU.count > Self.mruLimit {
+                    self.windowMRU.removeLast(self.windowMRU.count - Self.mruLimit)
+                }
             }
         }
     }
@@ -87,15 +119,58 @@ final class TargetProvider {
     /// Whatever we last computed. Never blocks.
     func snapshot() -> [SwitchTarget] { cache }
 
-    /// Recomputes the list off-thread, then hands the result back on main.
+    // MARK: - Refresh
+
+    /// How long a refresh request waits for others to join it.
+    ///
+    /// `refresh()` is called from every workspace notification and from several settings setters,
+    /// and its prelude runs on the main thread — the same thread that services the event tap, where
+    /// a stall costs the user every keystroke on the machine. Bursts are routine: `hideOthers`
+    /// posts one notification per app hidden, and an unstepped settings slider posts one per drag
+    /// tick. Each used to mean a full enumeration, piling onto a serial queue behind a Dock walk
+    /// that can take the full Accessibility timeout. They now collapse into a single pass.
+    private let coalesceWindow: TimeInterval = 0.15
+    private var coalesceWork: DispatchWorkItem?
+    /// Callers waiting on the next pass; all are answered with the same result.
+    private var pendingHandlers: [([SwitchTarget]) -> Void] = []
+    /// A pass is on the queue. Never enqueue a second — the queue is serial, so it would only
+    /// deepen the backlog the coalescing above exists to prevent.
+    private var isRefreshing = false
+    /// A request arrived while a pass was in flight; run one more once it lands.
+    private var wantsAnotherRefresh = false
+
+    /// Recomputes the list off-thread, then hands the result back on main. Coalesced — see
+    /// `coalesceWindow`. `handler`, if given, fires when the next completed pass lands.
     func refresh(then handler: (([SwitchTarget]) -> Void)? = nil) {
+        if let handler { pendingHandlers.append(handler) }
+        guard coalesceWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.coalesceWork = nil
+            self.performRefresh()
+        }
+        coalesceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + coalesceWindow, execute: work)
+    }
+
+    private func performRefresh() {
+        // Already running: follow it with one more rather than stacking a second enumeration behind
+        // it. `pendingHandlers` is deliberately left alone — the follow-up pass answers them.
+        guard !isRefreshing else {
+            wantsAnotherRefresh = true
+            return
+        }
+        isRefreshing = true
+        let handlers = pendingHandlers
+        pendingHandlers = []
+
         let sortOrder = self.sortOrder
         let hideEmptyApps = self.hideEmptyApps
         let wantsBadges = self.notificationBadges
         let apps = switchableApps()
         let order = mru
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
-        let launchTargets = Self.launchFavorites(favoriteBundleIDs, excluded: excludedBundleIDs)
+        let launchTargets = launchFavorites()
 
         axQueue.async { [weak self] in
             // On the background queue: reading the Dock is Accessibility IPC to another process.
@@ -110,8 +185,14 @@ final class TargetProvider {
             }
             targets += launchTargets  // launchable favourites go last, after the running apps
             DispatchQueue.main.async {
-                self?.cache = targets
-                handler?(targets)
+                guard let self else { return }
+                self.cache = targets
+                self.isRefreshing = false
+                handlers.forEach { $0(targets) }
+                if self.wantsAnotherRefresh {
+                    self.wantsAnotherRefresh = false
+                    self.refresh()
+                }
             }
         }
     }
@@ -247,21 +328,33 @@ final class TargetProvider {
     }
 
     /// Launchable tiles for favourites that aren't currently running (and aren't excluded), in the
-    /// user's favourites order. Runs on the main thread — `NSWorkspace` app lookups want it.
-    private static func launchFavorites(_ bundleIDs: [String], excluded: Set<String>)
-        -> [SwitchTarget]
-    {
-        guard !bundleIDs.isEmpty else { return [] }
+    /// user's favourites order. Runs on the main thread — `NSWorkspace` app lookups want it, which
+    /// is exactly why the resolved metadata is cached in `appInfoCache` rather than re-derived from
+    /// LaunchServices and disk on every pass.
+    private func launchFavorites() -> [SwitchTarget] {
+        guard !favoriteBundleIDs.isEmpty else { return [] }
+        let excluded = excludedBundleIDs
         let running = Set(
             NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
-        return bundleIDs.compactMap { id in
-            guard !running.contains(id), !excluded.contains(id),
-                let info = FavoritesStore.appInfo(for: id)
-            else { return nil }
-            return SwitchTarget(
-                id: "launch:\(id)", kind: .launch(info.url), title: info.name, appName: info.name,
-                icon: info.icon, isMinimized: false, isHidden: false)
+        return favoriteBundleIDs.compactMap { id in
+            guard !running.contains(id), !excluded.contains(id) else { return nil }
+            if let cached = appInfoCache[id] {
+                return Self.launchTarget(id: id, info: cached)
+            }
+            // A failure is deliberately not cached: an app that isn't installed yet should be picked
+            // up when it arrives, rather than being remembered as missing for the whole session.
+            guard let info = FavoritesStore.appInfo(for: id) else { return nil }
+            appInfoCache[id] = info
+            return Self.launchTarget(id: id, info: info)
         }
+    }
+
+    private static func launchTarget(
+        id: String, info: (url: URL, name: String, icon: NSImage)
+    ) -> SwitchTarget {
+        SwitchTarget(
+            id: "launch:\(id)", kind: .launch(info.url), title: info.name, appName: info.name,
+            icon: info.icon, isMinimized: false, isHidden: false)
     }
 
     /// Apps that currently own an on-screen window, front to back. Only used to seed the MRU

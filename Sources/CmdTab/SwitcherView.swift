@@ -422,7 +422,10 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 
     func updateNSView(_ view: BlurVisualEffectView, context: Context) {
-        view.material = material
+        // Both guarded on a real change. `SwitcherPanel.layout()` reassigns the hosting view's root
+        // on every keystroke of the key path, so this runs constantly — and assigning an unchanged
+        // material re-tears the glass down while `overrideBlurRadius` walks the layer tree.
+        if view.material != material { view.material = material }
         view.overrideBlurRadius = blurRadius
     }
 }
@@ -433,7 +436,10 @@ struct VisualEffectBackground: NSViewRepresentable {
 /// material's own blur simply stands, and nothing breaks.
 final class BlurVisualEffectView: NSVisualEffectView {
     var overrideBlurRadius: Double? {
-        didSet { applyBlurOverride() }
+        didSet {
+            guard overrideBlurRadius != oldValue else { return }
+            applyBlurOverride()
+        }
     }
     /// The filter's natural `inputRadius`, captured before the first override so it can be restored
     /// when the override is cleared — otherwise the last custom value would stick.
@@ -450,6 +456,10 @@ final class BlurVisualEffectView: NSVisualEffectView {
     }
 
     private func applyBlurOverride() {
+        // Nothing to apply and nothing to restore. `updateLayer()` calls in on every redraw, and the
+        // default — no override, so the material's own blur stands — is the common case; without
+        // this it walked the sublayer tree and ran KVC over every filter each time, for no effect.
+        guard overrideBlurRadius != nil || naturalRadius != nil else { return }
         for sublayer in layer?.sublayers ?? [] {
             guard let filters = sublayer.filters as? [NSObject] else { continue }
             for filter in filters where (filter.value(forKey: "name") as? String) == "gaussianBlur" {

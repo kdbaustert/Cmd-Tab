@@ -88,6 +88,8 @@ final class SwitcherController {
     private var stickyOutsideMonitor: Any?
     private var stickyIdleTimer: Timer?
     private var stickyCeilingTimer: Timer?
+    /// When the sticky session was last touched, polled by `stickyIdleTimer`.
+    private var lastStickyActivity = Date()
     /// How long a sticky session may sit untouched before it dismisses itself.
     private let stickyIdleTimeout: TimeInterval = 20
     /// Absolute cap on a sticky session, never extended by activity. The idle timer alone was not a
@@ -110,6 +112,7 @@ final class SwitcherController {
     var excludedBundleIDs: Set<String> {
         get { provider.excludedBundleIDs }
         set {
+            guard newValue != provider.excludedBundleIDs else { return }
             provider.excludedBundleIDs = newValue
             provider.refresh()
         }
@@ -118,14 +121,20 @@ final class SwitcherController {
     var favoriteBundleIDs: [String] {
         get { provider.favoriteBundleIDs }
         set {
+            guard newValue != provider.favoriteBundleIDs else { return }
             provider.favoriteBundleIDs = newValue
             provider.refresh()
         }
     }
 
+    // Both guarded on an actual change, like every other setter here. `AppDelegate.applyBehavior`
+    // re-pushes the whole settings block on every `BehaviorStore` notification — which an unstepped
+    // slider posts once per drag tick — so an unguarded setter turned a slider drag into a stream of
+    // full list rebuilds, each with its main-thread prelude on the thread that services the tap.
     var sortOrder: SortOrder {
         get { provider.sortOrder }
         set {
+            guard newValue != provider.sortOrder else { return }
             provider.sortOrder = newValue
             provider.refresh()
         }
@@ -134,6 +143,7 @@ final class SwitcherController {
     var hideEmptyApps: Bool {
         get { provider.hideEmptyApps }
         set {
+            guard newValue != provider.hideEmptyApps else { return }
             provider.hideEmptyApps = newValue
             provider.refresh()
         }
@@ -440,11 +450,7 @@ final class SwitcherController {
         preview.endSteering()
         model.step(delta)
         // Off the tap callback — see `scheduleLayout`.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.panels.layout()
-            self.panels.previewSelectedTile()
-        }
+        scheduleLayout(previewSelected: true)
     }
 
     private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
@@ -554,19 +560,42 @@ final class SwitcherController {
         scheduleLayout()
     }
 
-    /// Relayout on the next main-loop turn instead of inline.
+    /// Set while a relayout is already queued for the next main-loop turn.
+    private var layoutQueued = false
+    /// Whether the queued relayout should re-point the preview at the *selected* tile rather than
+    /// re-resolving it against the cursor. Sticky across coalesced requests: if any caller in the
+    /// batch was a keyboard move, the batch is a keyboard move.
+    private var layoutWantsSelectedPreview = false
+
+    /// Relayout on the next main-loop turn instead of inline, and at most once per turn.
     ///
     /// `panels.layout()` reassigns the hosting view's root, runs `layoutSubtreeIfNeeded`, reads
-    /// `fittingSize` and resizes the window — all synchronous SwiftUI work. Every caller on the key
-    /// path runs inside the `CGEventTap` callback, and a tap that overruns the system's deadline is
-    /// disabled outright: macOS posts `tapDisabledByTimeout` and *every* keystroke during the stall
-    /// is dropped machine-wide. Type-to-filter made that a per-character risk rather than a
-    /// per-Tab-press one. Hopping off the callback first keeps the tap's own work trivial.
-    private func scheduleLayout() {
+    /// `fittingSize` and resizes the window — all synchronous SwiftUI work, and once per panel when
+    /// mirrored across displays. Every caller on the key path runs inside the `CGEventTap` callback,
+    /// and a tap that overruns the system's deadline is disabled outright: macOS posts
+    /// `tapDisabledByTimeout` and *every* keystroke during the stall is dropped machine-wide.
+    /// Type-to-filter made that a per-character risk rather than a per-Tab-press one.
+    ///
+    /// Hopping off the callback keeps the tap's own work trivial, but on its own it does not bound
+    /// the load: a burst of key events (auto-repeat on the trigger, a fast typist filtering) posted
+    /// one full layout each onto the very run loop the tap is serviced from. Collapsing the burst
+    /// into one layout is what actually caps it.
+    private func scheduleLayout(previewSelected: Bool = false) {
+        if previewSelected { layoutWantsSelectedPreview = true }
+        guard !layoutQueued else { return }
+        layoutQueued = true
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVisible else { return }
+            guard let self else { return }
+            self.layoutQueued = false
+            let wantsSelected = self.layoutWantsSelectedPreview
+            self.layoutWantsSelectedPreview = false
+            guard self.isVisible else { return }
             self.panels.layout()
-            self.panels.refreshHoverPreview()
+            if wantsSelected {
+                self.panels.previewSelectedTile()
+            } else {
+                self.panels.refreshHoverPreview()
+            }
         }
     }
 
@@ -840,6 +869,10 @@ final class SwitcherController {
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.watchdogTick() }
         }
+        // A failsafe poll, so the exact instant it fires does not matter. The tolerance lets the run
+        // loop batch it with other work instead of forcing a wakeup of its own — this runs on the
+        // same loop the event tap is serviced from, and only ever while a session is open.
+        timer.tolerance = 0.05
         RunLoop.main.add(timer, forMode: .common)
         watchdog = timer
     }
@@ -871,7 +904,23 @@ final class SwitcherController {
                 self.cancel()
             }
         }
-        resetStickyIdle()
+        // One repeating check against `lastStickyActivity`, rather than tearing down and rebuilding
+        // a one-shot timer on every keystroke — that churned a run-loop source per key, on the loop
+        // that has to service the event tap. The coarse interval is deliberate: this only has to
+        // notice a panel that was walked away from.
+        lastStickyActivity = Date()
+        let idle = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isSticky,
+                    Date().timeIntervalSince(self.lastStickyActivity) >= self.stickyIdleTimeout
+                else { return }
+                Log.tap.notice("sticky session idle; dismissing so the keyboard is not held")
+                self.cancel()
+            }
+        }
+        idle.tolerance = 0.5
+        RunLoop.main.add(idle, forMode: .common)
+        stickyIdleTimer = idle
 
         // The absolute cap, started once and never restarted. This is the piece that actually bounds
         // how long the keyboard can stay captured; the idle timer only measures *quiet*, and a
@@ -883,6 +932,7 @@ final class SwitcherController {
                 self.cancel()
             }
         }
+        ceiling.tolerance = 1
         RunLoop.main.add(ceiling, forMode: .common)
         stickyCeilingTimer = ceiling
     }
@@ -899,18 +949,13 @@ final class SwitcherController {
     /// Restarts the inactivity countdown. Called on every keystroke the panel handles, so it only
     /// bites when the switcher has genuinely been abandoned — walked away from, or opened by accident
     /// and forgotten. It is *not* the bound on keyboard capture; `stickyCeilingTimer` is.
+    ///
+    /// A bare timestamp write: the timer that reads it is started once per sticky session in
+    /// `startStickyGuards`. This is on the key path, where the rule is that nothing but cheap
+    /// in-memory state changes hands.
     private func resetStickyIdle() {
         guard isSticky else { return }
-        stickyIdleTimer?.invalidate()
-        let timer = Timer(timeInterval: stickyIdleTimeout, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.isSticky else { return }
-                Log.tap.notice("sticky session idle; dismissing so the keyboard is not held")
-                self.cancel()
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        stickyIdleTimer = timer
+        lastStickyActivity = Date()
     }
 
     private func watchdogTick() {
@@ -1034,7 +1079,7 @@ final class SwitcherController {
     /// is still switchable — so the panel just relays out.
     private func minimizeSelected() {
         model.selected?.minimizeWindow()
-        panels.layout()
+        scheduleLayout()
     }
 
     /// Zooms (maximize / restore) the selected window.

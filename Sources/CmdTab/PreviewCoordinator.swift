@@ -144,6 +144,9 @@ final class PreviewCoordinator {
         shownPID = nil
         strip.endKeyboardSelection()
         strip.dismiss()
+        // The session is over, so the capture caches have nothing left to serve — and one of them
+        // retains a handle on every window on the system. See `WindowCapture.clearCaches`.
+        Task { await WindowCapture.shared.clearCaches() }
     }
 
     private func cancelPendingCapture() {

@@ -34,6 +34,12 @@ actor WindowCapture {
     private var idCache: [pid_t: (ids: [CGWindowID], at: Date)] = [:]
     /// How long a fetched window list / id set may be reused before it is refetched.
     private let ttl: TimeInterval = 0.75
+    /// Ceiling on simultaneous `SCScreenshotManager` captures.
+    ///
+    /// Firing a dozen at once is a burst of WindowServer and GPU work for a strip the cursor may be
+    /// about to sweep straight past — and it stacks with whatever the panel's own behind-window blur
+    /// is already costing the compositor. Four keeps the round-trips overlapping without the spike.
+    private let maxConcurrentCaptures = 4
 
     /// Live thumbnails of the standard-layer windows owned by `pid`, ordered to match window mode.
     /// Returns an empty list if Screen Recording is not granted or the app has nothing capturable.
@@ -72,30 +78,51 @@ actor WindowCapture {
         let selected = Array(windows.prefix(maxCount))
 
         // Each capture is an independent GPU round-trip; run them concurrently, then restore order.
-        let captured = await withTaskGroup(of: (Int, WindowThumb?).self) { group in
-            for (index, window) in selected.enumerated() {
-                group.addTask {
-                    // Child tasks inherit cancellation from this method's `Task`; a capture still
-                    // queued when the hover moves on should never start.
-                    guard !Task.isCancelled else { return (index, nil) }
-                    guard let image = try? await Self.capture(window, maxHeight: maxHeight),
-                        !Self.isBlank(image)
-                    else { return (index, nil) }
-                    let size = NSSize(width: image.width, height: image.height)
-                    return (
-                        index,
-                        WindowThumb(
-                            id: window.windowID, image: NSImage(cgImage: image, size: size),
-                            title: window.title ?? "", pid: pid))
+        // In batches rather than all at once — see `maxConcurrentCaptures`.
+        var captured: [(Int, WindowThumb)] = []
+        for start in stride(from: 0, to: selected.count, by: maxConcurrentCaptures) {
+            // The hover may have moved on between batches; stop rather than paying for the rest.
+            guard !Task.isCancelled else { break }
+            let batch = Array(selected[start..<min(start + maxConcurrentCaptures, selected.count)])
+            let batchStart = start
+            captured += await withTaskGroup(of: (Int, WindowThumb?).self) { group in
+                for (offset, window) in batch.enumerated() {
+                    let index = batchStart + offset
+                    group.addTask {
+                        // Child tasks inherit cancellation from this method's `Task`; a capture still
+                        // queued when the hover moves on should never start.
+                        guard !Task.isCancelled else { return (index, nil) }
+                        guard let image = try? await Self.capture(window, maxHeight: maxHeight),
+                            !Self.isBlank(image)
+                        else { return (index, nil) }
+                        let size = NSSize(width: image.width, height: image.height)
+                        return (
+                            index,
+                            WindowThumb(
+                                id: window.windowID, image: NSImage(cgImage: image, size: size),
+                                title: window.title ?? "", pid: pid))
+                    }
                 }
+                var out: [(Int, WindowThumb)] = []
+                for await result in group where result.1 != nil {
+                    out.append((result.0, result.1!))
+                }
+                return out
             }
-            var out: [(Int, WindowThumb)] = []
-            for await result in group where result.1 != nil {
-                out.append((result.0, result.1!))
-            }
-            return out
         }
         return captured.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    /// Drops the short-lived caches, called when a session ends.
+    ///
+    /// Both TTLs are sub-second, so nothing would legitimately reuse them across sessions anyway —
+    /// but `cachedContent` is an `SCShareableContent`, which holds an `SCWindow` for every window on
+    /// the system, and `idCache` gains an entry per app hovered. Left alone they simply stayed
+    /// resident for the life of the process, which for a menu-bar agent is the life of the login.
+    func clearCaches() {
+        cachedContent = nil
+        contentFetchedAt = nil
+        idCache.removeAll()
     }
 
     /// The full window list, reused for `ttl` so a sweep across tiles doesn't re-run the whole
@@ -123,7 +150,11 @@ actor WindowCapture {
     /// Run inline it would hold the actor with no suspension point, so every other hover queues
     /// behind one wedged app and the previews stop appearing entirely until it clears.
     private func switchableIDs(for pid: pid_t) async -> [CGWindowID] {
-        if let entry = idCache[pid], Date().timeIntervalSince(entry.at) < ttl { return entry.ids }
+        let now = Date()
+        if let entry = idCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.ids }
+        // Shed everything else that has aged out while we are here. Only the hovered app's entry was
+        // ever replaced, so an app hovered once and never again kept its window ids forever.
+        idCache = idCache.filter { now.timeIntervalSince($0.value.at) < ttl }
         let ids = await Task.detached { TargetProvider.switchableWindowIDs(for: pid) }.value
         idCache[pid] = (ids, Date())
         return ids
