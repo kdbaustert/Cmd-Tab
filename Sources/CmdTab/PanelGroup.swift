@@ -33,8 +33,6 @@ final class PanelGroup {
 
     /// Invoked when a tile is clicked, with its index.
     var onPick: ((Int) -> Void)?
-    /// Invoked when a tile is right-clicked, with its index and the click's screen point.
-    var onSecondaryPick: ((Int, NSPoint) -> Void)?
     /// Invoked with a step (+1/-1) when the scroll wheel moves over any panel.
     var onScroll: ((Int) -> Void)?
     /// Fires when what the cursor points at changes. Only while app-mode previews are on.
@@ -54,10 +52,6 @@ final class PanelGroup {
     private var scrollAccumulator: CGFloat = 0
     /// The last target emitted, so nothing re-fires while the cursor sits on the same tile.
     private var lastPreviewTarget: PreviewHoverTarget = .away
-    /// Set by `pauseTracking` while something else owns the pointer. Stopping the timer alone is not
-    /// enough: `refreshHoverPreview` is also called straight from a relayout, so the preview would
-    /// float itself back up over the very menu the pause was taken for.
-    private var trackingPaused = false
 
     /// Which displays to occupy. Applied on the next `show()`; changing it mid-session would mean
     /// tearing panels out from under a live selection.
@@ -116,21 +110,6 @@ final class PanelGroup {
         panels.forEach { $0.layout() }
     }
 
-    /// Stops following the cursor while something else owns the pointer — the tile context menu,
-    /// whose own window opens on top of the tiles. Without this the poll would keep handing the
-    /// selection to whatever tile the cursor crossed on its way down the menu, and the item clicked
-    /// would act on an app the user never pointed at.
-    ///
-    /// `resumeTracking` restarts from wherever the cursor ended up, which is what re-seeding
-    /// `lastHoverLocation` in `startHoverTracking` already does: the tile under a resting pointer
-    /// keeps the selection it has rather than stealing it back on the first tick.
-    func pauseTracking() {
-        trackingPaused = true
-        stopHoverTracking()
-    }
-
-    func resumeTracking() { startHoverTracking() }
-
     /// Creates or drops panels so there is exactly one per targeted display.
     ///
     /// Rebuilt per session rather than kept in sync with display changes: a monitor plugged in while
@@ -162,7 +141,6 @@ final class PanelGroup {
         panel.maxColumns = maxColumns
         panel.fade = fade
         panel.onPick = { [weak self] index in self?.onPick?(index) }
-        panel.onSecondaryPick = { [weak self] index, point in self?.onSecondaryPick?(index, point) }
         panel.onScrollEvent = { [weak self] event in self?.handleScroll(event) }
         panel.onGeometryChange = { [weak self] in self?.geometryDidChange() }
         return panel
@@ -171,9 +149,6 @@ final class PanelGroup {
     // MARK: - Hover & scroll
 
     private func startHoverTracking() {
-        // Cleared before the guard, so a session that starts while a stale pause is set (nothing does
-        // that today, but `show()` comes through here too) is not left with previews switched off.
-        trackingPaused = false
         guard hoverTimer == nil else { return }
         // Seed with where the cursor already is, not nil. This poll cannot tell "moved here" from
         // "was already here", so a nil seed made the first tick treat a resting cursor as a fresh
@@ -261,7 +236,7 @@ final class PanelGroup {
     /// doesn't re-fire on every tick. A nil target means the geometry isn't in yet — nothing is
     /// emitted, and `pendingSelectedTile` replays the request once it lands.
     private func emitPreview(_ target: PreviewHoverTarget?) {
-        guard windowPreviewEnabled, model.mode == .apps, !trackingPaused else { return }
+        guard windowPreviewEnabled, model.mode == .apps else { return }
         guard let target, target != lastPreviewTarget else { return }
         lastPreviewTarget = target
         onPreviewHover?(target)

@@ -43,15 +43,8 @@ final class SwitcherController {
     private lazy var preview = PreviewCoordinator(switcher: panels) { [weak self] in
         self?.isVisible ?? false
     }
-    /// Builds and owns the tile context menu. Held for the controller's lifetime because
-    /// `NSMenuItem.target` is weak — see `TileMenu`.
-    private lazy var tileMenu = TileMenu { [weak self] action, targetID in
-        self?.performFromMenu(action, on: targetID)
-    }
     private var tap: EventTap?
     private var isVisible = false
-    /// Whether a tile's context menu is on screen. See `showTileMenu`.
-    private var isShowingTileMenu = false
     /// Second source of truth for "is the trigger still down". See `startWatchdog`.
     private var watchdog: Timer?
 
@@ -322,11 +315,6 @@ final class SwitcherController {
         }
         self.tap = tap
         panels.onPick = { [weak self] index in self?.pick(index) }
-        panels.onSecondaryPick = { [weak self] index, point in
-            // Off the dispatch of the click that asked for it: `showTileMenu` runs the menu's own
-            // tracking loop synchronously, and that must not start inside the panel's `sendEvent`.
-            DispatchQueue.main.async { self?.showTileMenu(for: index, at: point) }
-        }
         panels.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
             // Scroll and hover are the advertised way to move the selection in a stay-open session,
@@ -397,13 +385,6 @@ final class SwitcherController {
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
-        // A tile's context menu is up, and it owns the keyboard: passing keys through is what lets its
-        // own arrows, Return, type-select and Escape work, none of which can reach it while this
-        // handler is swallowing everything. The trigger release is ignored for the same reason it is
-        // in a sticky session — there is a menu in the way, so it cannot mean "switch now".
-        // `showTileMenu` pins the session open across exactly this window.
-        if isShowingTileMenu { return false }
-
         let flags = event.flags
 
         // Modifier events are never swallowed — other apps need to track modifier state, and this
@@ -1062,22 +1043,6 @@ final class SwitcherController {
         }
     }
 
-    /// Runs a context-menu item against the tile that menu was opened on.
-    ///
-    /// Bypasses `perform` deliberately. That hop exists to get off the event-tap callback, and this is
-    /// already on the main thread outside it — while going through it would leave a gap in which the
-    /// resumed cursor poll could move the highlight onto whatever tile the menu closed over. Setting
-    /// the selection and executing in one turn is what makes the item act on the app the user
-    /// right-clicked. The tile is looked up afresh because the list can have moved on: the app may
-    /// have quit on its own, or a background refresh may have folded in a new one.
-    private func performFromMenu(_ action: SwitcherAction, on targetID: String) {
-        guard isVisible, let index = model.targets.firstIndex(where: { $0.id == targetID }),
-            !model.targets[index].isLaunchable
-        else { return }
-        model.selection = index
-        execute(action)
-    }
-
     private func execute(_ action: SwitcherAction) {
         // pid, not title: titles carry document names, mail subjects and URLs, and `.public` would
         // persist them in the unified log for anything that can run `log show` to read.
@@ -1146,55 +1111,4 @@ final class SwitcherController {
         commit()
     }
 
-    /// A tile was right-clicked: raise its context menu — quit, force-quit, close, minimize, hide —
-    /// so those actions are reachable without the keyboard bindings.
-    ///
-    /// Three things have to give way for as long as the menu is up, and each of them is a bug if it
-    /// doesn't. The cursor poll must stop, or travelling down the menu drags the selection across the
-    /// tiles under it and the item lands on the wrong app. The keyboard has to go back to the menu
-    /// (`isShowingTileMenu`, read at the top of `handle`), which also means the trigger's release
-    /// stops ending the session — so the session is promoted to the stay-open shape, both because a
-    /// release behind a menu cannot sensibly mean "switch now" and because the panel has to still be
-    /// there when the chosen action runs against it. `startStickyGuards` on the way out is what keeps
-    /// that promotion bounded: idle timeout, hard ceiling, and a click outside.
-    ///
-    /// A not-yet-running favourite gets no menu: there is no process to quit, and every launch tile
-    /// shares the -1 pid, so an action would reach for all of them at once.
-    private func showTileMenu(for index: Int, at point: NSPoint) {
-        guard isVisible, !isShowingTileMenu, model.targets.indices.contains(index) else { return }
-        let target = model.targets[index]
-        guard !target.isLaunchable else { return }
-
-        // Right-clicking a tile is a statement about that tile, exactly like left-clicking one: it
-        // takes the selection, and drops any drilled-into window strip the actions would otherwise
-        // be read against.
-        preview.endSteering()
-        model.selection = index
-        scheduleLayout()
-
-        isShowingTileMenu = true
-        panels.pauseTracking()
-        // The floating thumbnails would sit on top of the menu, and a capture already in flight would
-        // land under it. The strip comes back on the next hover once tracking resumes.
-        preview.teardown()
-        isSticky = true
-        activeHeld = []
-        stopWatchdog()
-        // A session that was *already* sticky has its guards running; the idle timeout and the ceiling
-        // would then dismiss the panel out from under an open menu. They go back up on the way out.
-        stopStickyGuards()
-
-        Log.tap.notice("tile menu on pid \(target.pid, privacy: .public)")
-        // Synchronous: the menu runs its own tracking loop and returns once it closes. Reached from
-        // the panel's `sendEvent` via an async hop, so this is not nested inside event dispatch.
-        tileMenu.menu(for: target, shortcuts: shortcuts, trigger: hotkey)
-            .popUp(positioning: nil, at: point, in: nil)
-
-        isShowingTileMenu = false
-        // A chosen item has already run by now, and quitting the last app in the list dismisses the
-        // switcher — so there may be no session left to hand the cursor and the guards back to.
-        guard isVisible else { return }
-        panels.resumeTracking()
-        startStickyGuards()
-    }
 }

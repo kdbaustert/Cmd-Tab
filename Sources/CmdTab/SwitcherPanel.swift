@@ -50,9 +50,6 @@ final class SwitcherPanel: NSPanel {
 
     /// Invoked when a tile is clicked, with its index. Set by `PanelGroup` to commit the pick.
     var onPick: ((Int) -> Void)?
-    /// Invoked when a tile is right-clicked, with its index and the click's screen point — where the
-    /// context menu is anchored.
-    var onSecondaryPick: ((Int, NSPoint) -> Void)?
     /// A scroll that landed on this panel, forwarded up to the group, which owns the accumulator so
     /// a flick spanning two displays still reads as one gesture.
     var onScrollEvent: ((NSEvent) -> Void)?
@@ -88,15 +85,6 @@ final class SwitcherPanel: NSPanel {
         case .leftMouseDown:
             if let index = tileIndex(at: NSEvent.mouseLocation) {
                 onPick?(index)
-                return
-            }
-        case .rightMouseDown:
-            // The tile's context menu. Reported rather than raised here: the menu runs a nested
-            // tracking loop, which has no business starting inside an event dispatch, and the
-            // session state it has to pin down first lives in the controller.
-            let point = NSEvent.mouseLocation
-            if let index = tileIndex(at: point) {
-                onSecondaryPick?(index, point)
                 return
             }
         case .scrollWheel:
