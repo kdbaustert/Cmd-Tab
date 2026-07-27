@@ -30,7 +30,7 @@ final class SwitcherModel: ObservableObject {
     @Published var metrics: Metrics = .default
     /// Tint of the selected tile's highlight.
     @Published var highlightColor: Color = .accentColor
-    /// Show the ⌘-number badge on the first nine tiles.
+    /// Show the ⌘-number badge on the first ten tiles.
     @Published var showNumbers: Bool = true
     /// Show the display and Space badges on window tiles.
     @Published var showBadges: Bool = true

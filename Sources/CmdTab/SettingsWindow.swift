@@ -94,7 +94,7 @@ struct GeneralSettings: View {
                         "Stay open",
                         help: "Releasing the trigger leaves the switcher up instead of switching. "
                             + "The arrows, ⇧-Tab, scroll and the mouse move the selection; Tab, "
-                            + "Return, a click or 1–9 switches to it. Escape backs out."
+                            + "Return, a click or 1–9/0 switches to it. Escape backs out."
                     ) {
                         Toggle("", isOn: $behavior.stickyMode).labelsHidden()
                     }
@@ -129,7 +129,7 @@ struct GeneralSettings: View {
                 }
 
                 Text(
-                    "While the switcher is open: type to filter, 1–9 jump, ⌘⌥Q/W/H quit / close / "
+                    "While the switcher is open: type to filter, 1–9/0 jump, ⌘⌥Q/W/H quit / close / "
                     + "hide, ⌘⌥M minimize, ⌘⌥F zoom, ⌘⌥←→ move to another display, scroll or hover "
                     + "to move, or click a tile.")
                     .font(.system(size: 10))

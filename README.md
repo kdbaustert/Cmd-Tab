@@ -41,7 +41,7 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | ⌘-← / ⌘-→ | Move the selection |
 | *type* | Filter the list by app / window name |
 | ⌫ | Delete the last character of the filter |
-| ⌘-1 … ⌘-9 | Switch straight to that tile (no filter active) |
+| ⌘-1 … ⌘-9, ⌘-0 | Switch straight to that tile (no filter active). 0 is the tenth tile |
 | ⌘-⌥-Q | Quit the selected app |
 | ⌘-⌥-⇧-Q | Force-quit the selected app |
 | ⌘-⌥-W | Close the selected window (window mode) or the app's front window |
@@ -90,7 +90,7 @@ Tiles carry small badges besides the number: a minimized window shows a **–**,
 than one display — the window's **display number**.
 
 Both the number row and the keypad work. The mapping is by physical key position, so it follows
-the keys *labelled* 1–9 on ANSI-style layouts.
+the keys *labelled* 0–9 on ANSI-style layouts.
 
 ## Settings
 
@@ -104,7 +104,7 @@ the keys *labelled* 1–9 on ANSI-style layouts.
 | Switch between | Applications or individual windows. | Applications |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
 | Skip minimized windows | Window mode only: leave minimized windows out of the list rather than showing them dimmed. | Off |
-| Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9** switch too; Escape backs out). Unconditional: Tab-cycling with ⌘ held used to opt back into switching on release, which meant the ordinary ⌘-Tab-Tab gesture closed the panel the moment ⌘ came up. A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
+| Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). Unconditional: Tab-cycling with ⌘ held used to opt back into switching on release, which meant the ordinary ⌘-Tab-Tab gesture closed the panel the moment ⌘ came up. A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
 | Switcher shortcuts | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
 | Start at login | Registers the app as a login item via `SMAppService`. | Off |
 

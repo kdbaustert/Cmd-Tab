@@ -152,8 +152,10 @@ struct SwitcherView: View {
                     corner: model.tileCorner,
                     titleFont: model.titleFont(size: model.titleFontSize),
                     // The ⌘-number jump is disabled while filtering (digits type into the query),
-                    // so the badges come off too.
-                    number: model.showNumbers && model.query.isEmpty && index < 9 ? index + 1 : nil,
+                    // so the badges come off too. The tenth tile is labelled 0, because 0 is the key
+                    // that selects it — there is no ⌘-10 to press.
+                    number: model.showNumbers && model.query.isEmpty && index < 10
+                        ? (index + 1) % 10 : nil,
                     showsBadges: model.showBadges)
                     .background(
                         GeometryReader { geo in
@@ -226,7 +228,8 @@ private struct TargetTile: View {
     let corner: CGFloat
     /// Resolved by the model, so the family fallback happens in one place rather than per tile.
     let titleFont: Font
-    /// 1–9, or nil past the ninth tile, which has no key to jump to it.
+    /// The digit that jumps here — 1–9, then 0 for the tenth tile — or nil past the tenth, which has
+    /// no key to jump to it.
     let number: Int?
     /// Whether the display and Space badges may be drawn at all.
     let showsBadges: Bool

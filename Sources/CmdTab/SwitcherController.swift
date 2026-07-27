@@ -12,14 +12,15 @@ private enum Key {
     static let upArrow = 126
     static let enter = 36
 
-    /// Keycodes for 1–9 on the number row and again on the keypad. The number row is not
-    /// sequential — 5, 6, 7, 8 and 9 are 23, 22, 26, 28, 25 — so this has to be a table.
+    /// Keycodes for 1–9 and 0 on the number row and again on the keypad, mapped to the tile position
+    /// each one selects. The number row is not sequential — 5, 6, 7, 8 and 9 are 23, 22, 26, 28, 25 —
+    /// so this has to be a table. 0 sits past 9 on the keyboard, so it takes the tenth tile.
     ///
-    /// These are physical key positions, which is right for the keys labelled 1–9 on ANSI-style
+    /// These are physical key positions, which is right for the keys labelled 0–9 on ANSI-style
     /// layouts. A layout that puts digits behind Shift (AZERTY) would still match by position.
     static let digits: [Int: Int] = [
-        18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9,
-        83: 1, 84: 2, 85: 3, 86: 4, 87: 5, 88: 6, 89: 7, 91: 8, 92: 9,
+        18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9, 29: 10,
+        83: 1, 84: 2, 85: 3, 86: 4, 87: 5, 88: 6, 89: 7, 91: 8, 92: 9, 82: 10,
     ]
 }
 
