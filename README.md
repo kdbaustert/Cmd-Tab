@@ -80,6 +80,19 @@ is used rather than a global mouse-moved monitor because such a monitor only see
 With **Preview windows on hover** enabled, pausing over an app tile also floats live thumbnails of
 that app's windows beside it — see [Appearance](#appearance).
 
+**Right-clicking a tile** opens a menu of the closing actions on it — *Quit*, *Force Quit*, *Close
+Window*, *Minimize Window*, *Hide* — each labelled with the keyboard binding that does the same, so
+none of them needs the ⌥ chords. The items run the same handlers those bindings do; the panel stays
+up afterwards with the app dropped from the list, exactly as ⌘-⌥-Q leaves it. A not-running
+favourite has no menu — there is no process to quit.
+
+While the menu is up the switcher hands the keyboard back to it (its own arrows, Return, type-select
+and Escape could not reach it otherwise) and stops following the cursor, so travelling down the menu
+cannot drag the selection across the tiles underneath and act on the wrong app. Releasing the trigger
+behind an open menu cannot sensibly mean "switch now" either, so the session is promoted to a
+stay-open one for as long as the menu tracks and keeps that shape once it closes — bounded by the
+same 20 s idle / 60 s ceiling / click-outside guards **Stay open** uses.
+
 The first nine tiles carry their number in the bottom-right corner. The number switches
 immediately rather than moving the highlight — waiting for ⌘ to come up would make it slower than
 the arrow keys. A digit past the end of the list does nothing, but is still swallowed: letting it
