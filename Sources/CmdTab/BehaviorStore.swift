@@ -90,6 +90,56 @@ enum PanelPosition: String, CaseIterable {
     }
 }
 
+/// Which glyph the menu-bar item shows. Every case maps to a template PNG set that ships loose in
+/// the bundle Resources (`<name>.png` plus `@2x`/`@3x`), so AppKit picks the scale for the display
+/// and tints the artwork for a light or dark menu bar.
+///
+/// The artwork is a 22pt canvas rather than the conventional 18pt, and each glyph was trimmed of
+/// the padding its own artboard carried and rescaled to fill 95% of that canvas on its longest
+/// side. Both steps matter: the source art padded each glyph differently, so shipping it as drawn
+/// left the ⌘ around 12pt while the keycap sat near 18, and they read as inconsistent as well as
+/// undersized next to the system's own menu-bar items. `NSImage.size` follows the @1x pixel size,
+/// so the canvas is what sets the on-screen height — there is no separate scale to set at the
+/// status item, and 22pt is the ceiling before the menu bar clips.
+///
+/// The raw values are persisted, so renaming a case drops that user back to the default.
+enum MenuBarIcon: String, CaseIterable {
+    case command
+    case switcher
+    case windows
+    case keycap
+    case commandTab
+
+    var title: String {
+        switch self {
+        case .command: return "Command"
+        case .switcher: return "Switcher"
+        case .windows: return "Windows"
+        case .keycap: return "Keycap"
+        case .commandTab: return "Command-Tab"
+        }
+    }
+
+    var imageName: String {
+        switch self {
+        case .command: return "menuCommandTemplate"
+        case .switcher: return "menuSwitcherTemplate"
+        case .windows: return "menuWindowsTemplate"
+        case .keycap: return "menuKeycapTemplate"
+        case .commandTab: return "menuCommandTabTemplate"
+        }
+    }
+
+    /// The artwork, ready for either a status item or a menu of choices. Marked as a template here
+    /// rather than at each call site — every one of these is a template, and an unflagged one would
+    /// render as flat black on a dark menu bar.
+    var image: NSImage? {
+        let image = NSImage(named: imageName)
+        image?.isTemplate = true
+        return image
+    }
+}
+
 /// The key combination that opens the switcher. `modifierRaw` is the raw value of the
 /// device-independent `CGEventFlags` that must be held (Command, Option, …).
 struct Hotkey: Equatable {
@@ -166,6 +216,7 @@ extension PanelAppearance: Defaults.Serializable {}
 extension PanelMaterial: Defaults.Serializable {}
 extension PanelPosition: Defaults.Serializable {}
 extension PanelScreens: Defaults.Serializable {}
+extension MenuBarIcon: Defaults.Serializable {}
 
 /// Typed keys for everything `BehaviorStore` persists.
 ///
@@ -213,6 +264,9 @@ extension Defaults.Keys {
     static let titleFontName = Key<String>("titleFontName", default: "")
     static let fade = Key<Bool>("fadeAnimation", default: false)
     static let showMenuBarIcon = Key<Bool>("showMenuBarIcon", default: true)
+    /// `.command` is the plain ⌘ glyph, which is what the menu bar showed before this was
+    /// selectable — so an existing install sees no change until it picks something else.
+    static let menuBarIcon = Key<MenuBarIcon>("menuBarIcon", default: .command)
     static let windowPreview = Key<Bool>("windowPreviewOnHover", default: false)
 }
 
@@ -238,7 +292,7 @@ final class BehaviorStore: ObservableObject {
         .blurOverride, .blurRadius,
         .showNumbers, .showBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
-        .fade, .showMenuBarIcon, .windowPreview,
+        .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview,
     ]
 
     /// Keys belonging to the *other* stores, which export/import/reset also cover. Listed by name
@@ -344,6 +398,11 @@ final class BehaviorStore: ObservableObject {
     @Published var showMenuBarIcon: Bool = Defaults[.showMenuBarIcon] {
         didSet { persist(showMenuBarIcon, oldValue, to: .showMenuBarIcon) }
     }
+    /// Which glyph that item shows. Kept independent of `showMenuBarIcon` so hiding the item and
+    /// bringing it back does not lose the choice.
+    @Published var menuBarIcon: MenuBarIcon = Defaults[.menuBarIcon] {
+        didSet { persist(menuBarIcon, oldValue, to: .menuBarIcon) }
+    }
     /// Hovering a tile shows live thumbnails of that app's windows. Needs Screen Recording.
     @Published var windowPreview: Bool = Defaults[.windowPreview] {
         didSet { persist(windowPreview, oldValue, to: .windowPreview) }
@@ -393,6 +452,7 @@ final class BehaviorStore: ObservableObject {
         titleFontName = Defaults[.titleFontName]
         fade = Defaults[.fade]
         showMenuBarIcon = Defaults[.showMenuBarIcon]
+        menuBarIcon = Defaults[.menuBarIcon]
         windowPreview = Defaults[.windowPreview]
     }
 

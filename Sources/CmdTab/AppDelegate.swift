@@ -143,11 +143,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let item = statusItem
             ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // Template PNGs (cmdtabTemplate.png + @2x/@3x) ship loose in the bundle Resources; AppKit
-        // resolves the scale variants by name. Marked as a template so it tints for light/dark menu bars.
-        let icon = NSImage(named: "cmdtabTemplate")
-        icon?.isTemplate = true
-        item.button?.image = icon
+        // Template PNGs ship loose in the bundle Resources; AppKit resolves the scale variants by
+        // name. `MenuBarIcon.image` flags them as templates so they tint for light/dark menu bars.
+        item.button?.image = behavior.menuBarIcon.image
         // Optionally spell out the current mode next to the icon.
         item.button?.title = ""
         item.button?.imagePosition = .imageOnly

@@ -16,8 +16,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/CmdTab"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 # App icon (CFBundleIconFile=AppIcon) and the menu-bar template PNGs, looked up by NSImage(named:).
+# One template set per MenuBarIcon case — all of them ship, since the choice is made at runtime.
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp Resources/cmdtabTemplate.png Resources/cmdtabTemplate@2x.png Resources/cmdtabTemplate@3x.png "$APP/Contents/Resources/"
+# Flattened out of Resources/MenuBar: NSImage(named:) only searches the top level of the bundle's
+# resource directory, so the subfolder is a repo-tidiness measure that must not survive the copy.
+cp Resources/MenuBar/*.png "$APP/Contents/Resources/"
 
 # Sign with a stable self-signed identity when one is present. macOS keys Accessibility to the
 # app's designated requirement; signed with the same certificate every time, that requirement

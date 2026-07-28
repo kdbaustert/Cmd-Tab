@@ -49,6 +49,23 @@ struct GeneralSettings: View {
                             get: { loginItem.startAtLogin },
                             set: { loginItem.setStartAtLogin($0) }))
                         .toggleStyle(.checkbox)
+
+                    // Shows the artwork rather than only its name — the names are labels of
+                    // convenience, and which glyph you want is a thing you decide by looking at it.
+                    field("Menu-bar icon", help: "Which glyph the menu-bar item shows.") {
+                        Picker("", selection: $behavior.menuBarIcon) {
+                            ForEach(MenuBarIcon.allCases, id: \.self) { icon in
+                                HStack(spacing: 6) {
+                                    icon.image.map { Image(nsImage: $0) }
+                                    Text(icon.title)
+                                }
+                                .tag(icon)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 160)
+                        .disabled(!behavior.showMenuBarIcon)
+                    }
                 }
                 // Breathing room around the group and its rule. Checkboxes sit tight against their
                 // own text box, so without this they read as crowded into the window's top edge and
