@@ -141,6 +141,7 @@ struct SwitcherView: View {
             spacing: Metrics.tileGap
         ) {
             ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
+                let isMatch = model.matchingIndices.isEmpty || model.matchingIndices.contains(index)
                 TargetTile(
                     target: target,
                     size: tile,
@@ -148,6 +149,7 @@ struct SwitcherView: View {
                     titleSpacing: metrics.titleSpacing,
                     showsTitle: model.showsTitle,
                     isSelected: index == model.selection,
+                    isMatch: isMatch,
                     highlightColor: model.highlightColor,
                     corner: model.tileCorner,
                     titleFont: model.titleFont(size: model.titleFontSize),
@@ -224,6 +226,8 @@ private struct TargetTile: View {
     let titleSpacing: CGFloat
     let showsTitle: Bool
     let isSelected: Bool
+    /// Whether this tile matches the current search query (true when no query active).
+    let isMatch: Bool
     let highlightColor: Color
     let corner: CGFloat
     /// Resolved by the model, so the family fallback happens in one place rather than per tile.
@@ -247,6 +251,7 @@ private struct TargetTile: View {
             }
         }
         .frame(width: size.width, height: size.height)
+        .opacity(isMatch ? 1 : 0.3)
         .background {
             // The tint alone cannot carry the selection: `highlightColor` is a fixed sRGB value —
             // the user's, or the default — while the panel behind it is light or dark depending on

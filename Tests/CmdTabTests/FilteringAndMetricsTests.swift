@@ -66,19 +66,22 @@ final class FilteringAndMetricsTests: XCTestCase {
         let model = SwitcherModel()
         model.begin(sample)
         model.selection = 2
+        // "o" matches Xcode (index 1) and Google Chrome (index 2)
         model.setQuery("o")
-        XCTAssertEqual(model.selection, 0)
+        XCTAssertEqual(model.selection, 1)  // first matching index
     }
 
-    /// A query matching nothing must not leave the panel claiming it has a selection — `selected`
-    /// backs the caption and the window actions.
-    func testSelectedIsNilWhenQueryMatchesNothing() {
+    /// A query matching nothing keeps all tiles visible but matchingIndices is empty.
+    func testQueryMatchingNothingKeepsTilesVisible() {
         let model = SwitcherModel()
         model.begin(sample)
         model.setQuery("zzz")
-        XCTAssertTrue(model.isEmpty)
-        XCTAssertNil(model.selected)
-        // The full list still has entries, which is what keeps the panel up to be backspaced.
+        // All tiles remain visible
+        XCTAssertFalse(model.isEmpty)
+        XCTAssertEqual(model.targets.count, 3)
+        // But none match
+        XCTAssertTrue(model.matchingIndices.isEmpty)
+        // The full list still has entries
         XCTAssertTrue(model.hasAnyTarget)
     }
 

@@ -19,12 +19,13 @@ enum TitleFont {
 
 @MainActor
 final class SwitcherModel: ObservableObject {
-    /// The visible list — `allTargets` narrowed by `query`. Everything downstream (tiles, hover,
-    /// jump, columns) works off this, so filtering "just works" once the query is applied here.
+    /// All targets to display. Filtering dims non-matches but keeps them visible.
     @Published private(set) var targets: [SwitchTarget] = []
     @Published var selection: Int = 0
     /// The live type-to-filter query. Empty means "show everything".
     @Published private(set) var query: String = ""
+    /// Indices into `targets` that match the current query. Empty when no query.
+    @Published private(set) var matchingIndices: Set<Int> = []
     @Published var mode: SwitcherMode = .apps
     /// Every panel dimension; see `Metrics`.
     @Published var metrics: Metrics = .default
@@ -66,7 +67,18 @@ final class SwitcherModel: ObservableObject {
 
     func step(_ delta: Int) {
         guard !targets.isEmpty else { return }
-        selection = (selection + delta + targets.count) % targets.count
+        // When filtering, only step through matching indices
+        if matchingIndices.isEmpty {
+            selection = (selection + delta + targets.count) % targets.count
+        } else {
+            let sorted = matchingIndices.sorted()
+            if let current = sorted.firstIndex(of: selection) {
+                let next = (current + delta + sorted.count) % sorted.count
+                selection = sorted[next]
+            } else {
+                selection = sorted.first ?? 0
+            }
+        }
     }
 
     /// Starts a fresh session: replaces the whole list and clears any previous query. The caller
@@ -75,6 +87,7 @@ final class SwitcherModel: ObservableObject {
         query = ""
         allTargets = new
         targets = new
+        matchingIndices = []
     }
 
     /// Keeps the highlight on the same target across a background refresh, so the tile the user
@@ -84,12 +97,17 @@ final class SwitcherModel: ObservableObject {
         reapply(anchor: selected?.id)
     }
 
-    /// Sets the filter query, reslices the list, and highlights the top match — like a search field,
-    /// where each keystroke re-ranks from the top rather than clinging to the previous selection.
+    /// Sets the filter query and highlights the first match. All tiles remain visible; selection
+    /// cycles only through matches.
     func setQuery(_ new: String) {
         query = new
-        targets = Self.filtered(allTargets, query: query)
-        selection = 0
+        // Keep all targets visible, track which indices match
+        targets = allTargets
+        matchingIndices = Self.matchingIndices(allTargets, query: query)
+        // Jump to first match, or stay put if none
+        if let first = matchingIndices.min() {
+            selection = first
+        }
     }
 
     /// Drops matching targets from the *full* list (not just the filtered view), so removing the
@@ -101,9 +119,13 @@ final class SwitcherModel: ObservableObject {
     }
 
     private func reapply(anchor: String?) {
-        targets = Self.filtered(allTargets, query: query)
-        if let anchor, let index = targets.firstIndex(where: { $0.id == anchor }) {
+        targets = allTargets
+        matchingIndices = Self.matchingIndices(allTargets, query: query)
+        if let anchor, let index = targets.firstIndex(where: { $0.id == anchor }),
+           (matchingIndices.isEmpty || matchingIndices.contains(index)) {
             selection = index
+        } else if let first = matchingIndices.min() {
+            selection = first
         } else {
             selection = targets.isEmpty ? 0 : min(selection, targets.count - 1)
         }
@@ -118,5 +140,16 @@ final class SwitcherModel: ObservableObject {
             let hay = (target.title + " " + target.appName).lowercased()
             return words.allSatisfy(hay.contains)
         }
+    }
+
+    /// Returns indices of targets matching the query.
+    static func matchingIndices(_ list: [SwitchTarget], query: String) -> Set<Int> {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return [] }
+        return Set(list.indices.filter { index in
+            let target = list[index]
+            let hay = (target.title + " " + target.appName).lowercased()
+            return words.allSatisfy(hay.contains)
+        })
     }
 }
