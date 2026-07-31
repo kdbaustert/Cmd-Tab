@@ -385,14 +385,19 @@ final class SwitcherController {
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
-        // Use hardware state rather than event.flags — on macOS 26, event.flags can return
+        // Mask event.flags to device-independent bits only — on macOS 26, event.flags can include
         // device-dependent bits that don't match the device-independent masks we check against.
-        let flags = CGEventSource.flagsState(.combinedSessionState)
+        // Polling CGEventSource.flagsState avoids those bits but races: the modifier state can
+        // change between event creation and handler execution, causing stale reads.
+        let flags = event.flags.intersection([
+            .maskAlphaShift, .maskShift, .maskControl, .maskAlternate, .maskCommand,
+            .maskHelp, .maskSecondaryFn, .maskNumericPad, .maskNonCoalesced,
+        ])
 
         // Modifier events are never swallowed — other apps need to track modifier state, and this
         // is also the escape hatch that guarantees the panel can always be dismissed.
         if type == .flagsChanged {
-            Log.tap.notice("flagsChanged: flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) stillHeld=\(self.stillHeld(flags, self.activeHeld), privacy: .public)")
+            Log.tap.debug("flagsChanged: flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) stillHeld=\(self.stillHeld(flags, self.activeHeld), privacy: .public)")
             // A sticky session is defined by *not* ending here — releasing the modifier is how the
             // user gets their hands back, not how they commit.
             if !staysOpenOnRelease, (isVisible || armed || pendingSameApp), !stillHeld(flags, activeHeld) {
@@ -405,7 +410,7 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            Log.tap.notice("visible: code=\(code, privacy: .public) flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) commit=\(self.release.shouldCommit(flags: flags), privacy: .public)")
+            Log.tap.debug("visible: code=\(code, privacy: .public) flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) commit=\(self.release.shouldCommit(flags: flags), privacy: .public)")
             if release.shouldCommit(flags: flags) {
                 commit()
                 return false
