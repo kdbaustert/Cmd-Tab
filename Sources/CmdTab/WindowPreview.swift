@@ -17,6 +17,8 @@ struct WindowThumb: Identifiable {
     let title: String
     /// The owning app's pid, so a clicked thumbnail can be raised and activated.
     let pid: pid_t
+    /// Whether this window is currently minimized to the Dock.
+    let isMinimized: Bool
 }
 
 /// Captures thumbnails of an app's windows through ScreenCaptureKit. This is the only place in the
@@ -49,60 +51,70 @@ actor WindowCapture {
         guard !Task.isCancelled else { return [] }
         guard Permissions.canCaptureScreen else { return [] }
         guard let content = await shareableContent() else { return [] }
-        // `shareableContent()` suspends on a system-wide enumeration; a hover that moved on while it
-        // was in flight should not go on to spend a dozen GPU captures on a tile nobody is over.
         guard !Task.isCancelled else { return [] }
 
-        // Standard-layer windows of this app, across every Space. `onScreenWindowsOnly: false` is
-        // deliberate — a window on another Space still captures its real backing surface, so limiting
-        // to the current Space would silently drop every window of an app the user isn't looking at.
-        let appWindows = content.windows.filter {
+        // Get full window info from AX - this is the authoritative list of windows.
+        let windowInfo = await switchableWindowInfo(for: pid)
+        guard !Task.isCancelled else { return [] }
+        guard !windowInfo.isEmpty else { return [] }
+
+        // Build SC window lookup by ID for capture.
+        let scWindows = content.windows.filter {
             $0.owningApplication?.processID == pid && $0.windowLayer == 0
         }
+        let scWindowByID = Dictionary(
+            scWindows.compactMap { w -> (CGWindowID, SCWindow)? in (w.windowID, w) },
+            uniquingKeysWith: { a, _ in a })
 
-        // Prefer the switcher's own window set and order (via Accessibility), which matches window
-        // mode. Fall back to a size filter when the ids can't be resolved or don't line up with the
-        // captured windows. Either way, a blank capture is dropped below — that is what removes the
-        // Electron/Catalyst phantom backing windows those apps expose (a hidden, transparent window).
-        let order = await switchableIDs(for: pid)
-        // `switchableIDs` can itself sit through the full AX timeout against a beach-balling app
-        // (see its doc comment); worth re-checking before committing to a round of captures.
-        guard !Task.isCancelled else { return [] }
-        let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
-        var windows = appWindows.filter { rank[$0.windowID] != nil }
-        if windows.isEmpty {
-            windows = appWindows.filter { $0.frame.width > 40 && $0.frame.height > 40 }
-        } else {
-            windows.sort { (rank[$0.windowID] ?? .max) < (rank[$1.windowID] ?? .max) }
+        // Get the app icon for windows we can't capture.
+        let appIcon = await MainActor.run {
+            NSRunningApplication(processIdentifier: pid)?.icon
         }
-        let selected = Array(windows.prefix(maxCount))
 
-        // Each capture is an independent GPU round-trip; run them concurrently, then restore order.
-        // In batches rather than all at once — see `maxConcurrentCaptures`.
-        var captured: [(Int, WindowThumb)] = []
+        // Process each AX window, attempting capture for each.
+        let selected = Array(windowInfo.prefix(maxCount))
+        var results: [(Int, WindowThumb)] = []
+
         for start in stride(from: 0, to: selected.count, by: maxConcurrentCaptures) {
-            // The hover may have moved on between batches; stop rather than paying for the rest.
             guard !Task.isCancelled else { break }
             let batch = Array(selected[start..<min(start + maxConcurrentCaptures, selected.count)])
             let batchStart = start
-            captured += await withTaskGroup(of: (Int, WindowThumb?).self) { group in
-                for (offset, window) in batch.enumerated() {
+
+            results += await withTaskGroup(of: (Int, WindowThumb?).self) { group in
+                for (offset, info) in batch.enumerated() {
                     let index = batchStart + offset
+                    let scWindow = scWindowByID[info.id]
+                    let fallbackIcon = appIcon
+
                     group.addTask {
-                        // Child tasks inherit cancellation from this method's `Task`; a capture still
-                        // queued when the hover moves on should never start.
                         guard !Task.isCancelled else { return (index, nil) }
-                        guard let image = try? await Self.capture(window, maxHeight: maxHeight),
-                            !Self.isBlank(image)
-                        else { return (index, nil) }
-                        let size = NSSize(width: image.width, height: image.height)
+
+                        // Try to capture the window if we have it in SCShareableContent.
+                        if !info.isMinimized, let scWindow {
+                            if let image = try? await Self.capture(scWindow, maxHeight: maxHeight),
+                               !Self.isBlank(image) {
+                                let size = NSSize(width: image.width, height: image.height)
+                                return (
+                                    index,
+                                    WindowThumb(
+                                        id: info.id,
+                                        image: NSImage(cgImage: image, size: size),
+                                        title: info.title, pid: pid, isMinimized: false))
+                            }
+                        }
+
+                        // Fallback to app icon for minimized or uncapturable windows.
+                        let icon = fallbackIcon
+                            ?? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil)
+                            ?? NSImage()
                         return (
                             index,
                             WindowThumb(
-                                id: window.windowID, image: NSImage(cgImage: image, size: size),
-                                title: window.title ?? "", pid: pid))
+                                id: info.id, image: icon, title: info.title, pid: pid,
+                                isMinimized: info.isMinimized))
                     }
                 }
+
                 var out: [(Int, WindowThumb)] = []
                 for await result in group where result.1 != nil {
                     out.append((result.0, result.1!))
@@ -110,7 +122,8 @@ actor WindowCapture {
                 return out
             }
         }
-        return captured.sorted { $0.0 < $1.0 }.map { $0.1 }
+
+        return results.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
 
     /// Drops the short-lived caches, called when a session ends.
@@ -141,6 +154,13 @@ actor WindowCapture {
         return content
     }
 
+    /// Info about a switchable window from Accessibility.
+    private struct WindowInfo {
+        let id: CGWindowID
+        let title: String
+        let isMinimized: Bool
+    }
+
     /// The app's switchable window ids (ordered), cached for `ttl` to spare the Accessibility
     /// round-trips when the same app tile is revisited.
     ///
@@ -158,6 +178,23 @@ actor WindowCapture {
         let ids = await Task.detached { TargetProvider.switchableWindowIDs(for: pid) }.value
         idCache[pid] = (ids, Date())
         return ids
+    }
+
+    /// Returns info about all switchable windows including minimized ones.
+    private func switchableWindowInfo(for pid: pid_t) async -> [WindowInfo] {
+        await Task.detached {
+            let app = AX.application(pid)
+            return AX.windows(of: app).compactMap { window -> WindowInfo? in
+                guard AX.isSwitchableWindow(window) else { return nil }
+                // Try the private API first, fall back to frame matching for Electron/Catalyst apps.
+                let id = TargetProvider.windowID(window)
+                    ?? TargetProvider.windowID(matching: window, pid: pid)
+                guard let id else { return nil }
+                let title = AX.copyString(window, kAXTitleAttribute) ?? ""
+                let minimized = AX.isMinimized(window)
+                return WindowInfo(id: id, title: title, isMinimized: minimized)
+            }
+        }.value
     }
 
     /// True when a capture is essentially empty — nearly every pixel transparent. Downsamples to a
@@ -278,16 +315,40 @@ private struct WindowPreviewView: View {
     private func thumbnail(_ thumb: WindowThumb, index: Int) -> some View {
         let isSelected = model.selection == index
         VStack(spacing: 4) {
-            Image(nsImage: thumb.image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: 220, maxHeight: 150)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(
-                            isSelected ? Color.accentColor : Color.primary.opacity(0.15),
-                            lineWidth: isSelected ? 3 : 1))
+            ZStack(alignment: .bottomTrailing) {
+                if thumb.isMinimized {
+                    // Minimized windows show the app icon in a styled container.
+                    Image(nsImage: thumb.image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 64, height: 64)
+                        .padding(20)
+                        .background(Color.primary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(
+                                    isSelected ? Color.accentColor : Color.primary.opacity(0.15),
+                                    lineWidth: isSelected ? 3 : 1))
+                } else {
+                    Image(nsImage: thumb.image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 220, maxHeight: 150)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(
+                                    isSelected ? Color.accentColor : Color.primary.opacity(0.15),
+                                    lineWidth: isSelected ? 3 : 1))
+                }
+                if thumb.isMinimized {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white, .orange)
+                        .padding(4)
+                }
+            }
             if !thumb.title.isEmpty {
                 Text(thumb.title)
                     .font(.system(size: 10))
