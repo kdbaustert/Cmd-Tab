@@ -95,7 +95,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.panelBlur = behavior.blurOverride ? behavior.blurRadius : nil
         controller.maxColumns = behavior.maxColumns
         controller.showDelay = behavior.showDelay / 1000
-        controller.windowPreview = behavior.windowPreview
         controller.hotkey = behavior.hotkey
         controller.sameAppHotkey = behavior.sameAppCycle ? behavior.sameAppHotkey : nil
         controller.stickyMode = behavior.stickyMode

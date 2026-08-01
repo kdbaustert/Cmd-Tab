@@ -1,15 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// What the cursor (or keyboard selection) points at, for the hover window preview.
-enum PreviewHoverTarget: Equatable {
-    /// An app tile — the app's pid and the tile's screen rect.
-    case tile(pid: pid_t, rect: NSRect)
-    /// The floating preview panel itself — keep it up so a thumbnail can be reached and clicked.
-    case overPreview
-    /// Neither — tear the preview down (the controller adds a short grace delay so the cursor can
-    /// cross the gap from a tile to the preview without it vanishing mid-move).
-    case away
+extension NSScreen {
+    /// The screen under the cursor, falling back to the main screen then the first attached one.
+    static var underCursor: NSScreen {
+        let mouse = NSEvent.mouseLocation
+        return screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? main ?? screens[0]
+    }
 }
 
 /// The overlay window. It is deliberately non-activating: the panel must appear without our

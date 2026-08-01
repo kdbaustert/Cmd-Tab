@@ -267,7 +267,6 @@ extension Defaults.Keys {
     /// `.command` is the plain ⌘ glyph, which is what the menu bar showed before this was
     /// selectable — so an existing install sees no change until it picks something else.
     static let menuBarIcon = Key<MenuBarIcon>("menuBarIcon", default: .command)
-    static let windowPreview = Key<Bool>("windowPreviewOnHover", default: false)
 }
 
 /// Everything the user can tune that is not one of the appearance sliders. One store, backed by the
@@ -292,7 +291,7 @@ final class BehaviorStore: ObservableObject {
         .blurOverride, .blurRadius,
         .showNumbers, .showBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
-        .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview,
+        .fade, .showMenuBarIcon, .menuBarIcon,
     ]
 
     /// Keys belonging to the *other* stores, which export/import/reset also cover. Listed by name
@@ -403,10 +402,6 @@ final class BehaviorStore: ObservableObject {
     @Published var menuBarIcon: MenuBarIcon = Defaults[.menuBarIcon] {
         didSet { persist(menuBarIcon, oldValue, to: .menuBarIcon) }
     }
-    /// Hovering a tile shows live thumbnails of that app's windows. Needs Screen Recording.
-    @Published var windowPreview: Bool = Defaults[.windowPreview] {
-        didSet { persist(windowPreview, oldValue, to: .windowPreview) }
-    }
 
     /// The built-in highlight tint. The hex lives in `BehaviorDefault` — see there for why — and
     /// these are the names the rest of the app already uses for it.
@@ -453,7 +448,6 @@ final class BehaviorStore: ObservableObject {
         fade = Defaults[.fade]
         showMenuBarIcon = Defaults[.showMenuBarIcon]
         menuBarIcon = Defaults[.menuBarIcon]
-        windowPreview = Defaults[.windowPreview]
     }
 
     /// A hotkey lives in two keys — the key code and the modifier mask. An absent *code* is the

@@ -145,16 +145,6 @@ struct AppearanceSettings: View {
                                 "Which display and Desktop a window is on, shown on window tiles in "
                                     + "the same-app cycle. Only ever appear when you have more than "
                                     + "one of either.")
-                        Toggle("Preview windows on hover", isOn: $behavior.windowPreview)
-                            .toggleStyle(.checkbox)
-                            .help(
-                                "App mode: hover a tile to float live thumbnails of that app's "
-                                    + "windows. Needs Screen Recording permission.")
-                            .onChange(of: behavior.windowPreview) {
-                                if behavior.windowPreview {
-                                    Permissions.ensureScreenCaptureForPreview()
-                                }
-                            }
                         Toggle("Fade in and out", isOn: $behavior.fade)
                             .toggleStyle(.checkbox)
                     }

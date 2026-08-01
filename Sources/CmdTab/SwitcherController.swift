@@ -40,9 +40,6 @@ final class SwitcherController {
     private let model = SwitcherModel()
     private let provider = TargetProvider()
     private lazy var panels = PanelGroup(model: model)
-    private lazy var preview = PreviewCoordinator(switcher: panels) { [weak self] in
-        self?.isVisible ?? false
-    }
     private var tap: EventTap?
     private var isVisible = false
     /// Second source of truth for "is the trigger still down". See `startWatchdog`.
@@ -255,12 +252,6 @@ final class SwitcherController {
     /// straight to the previous target with no panel flash. 0 keeps the panel instant.
     var showDelay: TimeInterval = 0
 
-    /// App mode: float live window thumbnails when a tile is hovered.
-    var windowPreview: Bool {
-        get { panels.windowPreviewEnabled }
-        set { panels.windowPreviewEnabled = newValue }
-    }
-
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
     /// themselves.
@@ -322,16 +313,6 @@ final class SwitcherController {
             // not use, and dismissed a panel the user was actively browsing with the mouse.
             self.resetStickyIdle()
             self.advance(step)
-        }
-        panels.onPreviewHover = { [weak self] target in
-            // Deduped upstream to target *changes*, so this is a real navigation, not a mouse twitch.
-            self?.resetStickyIdle()
-            self?.preview.hover(target)
-        }
-        panels.isOverPreview = { [weak self] point in self?.preview.isShowing(point) ?? false }
-        preview.onPick = { [weak self] thumb in
-            SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
-            self?.cancel()
         }
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
         // hotkey leaves the native switcher alone.
@@ -447,15 +428,11 @@ final class SwitcherController {
         return false
     }
 
-    /// Moves the highlight and keeps the keyboard-selected preview in step with it.
+    /// Moves the highlight.
     private func advance(_ delta: Int) {
-        // Moving the highlight abandons any drill, in flight or engaged. Without this a capture
-        // started for the tile you *were* on lands afterwards, adopts the strip, and Return commits
-        // a window of an app you already arrowed past.
-        preview.endSteering()
         model.step(delta)
         // Off the tap callback — see `scheduleLayout`.
-        scheduleLayout(previewSelected: true)
+        scheduleLayout()
     }
 
     private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
@@ -481,27 +458,10 @@ final class SwitcherController {
                 commit()
                 return true
             }
-            // Moving to another app abandons any drill-down: the strip belongs to the app you left.
-            preview.endSteering()
             advance(flags.contains(.maskShift) ? -1 : 1)
             return true
         }
 
-        // While the window strip is steered, the arrows and Return drive it instead of the tiles.
-        // Escape deliberately falls through to the unconditional cancel below: it is the failsafe
-        // out of a state that swallows every key on the machine, so it must never be repurposed
-        // into "leave this sub-mode". ↑ is the way back to the tiles.
-        if preview.isSteering {
-            switch code {
-            case Key.escape: break
-            case Key.leftArrow: preview.moveSteering(-1); return true
-            case Key.rightArrow, Key.downArrow: preview.moveSteering(1); return true
-            case Key.upArrow: preview.endSteering(); return true
-            case Key.enter: commit(); return true
-            // ⌘ is held, so anything else would fire a shortcut in the app behind us.
-            default: return true
-            }
-        }
         // Configurable window actions. Each is bound to a key plus *extra* modifiers on top of the
         // held trigger; ⌥/⌃ keep the action keys clear of the type-to-filter query. Subtract the
         // trigger's own modifiers so a trigger that itself uses ⌥/⌃ (e.g. ⌘⌥-Tab) doesn't make every
@@ -535,7 +495,6 @@ final class SwitcherController {
             return true
         case Key.rightArrow: advance(1); return true
         case Key.leftArrow: advance(-1); return true
-        case Key.downArrow: enterDrill(); return true
         case Key.enter: commit(); return true
         case Key.delete:
             if !model.query.isEmpty { setQuery(String(model.query.dropLast())) }
@@ -567,10 +526,6 @@ final class SwitcherController {
 
     /// Set while a relayout is already queued for the next main-loop turn.
     private var layoutQueued = false
-    /// Whether the queued relayout should re-point the preview at the *selected* tile rather than
-    /// re-resolving it against the cursor. Sticky across coalesced requests: if any caller in the
-    /// batch was a keyboard move, the batch is a keyboard move.
-    private var layoutWantsSelectedPreview = false
 
     /// Relayout on the next main-loop turn instead of inline, and at most once per turn.
     ///
@@ -585,22 +540,14 @@ final class SwitcherController {
     /// the load: a burst of key events (auto-repeat on the trigger, a fast typist filtering) posted
     /// one full layout each onto the very run loop the tap is serviced from. Collapsing the burst
     /// into one layout is what actually caps it.
-    private func scheduleLayout(previewSelected: Bool = false) {
-        if previewSelected { layoutWantsSelectedPreview = true }
+    private func scheduleLayout() {
         guard !layoutQueued else { return }
         layoutQueued = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.layoutQueued = false
-            let wantsSelected = self.layoutWantsSelectedPreview
-            self.layoutWantsSelectedPreview = false
             guard self.isVisible else { return }
             self.panels.layout()
-            if wantsSelected {
-                self.panels.previewSelectedTile()
-            } else {
-                self.panels.refreshHoverPreview()
-            }
         }
     }
 
@@ -787,38 +734,16 @@ final class SwitcherController {
         stopWatchdog()
         stopStickyGuards()
         panels.hide()
-        preview.teardown()
-    }
-
-    /// ↓ hands the arrows to the selected app's window strip — the gesture people bring over from
-    /// the native ⌘-Tab, which expands an app's windows the same way.
-    ///
-    /// Requires app mode with previews on, because the strip *is* the feature: there is nothing to
-    /// steer without it. A launch tile has no windows either. Both cases no-op rather than entering
-    /// an empty mode.
-    private func enterDrill() {
-        guard model.mode == .apps, panels.windowPreviewEnabled,
-            let target = model.selected, !target.isLaunchable,
-            let rect = panels.selectedTileScreenRect
-        else { return }
-        preview.beginSteering(pid: target.pid, tileRect: rect)
     }
 
     private func commit() {
         guard isVisible else { return }
-        // A steered strip means the user picked a specific window, not the app. Read it before
-        // `hide()`, which tears the strip down and clears the selection.
-        let thumb = preview.selectedThumb
         let target = model.selected
         hide()
         // Off the tap callback — activating an app is an AX / NSWorkspace round-trip against a
         // process that may not answer promptly.
         DispatchQueue.main.async {
-            if let thumb {
-                SwitchTarget.focusWindow(id: thumb.id, pid: thumb.pid)
-            } else {
-                target?.focus()
-            }
+            target?.focus()
         }
     }
 
@@ -1030,7 +955,7 @@ final class SwitcherController {
     }
 
     /// Shared tail for the in-switcher actions: dismiss only when nothing is left at all (a query
-    /// matching nothing keeps the panel up), otherwise relayout and follow the cursor with the preview.
+    /// matching nothing keeps the panel up), otherwise relayout.
     private func finishListMutation() {
         if !model.hasAnyTarget {
             cancel()
@@ -1112,10 +1037,6 @@ final class SwitcherController {
     /// A tile was clicked: select and commit it in one go.
     private func pick(_ index: Int) {
         guard isVisible, model.targets.indices.contains(index) else { return }
-        // Clicking a tile is a statement about the *app*, so it has to drop any steered window
-        // selection first — `commit()` prefers a steered thumbnail, and would otherwise focus a
-        // window of the app the drill came from rather than the one just clicked.
-        preview.endSteering()
         model.selection = index
         commit()
     }
