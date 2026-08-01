@@ -364,7 +364,9 @@ private struct SpaceBadge: View {
 }
 
 /// Marks which display a window is on, shown only in window mode with more than one display.
-private struct DisplayBadge: View {
+/// Not private: the hover preview badges its thumbnails with the same marker, so "which display"
+/// looks the same on a tile and on a window thumbnail.
+struct DisplayBadge: View {
     let number: Int
 
     var body: some View {

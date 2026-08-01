@@ -140,20 +140,38 @@ extension SwitchTarget {
     /// falls back to just activating the app.
     static func focusWindow(id: CGWindowID, pid: pid_t) {
         focusQueue.async {
-            if let window = AX.windows(of: AX.application(pid))
-                .first(where: { TargetProvider.windowID($0) == id }) {
-                AXUIElementSetAttributeValue(
-                    window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
-                AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-                AXUIElementSetAttributeValue(
-                    window, kAXMainAttribute as CFString, true as CFTypeRef)
-            }
+            let raised = raise(window: id, pid: pid)
             DispatchQueue.main.async {
                 let app = NSRunningApplication(processIdentifier: pid)
                 if app?.isHidden == true { app?.unhide() }
                 app?.activate()
+                guard !raised else { return }
+                // The raise found no matching window. Apps that build their accessibility tree on
+                // demand — Chromium, Electron — report *no* windows at all until they are active,
+                // so the first attempt was against an empty list. Now that the app has been brought
+                // forward, its tree is live and the same lookup usually succeeds; without this
+                // retry, clicking any of their thumbnails would activate the app but leave whichever
+                // window was already in front, which is not the one that was clicked.
+                focusQueue.asyncAfter(deadline: .now() + 0.15) {
+                    _ = raise(window: id, pid: pid)
+                }
             }
         }
+    }
+
+    /// Unminimizes, raises and mains the window with `id`. False when the app's Accessibility list
+    /// has no such window, which is the caller's cue to try again once it is active.
+    @discardableResult
+    private static func raise(window id: CGWindowID, pid: pid_t) -> Bool {
+        guard id != 0,
+            let window = AX.windows(of: AX.application(pid))
+                .first(where: { TargetProvider.windowID($0) == id })
+        else { return false }
+        AXUIElementSetAttributeValue(
+            window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, true as CFTypeRef)
+        return true
     }
 
     func quitApp() {

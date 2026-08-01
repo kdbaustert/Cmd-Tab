@@ -40,6 +40,9 @@ final class SwitcherController {
     private let model = SwitcherModel()
     private let provider = TargetProvider()
     private lazy var panels = PanelGroup(model: model)
+    private lazy var preview = PreviewCoordinator(switcher: panels) { [weak self] in
+        self?.isVisible ?? false
+    }
     private var tap: EventTap?
     private var isVisible = false
     /// Second source of truth for "is the trigger still down". See `startWatchdog`.
@@ -252,6 +255,12 @@ final class SwitcherController {
     /// straight to the previous target with no panel flash. 0 keeps the panel instant.
     var showDelay: TimeInterval = 0
 
+    /// App mode: float live window thumbnails when a tile is hovered.
+    var windowPreview: Bool {
+        get { panels.windowPreviewEnabled }
+        set { panels.windowPreviewEnabled = newValue }
+    }
+
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
     /// themselves.
@@ -313,6 +322,24 @@ final class SwitcherController {
             // not use, and dismissed a panel the user was actively browsing with the mouse.
             self.resetStickyIdle()
             self.advance(step)
+        }
+        panels.onPreviewHover = { [weak self] target in
+            // Deduped upstream to target *changes*, so this is real navigation, not a mouse twitch.
+            self?.resetStickyIdle()
+            self?.preview.hover(target)
+        }
+        panels.isOverPreview = { [weak self] point in self?.preview.isShowing(point) ?? false }
+        preview.onPick = { [weak self] thumb in
+            guard let self, self.isVisible else { return }
+            Log.tap.notice(
+                "preview pick: window \(thumb.windowID, privacy: .public) of pid \(thumb.pid, privacy: .public)"
+            )
+            self.hide()
+            // Off the click, for the same reason `commit()` defers: raising a window is an AX
+            // round-trip against a process that may not answer promptly.
+            DispatchQueue.main.async {
+                SwitchTarget.focusWindow(id: thumb.windowID, pid: thumb.pid)
+            }
         }
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
         // hotkey leaves the native switcher alone.
@@ -548,6 +575,10 @@ final class SwitcherController {
             self.layoutQueued = false
             guard self.isVisible else { return }
             self.panels.layout()
+            // The list under a stationary cursor may have changed — a tile quit, closed or hidden,
+            // or a background refresh folded in a new one — so the strip has to follow whatever is
+            // under the pointer now. Deduped downstream, so an unchanged target costs nothing.
+            self.panels.refreshPreview()
         }
     }
 
@@ -734,6 +765,7 @@ final class SwitcherController {
         stopWatchdog()
         stopStickyGuards()
         panels.hide()
+        preview.teardown()
     }
 
     private func commit() {
