@@ -33,7 +33,7 @@ actor WindowCapture {
 
     private var cachedContent: SCShareableContent?
     private var contentFetchedAt: Date?
-    private var idCache: [pid_t: (ids: [CGWindowID], at: Date)] = [:]
+    private var windowInfoCache: [pid_t: (info: [WindowInfo], at: Date)] = [:]
     /// How long a fetched window list / id set may be reused before it is refetched.
     private let ttl: TimeInterval = 0.75
     /// Ceiling on simultaneous `SCScreenshotManager` captures.
@@ -58,12 +58,12 @@ actor WindowCapture {
         guard !Task.isCancelled else { return [] }
         guard !windowInfo.isEmpty else { return [] }
 
-        // Build SC window lookup by ID for capture.
+        // Build SC window lookup by ID for capture. Filter out windows with invalid ID 0.
         let scWindows = content.windows.filter {
-            $0.owningApplication?.processID == pid && $0.windowLayer == 0
+            $0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.windowID != 0
         }
         let scWindowByID = Dictionary(
-            scWindows.compactMap { w -> (CGWindowID, SCWindow)? in (w.windowID, w) },
+            scWindows.map { ($0.windowID, $0) },
             uniquingKeysWith: { a, _ in a })
 
         // Get the app icon for windows we can't capture.
@@ -92,7 +92,8 @@ actor WindowCapture {
                         // Try to capture the window if we have it in SCShareableContent.
                         if !info.isMinimized, let scWindow {
                             if let image = try? await Self.capture(scWindow, maxHeight: maxHeight),
-                               !Self.isBlank(image) {
+                               !Self.isBlank(image)
+                            {
                                 let size = NSSize(width: image.width, height: image.height)
                                 return (
                                     index,
@@ -101,9 +102,18 @@ actor WindowCapture {
                                         image: NSImage(cgImage: image, size: size),
                                         title: info.title, pid: pid, isMinimized: false))
                             }
+                            // Window captured as blank AND is tiny — phantom/helper window, skip it.
+                            if scWindow.frame.width <= 40 || scWindow.frame.height <= 40 {
+                                return (index, nil)
+                            }
                         }
 
                         // Fallback to app icon for minimized or uncapturable windows.
+                        // Only show if AX reported this as a real switchable window with a title,
+                        // or if it's minimized (minimized windows are definitionally real).
+                        guard info.isMinimized || !info.title.isEmpty else {
+                            return (index, nil)
+                        }
                         let icon = fallbackIcon
                             ?? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil)
                             ?? NSImage()
@@ -135,7 +145,7 @@ actor WindowCapture {
     func clearCaches() {
         cachedContent = nil
         contentFetchedAt = nil
-        idCache.removeAll()
+        windowInfoCache.removeAll()
     }
 
     /// The full window list, reused for `ttl` so a sweep across tiles doesn't re-run the whole
@@ -161,40 +171,41 @@ actor WindowCapture {
         let isMinimized: Bool
     }
 
-    /// The app's switchable window ids (ordered), cached for `ttl` to spare the Accessibility
+    /// The app's switchable window info (ordered), cached for `ttl` to spare the Accessibility
     /// round-trips when the same app tile is revisited.
     ///
-    /// The AX work runs off the actor. `TargetProvider.switchableWindowIDs` is synchronous and does
-    /// two `AXUIElementCopyAttributeValue` round-trips per window, each of which can burn the full
+    /// The AX work runs off the actor. The underlying calls are synchronous and do two
+    /// `AXUIElementCopyAttributeValue` round-trips per window, each of which can burn the full
     /// AX timeout against a beach-balling app — several seconds for an app with a dozen windows.
     /// Run inline it would hold the actor with no suspension point, so every other hover queues
     /// behind one wedged app and the previews stop appearing entirely until it clears.
-    private func switchableIDs(for pid: pid_t) async -> [CGWindowID] {
-        let now = Date()
-        if let entry = idCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.ids }
-        // Shed everything else that has aged out while we are here. Only the hovered app's entry was
-        // ever replaced, so an app hovered once and never again kept its window ids forever.
-        idCache = idCache.filter { now.timeIntervalSince($0.value.at) < ttl }
-        let ids = await Task.detached { TargetProvider.switchableWindowIDs(for: pid) }.value
-        idCache[pid] = (ids, Date())
-        return ids
-    }
-
-    /// Returns info about all switchable windows including minimized ones.
     private func switchableWindowInfo(for pid: pid_t) async -> [WindowInfo] {
-        await Task.detached {
+        let now = Date()
+        if let entry = windowInfoCache[pid], now.timeIntervalSince(entry.at) < ttl {
+            return entry.info
+        }
+        // Shed everything else that has aged out while we are here.
+        windowInfoCache = windowInfoCache.filter { now.timeIntervalSince($0.value.at) < ttl }
+        let info = await Task.detached {
             let app = AX.application(pid)
             return AX.windows(of: app).compactMap { window -> WindowInfo? in
                 guard AX.isSwitchableWindow(window) else { return nil }
                 // Try the private API first, fall back to frame matching for Electron/Catalyst apps.
+                // For minimized windows, the frame-matching fallback won't work (CGWindowListCopyWindowInfo
+                // excludes minimized windows), but we still include them with id 0 - the capture will
+                // fail gracefully and show the app icon fallback.
                 let id = TargetProvider.windowID(window)
                     ?? TargetProvider.windowID(matching: window, pid: pid)
-                guard let id else { return nil }
+                    ?? 0
                 let title = AX.copyString(window, kAXTitleAttribute) ?? ""
                 let minimized = AX.isMinimized(window)
+                // Skip windows with no ID and not minimized - these are phantom windows we can't capture.
+                if id == 0 && !minimized { return nil }
                 return WindowInfo(id: id, title: title, isMinimized: minimized)
             }
         }.value
+        windowInfoCache[pid] = (info, Date())
+        return info
     }
 
     /// True when a capture is essentially empty — nearly every pixel transparent. Downsamples to a
@@ -311,6 +322,13 @@ private struct WindowPreviewView: View {
         .onPreferenceChange(ThumbFrameKey.self) { model.thumbFrames = $0 }
     }
 
+    private func selectionOverlay(_ isSelected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .strokeBorder(
+                isSelected ? Color.accentColor : Color.primary.opacity(0.15),
+                lineWidth: isSelected ? 3 : 1)
+    }
+
     @ViewBuilder
     private func thumbnail(_ thumb: WindowThumb, index: Int) -> some View {
         let isSelected = model.selection == index
@@ -325,22 +343,14 @@ private struct WindowPreviewView: View {
                         .padding(20)
                         .background(Color.primary.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(
-                                    isSelected ? Color.accentColor : Color.primary.opacity(0.15),
-                                    lineWidth: isSelected ? 3 : 1))
+                        .overlay(selectionOverlay(isSelected))
                 } else {
                     Image(nsImage: thumb.image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: 220, maxHeight: 150)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(
-                                    isSelected ? Color.accentColor : Color.primary.opacity(0.15),
-                                    lineWidth: isSelected ? 3 : 1))
+                        .overlay(selectionOverlay(isSelected))
                 }
                 if thumb.isMinimized {
                     Image(systemName: "minus.circle.fill")
