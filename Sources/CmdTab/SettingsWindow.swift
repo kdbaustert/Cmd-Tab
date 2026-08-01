@@ -52,14 +52,17 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .general: return "slider.horizontal.3"
-        case .shortcuts: return "keyboard.fill"
-        // The tab is about tiling, so a split rectangle says more than a plain window outline.
-        case .windows: return "rectangle.split.2x2.fill"
-        case .behavior: return "arrow.triangle.2.circlepath"
-        case .appearance: return "paintpalette.fill"
-        case .apps: return "square.stack.fill"
-        case .about: return "info.bubble.fill"
+        // One family throughout: solid, geometric, and enclosed where a shape allows it. The
+        // previous set mixed a line-weight slider, a filled keyboard and a stroked arrow loop, so
+        // seven badges in a column read as seven different icon sets rather than one.
+        case .general: return "gearshape.2.fill"
+        case .shortcuts: return "command.circle.fill"
+        // The tab is about tiling, so a divided square says more than a plain window outline.
+        case .windows: return "square.split.2x2.fill"
+        case .behavior: return "square.stack.3d.up.fill"
+        case .appearance: return "swatchpalette.fill"
+        case .apps: return "square.grid.3x3.fill"
+        case .about: return "info.circle.fill"
         }
     }
 
