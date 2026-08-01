@@ -121,6 +121,16 @@ final class SwitcherController {
         }
     }
 
+    /// Applications or individual windows. Rebuilds the list, since it changes what a target *is*.
+    var mode: SwitcherMode {
+        get { provider.mode }
+        set {
+            guard newValue != provider.mode else { return }
+            provider.mode = newValue
+            provider.refresh()
+        }
+    }
+
     var excludedBundleIDs: Set<String> {
         get { provider.excludedBundleIDs }
         set {
@@ -723,12 +733,16 @@ final class SwitcherController {
         showWith(targets: armedTargets, backwards: armedBackwards)
     }
 
-    /// `mode` is presentation only — there is no user-facing mode setting. The main list is apps,
-    /// the same-app cycle is one app's windows. It drives whether tiles carry their own title and
-    /// whether the caption names the owning app.
+    /// `mode` is what the tiles *are*: it drives whether they carry their own title and whether the
+    /// caption names the owning app.
+    ///
+    /// Defaulted to the user's setting rather than to `.apps`, so the main list presents itself the
+    /// way the provider built it. The same-app cycle passes `.windows` explicitly — it shows one
+    /// app's windows whatever the setting says, which is the whole point of it.
     private func showWith(
-        targets: [SwitchTarget], backwards: Bool, mode: SwitcherMode = .apps
+        targets: [SwitchTarget], backwards: Bool, mode: SwitcherMode? = nil
     ) {
+        let mode = mode ?? provider.mode
         model.mode = mode
         model.begin(targets)
         // The frontmost app/window is index 0, so a plain tap lands on the previous one.

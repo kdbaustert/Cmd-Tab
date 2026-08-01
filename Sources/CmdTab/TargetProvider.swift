@@ -26,8 +26,12 @@ final class TargetProvider {
     /// Bundle identifiers the user has excluded. Also keeps their windows out of the same-app cycle.
     var excludedBundleIDs: Set<String> = []
 
-    /// Hide apps that own no on-screen window.
+    /// Hide apps that own no on-screen window. Only meaningful in app mode — a window list has no
+    /// empty apps in it to hide.
     var hideEmptyApps: Bool = false
+
+    /// Whether a refresh builds one target per app or one per window.
+    var mode: SwitcherMode = .apps
 
     /// Favourited apps, in the user's order. Any that aren't running are appended as launchable
     /// tiles.
@@ -167,23 +171,44 @@ final class TargetProvider {
         let sortOrder = self.sortOrder
         let hideEmptyApps = self.hideEmptyApps
         let wantsBadges = self.notificationBadges
+        let mode = self.mode
         let apps = switchableApps()
         let order = mru
+        // Both read on the main thread, like everything else in this prelude: the window builder
+        // needs them and they are only used when the mode asks for windows.
+        let windowMRU = self.windowMRU
+        let screenFrames = mode == .windows && NSScreen.screens.count > 1
+            ? Self.screenCGFrames() : []
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
         let launchTargets = launchFavorites()
 
         axQueue.async { [weak self] in
             // On the background queue: reading the Dock is Accessibility IPC to another process.
             let badges = wantsBadges ? DockBadges.current() : [:]
-            var targets = Self.appTargets(
-                apps, order: order, sortOrder: sortOrder, badges: badges)
-            if hideEmptyApps {
-                // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
-                // counts as non-empty rather than being dropped.
-                let owning = Self.windowOwningPIDs()
-                targets.removeAll { !owning.contains($0.pid) }
+            var targets: [SwitchTarget]
+            switch mode {
+            case .apps:
+                targets = Self.appTargets(
+                    apps, order: order, sortOrder: sortOrder, badges: badges)
+                if hideEmptyApps {
+                    // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
+                    // counts as non-empty rather than being dropped.
+                    let owning = Self.windowOwningPIDs()
+                    targets.removeAll { !owning.contains($0.pid) }
+                }
+            case .windows:
+                // The same walk the same-app cycle does, over every switchable app rather than one.
+                // `hideEmptyApps` is skipped: an app with no windows contributes no tiles here
+                // anyway, so it has nothing left to hide.
+                targets = Self.withSpaceBadges(
+                    Self.windowTargets(
+                        apps, order: order, sortOrder: sortOrder,
+                        windowMRU: windowMRU, screenFrames: screenFrames, badges: badges))
             }
-            targets += launchTargets  // launchable favourites go last, after the running apps
+            // Launchable favourites go last in both modes. A favourite has no windows to list, but
+            // it was pinned precisely so it stays reachable — dropping it in window mode would make
+            // a user's pin vanish on a setting they changed for an unrelated reason.
+            targets += launchTargets
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.cache = targets

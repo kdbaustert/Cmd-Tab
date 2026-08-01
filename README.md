@@ -94,7 +94,7 @@ the keys *labelled* 0–9 on ANSI-style layouts.
 
 ## Settings
 
-**Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of five tabs, each with
+**Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of six tabs, each with
 its own gradient icon badge, and a search field above them. Typing in the search field replaces the
 tab list with matching settings, named by the tab and section they live in; picking one switches to
 that tab, scrolls to the section and outlines it for a moment.
@@ -127,6 +127,7 @@ Start at login lives in the system's Login Items, not our defaults.
 
 | Setting | What it does | Default |
 | --- | --- | --- |
+| Switch between | **Applications** — one tile per running app, the way ⌘-Tab has always worked — or **Windows**, one tile per open window across every app, each carrying its own title. Window tiles get a smaller icon to pay for the title, and in window mode *Hide apps with no windows* and *Preview windows on hover* are both moot and disabled. Persists as `switcherMode`. | Applications |
 | Show delay | How long to wait before drawing the panel, so a quick tap switches with no flash. | 0 ms |
 | Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
@@ -178,7 +179,7 @@ Below the sliders are three more controls:
 | --- | --- | --- |
 | Highlight colour | The tint of the selected tile. Persists as a hex string (`highlightColorHex`). | System accent |
 | Appearance | Forces the panel Light or Dark, or matches the system. | Match system |
-| Material | The frosted glass behind the tiles, with an optional custom blur radius over it. | HUD |
+| Material | The frosted glass behind the tiles. Defaults to Under-window — the most see-through of them — with the custom blur on at 40, since heavy frost is what keeps a see-through panel legible over busy content. The old near-solid look is the **Classic** theme. | Under-window |
 
 ### Window preview on hover
 
@@ -238,6 +239,19 @@ vanishing. **Add App…** reaches an app that isn't running, since by definition
 list, and offers either setting: pre-excluding an app is only possible here, because a row appears
 after the app has run and the switcher has already shown it. An app with no bundle identifier can
 never be set either way — there is nothing stable to key it on.
+
+### About
+
+Version and build, the two permissions with their live status, and a link to the repository.
+
+This replaced the menu bar's **About Cmd-Tab** item and the standard AppKit about panel it opened.
+That panel can show a name, an icon and a version and nothing else — the permission state, which is
+the thing anyone actually opens About to check when the switcher has stopped responding, had no
+place in it. The menu is now just **Open Switcher**, **Settings…** and **Quit**, plus whichever
+status line applies when something is wrong.
+
+Both permission rows are re-read every time the tab appears rather than cached at launch, since the
+usual reason to be looking at them is that you have just granted something in System Settings.
 
 ## Switching to an app whose windows are all minimized
 
@@ -381,6 +395,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SettingsChrome.swift` | The settings window's vocabulary: pages, section cards, rows, sidebar badges |
 | `SettingsAppearance.swift` | The Appearance tab — layout, theme, panel and the metric sliders |
 | `SettingsApps.swift` | The Apps tab — the app list with its favourite and exclude controls |
+| `SettingsAbout.swift` | The About tab — version, permission status, source link |
 | `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
 
 ## Design notes

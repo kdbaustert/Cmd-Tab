@@ -18,6 +18,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case behavior
     case appearance
     case apps
+    case about
 
     var id: String { rawValue }
 
@@ -28,6 +29,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .behavior: return "Behavior"
         case .appearance: return "Appearance"
         case .apps: return "Apps"
+        case .about: return "About"
         }
     }
 
@@ -38,6 +40,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .behavior: return "rectangle.stack.fill"
         case .appearance: return "paintbrush.fill"
         case .apps: return "square.grid.2x2.fill"
+        case .about: return "info.circle.fill"
         }
     }
 
@@ -49,6 +52,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .behavior: return (Color(hex: "#B272FF")!, Color(hex: "#6228FF")!)
         case .appearance: return (Color(hex: "#FF6991")!, Color(hex: "#D41E5A")!)
         case .apps: return (Color(hex: "#4ED98F")!, Color(hex: "#12A85B")!)
+        case .about: return (Color(hex: "#8E8E93")!, Color(hex: "#5A5A5F")!)
         }
     }
 }
@@ -74,6 +78,9 @@ enum SettingsAnchor {
     static let markers = "appearance.markers"
 
     static let appRules = "apps.rules"
+
+    static let permissions = "about.permissions"
+    static let build = "about.build"
 }
 
 /// One searchable setting. The index is hand-written rather than derived from the views: a row is
@@ -121,6 +128,8 @@ enum SettingsIndex {
              ["delay", "wait", "flash", "quick tap", "reveal"]),
         item("sticky", .behavior, SettingsAnchor.session, "Session", "Stay open",
              ["sticky", "stay open", "release", "keep open"]),
+        item("mode", .behavior, SettingsAnchor.contents, "Contents", "Switch between",
+             ["mode", "applications", "apps", "windows", "window switcher", "per window"]),
         item("sortOrder", .behavior, SettingsAnchor.contents, "Contents", "Order",
              ["sort", "order", "recent", "mru", "alphabetical"]),
         item("hideEmpty", .behavior, SettingsAnchor.contents, "Contents",
@@ -173,6 +182,17 @@ enum SettingsIndex {
 
         item("apps", .apps, SettingsAnchor.appRules, "App rules", "Favorites and exclusions",
              ["exclude", "hide app", "favorite", "star", "pin", "blacklist", "rules"]),
+
+        item("accessibility", .about, SettingsAnchor.permissions, "Permissions",
+             "Accessibility access",
+             ["accessibility", "permission", "grant", "trusted", "not working", "broken"]),
+        item("screenRecording", .about, SettingsAnchor.permissions, "Permissions",
+             "Screen Recording access",
+             ["screen recording", "permission", "preview", "thumbnail", "capture"]),
+        item("version", .about, SettingsAnchor.build, "Build", "Version",
+             ["version", "build", "about", "release"]),
+        item("source", .about, SettingsAnchor.build, "Build", "Source",
+             ["source", "github", "repository", "code", "issues"]),
     ]
 
     private static func item(
@@ -203,7 +223,8 @@ struct SettingsRootView: View {
             Divider()
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
+                // Deliberately no background: the window's own glass backdrop shows through here,
+                // and a second opaque fill on top of it would be the one thing that undoes it.
         }
         .frame(minWidth: 800, idealWidth: 840, minHeight: 560, idealHeight: 640)
         .environment(\.settingsFlash, flash)
@@ -334,6 +355,8 @@ struct SettingsRootView: View {
             AppearanceSettings(appearance: .shared, behavior: .shared)
         case .apps:
             AppsSettings(store: .shared, favorites: .shared)
+        case .about:
+            AboutSettings()
         }
     }
 }
@@ -503,6 +526,14 @@ struct BehaviorSettings: View {
             }
 
             SettingsSection(title: "Contents", anchor: SettingsAnchor.contents) {
+                SettingsChoice(
+                    title: "Switch between",
+                    subtitle: "What each tile stands for.",
+                    selection: $behavior.mode,
+                    options: SwitcherMode.allCases.map {
+                        .init(
+                            value: $0, title: $0.shortTitle, detail: $0.detail, symbol: $0.symbol)
+                    })
                 SettingsPicker(
                     title: "Order", subtitle: "How tiles are sorted.",
                     selection: $behavior.sortOrder, width: 160
@@ -511,8 +542,11 @@ struct BehaviorSettings: View {
                 }
                 SettingsToggle(
                     title: "Hide apps with no windows",
-                    subtitle: "An app whose windows are all minimized counts as empty.",
+                    subtitle: behavior.mode == .windows
+                        ? "Applications only — a window list has no empty apps in it."
+                        : "An app whose windows are all minimized counts as empty.",
                     isOn: $behavior.hideEmptyApps)
+                    .disabled(behavior.mode == .windows)
             }
 
             SettingsSection(title: "Placement", anchor: SettingsAnchor.placement) {
@@ -530,9 +564,12 @@ struct BehaviorSettings: View {
                 }
                 SettingsToggle(
                     title: "Preview windows on hover",
-                    subtitle: "Hover a tile to float live thumbnails of that app's windows, and "
-                        + "click one to go straight to it. Needs Screen Recording permission.",
+                    subtitle: behavior.mode == .windows
+                        ? "Applications only — in window mode the tiles are already windows."
+                        : "Hover a tile to float live thumbnails of that app's windows, and click "
+                            + "one to go straight to it. Needs Screen Recording permission.",
                     isOn: $behavior.windowPreview)
+                    .disabled(behavior.mode == .windows)
                     .onChange(of: behavior.windowPreview) {
                         if behavior.windowPreview { Permissions.ensureScreenCaptureForPreview() }
                     }
@@ -576,15 +613,48 @@ final class SettingsPresenter {
         window.title = "Cmd-Tab Settings"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        // Glass, the same way the switcher panel gets it: the window paints nothing of its own, and
+        // an `NSVisualEffectView` fills it instead. Both halves are `.behindWindow`, which is what
+        // makes them blur the desktop rather than each other — with an opaque window background
+        // underneath, the material has nothing to sample and renders as flat grey.
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        // The separator is drawn for an opaque titlebar; over glass it reads as a scar across the
+        // top of the window.
+        window.titlebarSeparatorStyle = .none
         // Deliberately off: the panes are full of sliders, lists and colour wells, and a window that
         // slides out from under a missed drag is worse than one that only moves by its titlebar —
         // which is still there, transparent, above the sidebar.
         window.isMovableByWindowBackground = false
         // The presenter owns the window across closes, so AppKit must not free it out from under us.
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsRootView())
+        window.contentView = glassContent()
         window.center()
         window.setFrameAutosaveName("CmdTabSettings")
         return window
+    }
+
+    /// The window's backdrop: one visual-effect view filling the whole frame, with the SwiftUI
+    /// content hosted on top of it.
+    ///
+    /// The material goes on an `NSView` under the hosting view rather than into the SwiftUI tree so
+    /// that it covers the titlebar region too — a `.fullSizeContentView` window whose glass stops at
+    /// the content's top edge shows a bare strip behind the traffic lights.
+    private static func glassContent() -> NSView {
+        let backdrop = NSVisualEffectView()
+        backdrop.material = .underWindowBackground
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .active
+
+        let host = NSHostingView(rootView: SettingsRootView())
+        host.translatesAutoresizingMaskIntoConstraints = false
+        backdrop.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.topAnchor.constraint(equalTo: backdrop.topAnchor),
+            host.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
+            host.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor),
+        ])
+        return backdrop
     }
 }

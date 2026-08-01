@@ -1,7 +1,11 @@
 import AppKit
 import ApplicationServices
 
-enum SwitcherMode: String {
+/// What the switcher lists: one tile per running application, or one per open window.
+///
+/// Also used as a *presentation* flag inside a session — the same-app cycle shows one app's windows
+/// whatever the setting says, and passes `.windows` so those tiles carry their own titles.
+enum SwitcherMode: String, CaseIterable {
     case apps
     case windows
 
@@ -9,6 +13,31 @@ enum SwitcherMode: String {
         switch self {
         case .apps: return "Application Switcher"
         case .windows: return "Window Switcher"
+        }
+    }
+
+    /// Short form, for a settings picker where the surrounding row already says "switch between".
+    var shortTitle: String {
+        switch self {
+        case .apps: return "Applications"
+        case .windows: return "Windows"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .apps:
+            return "One tile per app, the way ⌘-Tab has always worked. Reach a specific window "
+                + "with the app-window cycle."
+        case .windows:
+            return "One tile per open window, across every app, each carrying its own title."
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .apps: return "square.grid.2x2"
+        case .windows: return "macwindow.on.rectangle"
         }
     }
 }

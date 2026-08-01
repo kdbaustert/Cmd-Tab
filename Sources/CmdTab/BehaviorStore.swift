@@ -245,6 +245,7 @@ enum BehaviorDefault {
 // hand-rolled `store(x.rawValue, …)` wrote.
 extension SortOrder: Defaults.Serializable {}
 extension SwitcherLayout: Defaults.Serializable {}
+extension SwitcherMode: Defaults.Serializable {}
 extension PanelAppearance: Defaults.Serializable {}
 extension PanelMaterial: Defaults.Serializable {}
 extension PanelPosition: Defaults.Serializable {}
@@ -266,10 +267,22 @@ extension Defaults.Keys {
     /// Grid is the default because it is the shape ⌘-Tab has always had; an existing install sees
     /// no change until it picks List.
     static let switcherLayout = Key<SwitcherLayout>("switcherLayout", default: .grid)
+
+    /// Applications or individual windows.
+    ///
+    /// Deliberately *not* the old `mode` key, which is in `retiredDefaultsKeys`: an install from
+    /// before window mode was removed may still have `mode = windows` sitting in its defaults, and
+    /// reviving that key would silently switch those users into window mode on upgrade. A fresh
+    /// name means everyone starts from the documented default and opts in.
+    static let switcherMode = Key<SwitcherMode>("switcherMode", default: .apps)
     static let panelAppearance = Key<PanelAppearance>("panelAppearance", default: .system)
     static let panelPosition = Key<PanelPosition>("panelPosition", default: .center)
     static let panelScreens = Key<PanelScreens>("panelScreens", default: .automatic)
-    static let panelMaterial = Key<PanelMaterial>("panelMaterial", default: .hud)
+    /// The glassiest of the materials: `underWindowBackground` lets the most through, where the HUD
+    /// this used to default to is nearly solid. Paired with the blur override below, which is what
+    /// keeps a see-through panel legible over busy content — heavy frost destroys the detail behind
+    /// it, so the tiles stay the only thing with edges.
+    static let panelMaterial = Key<PanelMaterial>("panelMaterial", default: .underWindow)
 
     /// Kept as `#RRGGBB` rather than moved to `Defaults`' own `Color` bridge: the hex form is what
     /// is already on disk, what the exported JSON carries, and what stays legible if someone edits
@@ -290,8 +303,11 @@ extension Defaults.Keys {
     static let hideEmptyApps = Key<Bool>("hideEmptyApps", default: false)
     static let showDelay = Key<Double>("showDelayMs", default: 0)
     static let maxColumns = Key<Int>("maxColumns", default: 0)
-    static let blurOverride = Key<Bool>("blurOverride", default: false)
-    static let blurRadius = Key<Double>("blurRadius", default: 20)
+    /// On by default, at a heavier radius than any material carries natively. Best-effort — the
+    /// override reaches a private backdrop layer, and if that is ever restructured the material's
+    /// own (already large) blur simply stands, which is a graceful place to land.
+    static let blurOverride = Key<Bool>("blurOverride", default: true)
+    static let blurRadius = Key<Double>("blurRadius", default: 40)
     static let showNumbers = Key<Bool>("showNumbers", default: true)
     static let showBadges = Key<Bool>("showBadges", default: true)
     static let notificationBadges = Key<Bool>("notificationBadges", default: true)
@@ -324,7 +340,8 @@ final class BehaviorStore: ObservableObject {
     /// Every key this store owns. `ownedDefaultsKeys` is derived from it, so a setting declared
     /// above cannot be quietly missed by export, import and reset.
     private static let ownedKeys: [Defaults._AnyKey] = [
-        .sortOrder, .switcherLayout, .panelAppearance, .panelPosition, .panelScreens, .panelMaterial,
+        .sortOrder, .switcherLayout, .switcherMode,
+        .panelAppearance, .panelPosition, .panelScreens, .panelMaterial,
         .highlightColorHex,
         .hotkeyKeyCode, .hotkeyModifiers, .sameAppKeyCode, .sameAppModifiers,
         .stickyMode, .sameAppCycle, .hideEmptyApps, .showDelay, .maxColumns,
@@ -357,6 +374,10 @@ final class BehaviorStore: ObservableObject {
     /// carried in a `Theme`, for the same reason `maxColumns` is not.
     @Published var layout: SwitcherLayout = Defaults[.switcherLayout] {
         didSet { persist(layout, oldValue, to: .switcherLayout) }
+    }
+    /// Whether the switcher lists applications or individual windows.
+    @Published var mode: SwitcherMode = Defaults[.switcherMode] {
+        didSet { persist(mode, oldValue, to: .switcherMode) }
     }
     @Published var panelAppearance: PanelAppearance = Defaults[.panelAppearance] {
         didSet { persist(panelAppearance, oldValue, to: .panelAppearance) }
@@ -475,6 +496,7 @@ final class BehaviorStore: ObservableObject {
         }
         sortOrder = Defaults[.sortOrder]
         layout = Defaults[.switcherLayout]
+        mode = Defaults[.switcherMode]
         panelAppearance = Defaults[.panelAppearance]
         panelPosition = Defaults[.panelPosition]
         highlightColor = Color(hex: Defaults[.highlightColorHex]) ?? Self.defaultHighlight

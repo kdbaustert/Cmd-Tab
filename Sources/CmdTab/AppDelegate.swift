@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyBehavior(_ behavior: BehaviorStore) {
         controller.sortOrder = behavior.sortOrder
         controller.layout = behavior.layout
+        controller.mode = behavior.mode
         controller.hideEmptyApps = behavior.hideEmptyApps
         controller.panelAppearance = behavior.panelAppearance
         controller.panelPosition = behavior.panelPosition
@@ -179,7 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
-        menu.addItem(action("About Cmd-Tab", #selector(showAbout)))
+        // No About item: the version, the permissions and the description all live in Settings →
+        // About now, which is one place to look rather than a menu item and a modal panel.
         menu.addItem(action("Settings…", #selector(openSettingsWindow)))
         menu.addItem(action("Quit Cmd-Tab", #selector(quit)))
     }
@@ -206,27 +208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettingsWindow() {
         settings.show()
-    }
-
-    @objc private func showAbout() {
-        // LSUIElement apps aren't active by default; without this the panel opens behind other windows.
-        NSApp.activate(ignoringOtherApps: true)
-        // An agent app has no Dock icon, so applicationIconImage defaults to a generic placeholder in
-        // the About panel. Point it at our bundled AppIcon so the real icon shows.
-        if let icon = NSImage(named: "AppIcon") {
-            NSApp.applicationIconImage = icon
-        }
-        let credits = NSAttributedString(
-            string: "A ⌘-Tab replacement for macOS. Switches between applications or individual "
-                + "windows, toggleable from the menu bar.",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ])
-        NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "Cmd-Tab",
-            .credits: credits,
-        ])
     }
 
     @objc private func quit() {

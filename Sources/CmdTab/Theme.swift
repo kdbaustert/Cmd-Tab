@@ -325,6 +325,16 @@ final class ThemeStore: ObservableObject {
     // MARK: - Presets
 
     static let presets: [Theme] = [
+        // The built-in look, field for field. Named and listed so a fresh install has a theme
+        // selected rather than sitting on "Custom…" — which is what it did while no preset matched
+        // the defaults — and so there is something to come back to after experimenting.
+        Theme(
+            name: "Glass", highlightHex: BehaviorDefault.highlightHex, appearance: "system",
+            material: PanelMaterial.underWindow.rawValue,
+            blurOverride: true, blurRadius: 40, showNumbers: true,
+            tileCorner: 12, titleFontSize: 10, titleFontName: "",
+            fade: false, iconSize: 88, iconSpacing: 2, titleSpacing: 2,
+            builtIn: true),
         Theme(
             name: "Classic", highlightHex: "#8A8A8E", appearance: "system", material: "hud",
             blurOverride: false, blurRadius: 20, showNumbers: true,

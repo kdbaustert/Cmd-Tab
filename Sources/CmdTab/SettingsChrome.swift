@@ -14,8 +14,12 @@ enum SettingsChrome {
 
     /// Card fill and border. `.primary` rather than fixed light/dark values so both follow the
     /// window's appearance without a second code path.
-    static let cardFill = Color.primary.opacity(0.03)
-    static let cardBorder = Color.primary.opacity(0.07)
+    ///
+    /// Pitched a little heavier than a card on an opaque window would be: these sit on glass, and a
+    /// 3% fill over a backdrop that is itself showing the desktop through it does not read as a
+    /// card at all — it reads as nothing.
+    static let cardFill = Color.primary.opacity(0.05)
+    static let cardBorder = Color.primary.opacity(0.09)
 
     /// Horizontal inset shared by section headers and row content, so a header sits over its
     /// column rather than floating between them.
