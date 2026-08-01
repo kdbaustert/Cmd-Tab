@@ -12,8 +12,10 @@ import CoreGraphics
 /// One arrangement the focused window can be snapped to.
 enum WindowArrangement: String, CaseIterable, Identifiable {
     case leftHalf, rightHalf, topHalf, bottomHalf
+    case leftThird, centerThird, rightThird
     case topLeft, topRight, bottomLeft, bottomRight
     case maximize, center, restore
+    case previousDisplay, nextDisplay
 
     var id: String { rawValue }
 
@@ -27,9 +29,14 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .topRight: return "Top-right corner"
         case .bottomLeft: return "Bottom-left corner"
         case .bottomRight: return "Bottom-right corner"
+        case .leftThird: return "Left third"
+        case .centerThird: return "Middle third"
+        case .rightThird: return "Right third"
         case .maximize: return "Maximize"
         case .center: return "Center"
         case .restore: return "Restore previous size"
+        case .previousDisplay: return "Move to previous display"
+        case .nextDisplay: return "Move to next display"
         }
     }
 
@@ -47,15 +54,36 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .topRight: return Hotkey(keyCode: 34, modifierRaw: mods)  // I
         case .bottomLeft: return Hotkey(keyCode: 38, modifierRaw: mods)  // J
         case .bottomRight: return Hotkey(keyCode: 40, modifierRaw: mods)  // K
+        // The thirds sit on the number row under the halves' arrows, which is where every window
+        // manager that has them puts them.
+        case .leftThird: return Hotkey(keyCode: 18, modifierRaw: mods)  // 1
+        case .centerThird: return Hotkey(keyCode: 19, modifierRaw: mods)  // 2
+        case .rightThird: return Hotkey(keyCode: 20, modifierRaw: mods)  // 3
         case .maximize: return Hotkey(keyCode: 36, modifierRaw: mods)  // ↩
         case .center: return Hotkey(keyCode: 8, modifierRaw: mods)  // C
         case .restore: return Hotkey(keyCode: 6, modifierRaw: mods)  // Z
+        // ⇧ on top of the halves' arrows: same key, "throw it further".
+        case .previousDisplay:
+            return Hotkey(
+                keyCode: 123, modifierRaw: CGEventFlags(rawValue: mods).union(.maskShift).rawValue)
+        case .nextDisplay:
+            return Hotkey(
+                keyCode: 124, modifierRaw: CGEventFlags(rawValue: mods).union(.maskShift).rawValue)
+        }
+    }
+
+    /// How far this moves a window between displays, or nil if it does not.
+    var displayStep: Int? {
+        switch self {
+        case .previousDisplay: return -1
+        case .nextDisplay: return 1
+        default: return nil
         }
     }
 
     /// Whether repeated presses step the window through ½ → ⅔ → ⅓ of the screen. Only the four
-    /// half-screen arrangements cycle: a corner is already a quarter, and there is no second size
-    /// for "maximize" to mean.
+    /// half-screen arrangements cycle: a corner is already a quarter, a third is already a third,
+    /// and there is no second size for "maximize" to mean.
     var cycles: Bool {
         switch self {
         case .leftHalf, .rightHalf, .topHalf, .bottomHalf: return true
@@ -72,8 +100,8 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// already excluded. `fraction` is how much of the screen a half takes on this press; it is
     /// ignored by everything that does not cycle.
     ///
-    /// Returns nil for `.restore`, which is not computed from the screen at all — the caller
-    /// substitutes the frame it saved.
+    /// Returns nil for `.restore` and the two display moves, none of which are computed from the
+    /// current screen — the caller substitutes a saved frame, or re-runs against another display.
     func frame(in area: CGRect, current: CGRect, fraction: CGFloat) -> CGRect? {
         let half = CGSize(width: area.width / 2, height: area.height / 2)
         switch self {
@@ -95,6 +123,16 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
             return CGRect(origin: CGPoint(x: area.minX, y: area.midY), size: half)
         case .bottomRight:
             return CGRect(origin: CGPoint(x: area.midX, y: area.midY), size: half)
+        case .leftThird:
+            return CGRect(x: area.minX, y: area.minY, width: area.width / 3, height: area.height)
+        case .centerThird:
+            return CGRect(
+                x: area.minX + area.width / 3, y: area.minY,
+                width: area.width / 3, height: area.height)
+        case .rightThird:
+            return CGRect(
+                x: area.maxX - area.width / 3, y: area.minY,
+                width: area.width / 3, height: area.height)
         case .maximize:
             return area
         case .center:
@@ -106,7 +144,7 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
                 x: area.minX + (area.width - size.width) / 2,
                 y: area.minY + (area.height - size.height) / 2,
                 width: size.width, height: size.height)
-        case .restore:
+        case .restore, .previousDisplay, .nextDisplay:
             return nil
         }
     }
@@ -120,6 +158,9 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
 struct WindowTilingBindings: Equatable {
     var isEnabled: Bool = false
     var cycleWidths: Bool = true
+    /// Drag a window to a screen edge to tile it there. Independent of `isEnabled`: someone may want
+    /// the mouse gesture and no global chords at all, or the reverse.
+    var dragSnap: Bool = false
     var bindings: [WindowArrangement: Hotkey]
 
     static let defaults = WindowTilingBindings(
@@ -190,10 +231,11 @@ final class WindowTilingStore: ObservableObject {
         static let enabled = "windowTilingEnabled"
         static let cycleWidths = "windowTilingCycleWidths"
         static let shortcuts = "windowTilingShortcuts"
+        static let dragSnap = "windowTilingDragSnap"
     }
 
     /// Every key this store owns, for export/import/reset.
-    static let defaultsKeys = [Key.enabled, Key.cycleWidths, Key.shortcuts]
+    static let defaultsKeys = [Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap]
 
     @Published private(set) var tiling: WindowTilingBindings = .defaults
 
@@ -224,6 +266,15 @@ final class WindowTilingStore: ObservableObject {
         set {
             guard newValue != tiling.cycleWidths else { return }
             tiling.cycleWidths = newValue
+            persist()
+        }
+    }
+
+    var dragSnap: Bool {
+        get { tiling.dragSnap }
+        set {
+            guard newValue != tiling.dragSnap else { return }
+            tiling.dragSnap = newValue
             persist()
         }
     }
@@ -334,6 +385,7 @@ final class WindowTilingStore: ObservableObject {
         result.cycleWidths =
             defaults.object(forKey: Key.cycleWidths) != nil
             ? defaults.bool(forKey: Key.cycleWidths) : true
+        result.dragSnap = defaults.bool(forKey: Key.dragSnap)
         if let raw = defaults.dictionary(forKey: Key.shortcuts) {
             for arrangement in WindowArrangement.allCases {
                 guard let pair = raw[arrangement.rawValue] as? [Int] else { continue }
@@ -352,6 +404,7 @@ final class WindowTilingStore: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.set(tiling.isEnabled, forKey: Key.enabled)
         defaults.set(tiling.cycleWidths, forKey: Key.cycleWidths)
+        defaults.set(tiling.dragSnap, forKey: Key.dragSnap)
         // Every arrangement is written, so a cleared one is recorded as cleared rather than simply
         // missing — see `load()`.
         var raw: [String: [Int]] = [:]
@@ -424,7 +477,24 @@ enum WindowTiler {
             } ?? areas[0]
 
             let target: CGRect
-            if arrangement == .restore {
+            if let step = arrangement.displayStep {
+                // Same fractional position on the destination display, then clamped onto it — the
+                // treatment `SwitchTarget.moveWindow(acrossDisplays:)` gives the in-switcher move,
+                // so a window thrown either way lands in the same place.
+                guard areas.count > 1, let from = areas.firstIndex(of: area) else { return }
+                let to = areas[((from + step) % areas.count + areas.count) % areas.count]
+                let relX = area.width > 0 ? (current.minX - area.minX) / area.width : 0
+                let relY = area.height > 0 ? (current.minY - area.minY) / area.height : 0
+                let size = CGSize(
+                    width: min(current.width, to.width), height: min(current.height, to.height))
+                target = CGRect(
+                    x: min(max(to.minX + relX * to.width, to.minX), to.maxX - size.width),
+                    y: min(max(to.minY + relY * to.height, to.minY), to.maxY - size.height),
+                    width: size.width, height: size.height)
+                // A move is not a tile: it must not consume the restore point, and the width cycle
+                // has to start over on the new display.
+                cycle = nil
+            } else if arrangement == .restore {
                 guard let saved = restorePoints.removeValue(forKey: key) else { return }
                 restoreOrder.removeAll { $0 == key }
                 cycle = nil

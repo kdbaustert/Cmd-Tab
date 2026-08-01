@@ -123,13 +123,29 @@ final class SwitcherController {
 
     /// The window-tiling bindings, as a snapshot the tap callback can read without touching a store.
     /// Pushed by `AppDelegate` whenever they change.
-    var tiling: WindowTilingBindings = .defaults
+    var tiling: WindowTilingBindings = .defaults {
+        didSet {
+            guard tiling.dragSnap != oldValue.dragSnap else { return }
+            dragSnap.isEnabled = tiling.dragSnap
+        }
+    }
+    private let dragSnap = DragSnap()
     /// Per-app jump chords, same arrangement.
     var activations = DirectActivations()
     /// The hide-all / show-all chords.
     var allWindows = AllWindowsShortcuts()
     /// Extra triggers that open a narrowed window list.
     var scopedTriggers = ScopedTriggers()
+
+    /// Per-app overrides. Rebuilds the list, since `expandWindows` changes what the targets are.
+    var appRules: [String: AppRule] = [:] {
+        didSet {
+            guard appRules != oldValue else { return }
+            provider.appRules = appRules
+            dragSnap.appRules = appRules
+            provider.refresh()
+        }
+    }
 
     /// Applications or individual windows. Rebuilds the list, since it changes what a target *is*.
     var mode: SwitcherMode {
@@ -472,77 +488,57 @@ final class SwitcherController {
             return true
         }
 
-        // Direct activation and the all-windows chords, on both edges for the same reason tiling is.
-        // Matched after the triggers so a chord bound to both still opens the switcher, and before
-        // tiling only because they are cheaper to test.
-        if !NSApp.isActive {
-            if let bundleID = activations.bundleID(code: code, flags: flags) {
-                if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-                    GlobalActions.activate(bundleID: bundleID)
-                }
-                return true
+        // Idle. The order below *is* the precedence documented in `ShortcutAudit.Kind`, and it is
+        // load-bearing: openers first, so nothing a user (or a hand-edited `config.json`) binds can
+        // take ⌘-Tab away from the switcher itself. The recorders refuse a chord a trigger already
+        // claims, but a config file is not a recorder — and a settings file that quietly disabled
+        // the app's whole reason for existing would be very hard to diagnose.
+        //
+        // Openers are keydown-only; the global actions below match on both edges. Swallowing only
+        // the keydown left an unpaired key-up on the way to the frontmost app, and anything tracking
+        // raw key state from up/down pairs — virtualisers, VNC and RDP clients, remote terminals —
+        // reads that as a release with no press. The visible-panel branch swallows both for the
+        // same reason.
+        let backwards = flags.contains(.maskShift)
+        if type == .keyDown {
+            if code == hotkey.keyCode, modifiersMatch(flags, hotkey.heldModifiers) {
+                return open(backwards: backwards)
             }
-            if let action = allWindows.action(code: code, flags: flags) {
-                if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-                    GlobalActions.perform(action)
-                }
-                return true
+            // After the main trigger, so binding both to the same chord keeps the switcher.
+            if let sameApp = sameAppHotkey, code == sameApp.keyCode,
+                modifiersMatch(flags, sameApp.heldModifiers) {
+                return openSameApp(backwards: backwards)
+            }
+            // Scoped triggers last among the openers, for the same reason: a chord shared with
+            // either built-in trigger keeps its built-in meaning.
+            if !NSApp.isActive, let match = scopedTriggers.scope(code: code, flags: flags) {
+                return openScoped(match.scope, held: match.held, backwards: backwards)
             }
         }
 
-        // Window tiling is matched on both edges, before the keyUp gate below.
-        //
-        // Swallowing only the keydown left an unpaired key-up on the way to the frontmost app, and
-        // anything tracking raw key state from up/down pairs — virtualisers, VNC and RDP clients,
-        // remote terminals — reads that as a release with no press and can strand a modifier inside
-        // the guest. The visible-panel branch already swallows both edges for the same reason.
-        if let arrangement = tilingArrangement(code: code, flags: flags) {
-            // Only a fresh keydown acts. Key repeat is swallowed but ignored — cycling ½ → ⅔ → ⅓
-            // under autorepeat would strobe the window through every width in a fraction of a
-            // second — and the keyup only has to be consumed, not acted on.
-            if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-                applyTiling(arrangement)
-            }
+        // The global actions, all inert while we are frontmost: their recorders live in the settings
+        // window, and a bound chord matched here would be swallowed before the recorder's own
+        // monitor could see it — so no assigned combination could ever be re-recorded. The two
+        // built-in triggers above are deliberately *not* guarded, since they are recorded by a
+        // different control and opening the switcher from the settings window is long-standing.
+        guard !NSApp.isActive else { return false }
+        // Only a fresh keydown acts. Key repeat is swallowed but ignored — cycling ½ → ⅔ → ⅓ under
+        // autorepeat would strobe a window through every width in a fraction of a second — and the
+        // keyup only ever has to be consumed, not acted on.
+        let acts = type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) == 0
+        if let bundleID = activations.bundleID(code: code, flags: flags) {
+            if acts { GlobalActions.activate(bundleID: bundleID) }
             return true
         }
-
-        // Idle: only a trigger keydown opens anything.
-        if type == .keyUp { return false }
-        let backwards = flags.contains(.maskShift)
-        if code == hotkey.keyCode, modifiersMatch(flags, hotkey.heldModifiers) {
-            return open(backwards: backwards)
+        if let action = allWindows.action(code: code, flags: flags) {
+            if acts { GlobalActions.perform(action) }
+            return true
         }
-        // Checked after the main trigger, so binding both to the same chord keeps the switcher.
-        if let sameApp = sameAppHotkey, code == sameApp.keyCode,
-            modifiersMatch(flags, sameApp.heldModifiers) {
-            return openSameApp(backwards: backwards)
-        }
-        // Scoped triggers last among the openers, for the same reason: a chord shared with either
-        // built-in trigger keeps its built-in meaning.
-        //
-        // Inert while we are frontmost, like the other configurable chords. Their recorder lives in
-        // the settings window, and a bound chord matched here would be swallowed before the
-        // recorder's own monitor could see it — so no assigned combination could ever be
-        // re-recorded. The two built-in triggers above are deliberately *not* guarded: they are
-        // recorded by a different control, and opening the switcher from the settings window is
-        // long-standing behaviour.
-        if !NSApp.isActive, let match = scopedTriggers.scope(code: code, flags: flags) {
-            return openScoped(match.scope, held: match.held, backwards: backwards)
+        if let arrangement = tiling.arrangement(code: code, flags: flags) {
+            if acts { applyTiling(arrangement) }
+            return true
         }
         return false
-    }
-
-    /// The arrangement a keypress fires, or nil when tiling must keep its hands off this one.
-    ///
-    /// Tiling is deliberately inert while Cmd-Tab itself is frontmost — which in practice means the
-    /// settings window is open and key. Without that, the tap consumed every bound chord before the
-    /// shortcut recorder's own monitor could see it, so no already-assigned combination could ever
-    /// be re-recorded (swapping two arrangements around was impossible), and the keypress snapped
-    /// the settings window itself instead. We are also the one app whose windows this feature has no
-    /// business moving.
-    private func tilingArrangement(code: Int, flags: CGEventFlags) -> WindowArrangement? {
-        guard !NSApp.isActive else { return nil }
-        return tiling.arrangement(code: code, flags: flags)
     }
 
     /// Snaps the focused window. Both reads here are main-thread reads and this runs on the tap's
@@ -553,10 +549,15 @@ final class SwitcherController {
         // Posted, not inline. `frontmostApplication` and the screen walk are both NSWorkspace/AppKit
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
+        let rules = appRules
         DispatchQueue.main.async {
-            guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            guard let front = NSWorkspace.shared.frontmostApplication,
+                let pid = Optional(front.processIdentifier),
                 pid != ProcessInfo.processInfo.processIdentifier
             else { return }
+            // An app the user has told us never to tile. Checked here rather than in `WindowTiler`
+            // so the tiler stays a pure geometry writer with no opinion about settings.
+            if let id = front.bundleIdentifier, rules[id]?.neverTile == true { return }
             WindowTiler.apply(
                 arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
                 cycleWidths: cycleWidths)
@@ -656,7 +657,43 @@ final class SwitcherController {
     /// Applies a new filter query and relays out — the list, and often its column count, change.
     private func setQuery(_ query: String) {
         model.setQuery(query)
+        updateLaunchSuggestions(for: query)
         scheduleLayout()
+    }
+
+    /// Whether a query that matches nothing running may offer installed apps to launch.
+    var launchFromSearch = true
+
+    /// Offers installed apps when the query has matched nothing on screen.
+    ///
+    /// Only on an empty result, deliberately: the switcher is a switcher, and padding a list that
+    /// already has what you asked for with apps you would have to launch is noise. This is the
+    /// moment the panel would otherwise say "No matches", which is exactly when a launcher is
+    /// useful and nothing is being displaced.
+    ///
+    /// Runs against `InstalledApps`' in-memory catalogue — a filter over a few hundred strings, no
+    /// disk — so it is safe on the keystroke path. The icon lookup is the only I/O and happens for
+    /// at most a handful of results.
+    private func updateLaunchSuggestions(for query: String) {
+        guard launchFromSearch, !model.matchesAnything, !query.isEmpty else {
+            model.setLaunchSuggestions([])
+            return
+        }
+        var excluded = provider.excludedBundleIDs
+        for app in NSWorkspace.shared.runningApplications {
+            if let id = app.bundleIdentifier { excluded.insert(id) }
+        }
+        let suggestions = InstalledApps.matches(query, excluding: excluded).map { entry in
+            SwitchTarget(
+                id: "launch:\(entry.bundleID)", kind: .launch(entry.url), title: entry.name,
+                appName: entry.name,
+                icon: NSWorkspace.shared.icon(forFile: entry.url.path),
+                isMinimized: false, isHidden: false)
+        }
+        model.setLaunchSuggestions(suggestions)
+        // Re-run the query so the freshly added tiles are matched and one of them is selected;
+        // without it the panel would show suggestions with nothing highlighted.
+        if !suggestions.isEmpty { model.setQuery(query) }
     }
 
     /// Set while a relayout is already queued for the next main-loop turn.

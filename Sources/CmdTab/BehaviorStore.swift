@@ -344,6 +344,9 @@ extension Defaults.Keys {
     /// what asks for the permission. Defaulted on, an ungranted install would show nothing on hover
     /// with no hint as to why.
     static let windowPreview = Key<Bool>("windowPreviewOnHover", default: false)
+    /// Offer installed apps when a query matches nothing running. On by default: it only ever
+    /// appears in place of "No matches", so it costs nothing when it is not wanted.
+    static let launchFromSearch = Key<Bool>("launchFromSearch", default: true)
 }
 
 /// Everything the user can tune that is not one of the appearance sliders. One store, backed by the
@@ -369,7 +372,7 @@ final class BehaviorStore: ObservableObject {
         .blurOverride, .blurRadius,
         .showNumbers, .showBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
-        .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview,
+        .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview, .launchFromSearch,
     ]
 
     /// Keys belonging to the *other* stores, which export/import/reset also cover. Listed by name
@@ -378,7 +381,7 @@ final class BehaviorStore: ObservableObject {
         [
             "iconSize", "iconSpacing", "titleSpacing",
             "excludedBundleIDs", "favoriteBundleIDs", "switcherShortcuts",
-        ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys
+        ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
 
     /// The keys export/import/reset operate on.
     static var ownedDefaultsKeys: [String] { ownedKeys.map(\.name) + otherStoreKeys }
@@ -495,6 +498,10 @@ final class BehaviorStore: ObservableObject {
     @Published var windowPreview: Bool = Defaults[.windowPreview] {
         didSet { persist(windowPreview, oldValue, to: .windowPreview) }
     }
+    /// Offer installed apps to launch when a query matches nothing on screen.
+    @Published var launchFromSearch: Bool = Defaults[.launchFromSearch] {
+        didSet { persist(launchFromSearch, oldValue, to: .launchFromSearch) }
+    }
 
     /// The built-in highlight tint. The hex lives in `BehaviorDefault` — see there for why — and
     /// these are the names the rest of the app already uses for it.
@@ -544,6 +551,7 @@ final class BehaviorStore: ObservableObject {
         showMenuBarIcon = Defaults[.showMenuBarIcon]
         menuBarIcon = Defaults[.menuBarIcon]
         windowPreview = Defaults[.windowPreview]
+        launchFromSearch = Defaults[.launchFromSearch]
     }
 
     /// A hotkey lives in two keys — the key code and the modifier mask. An absent *code* is the

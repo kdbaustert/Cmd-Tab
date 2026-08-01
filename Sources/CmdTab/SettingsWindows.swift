@@ -15,8 +15,10 @@ struct WindowSettings: View {
     /// not a fraction of the screen at all.
     private static let groups: [(title: String, arrangements: [WindowArrangement])] = [
         ("Halves", [.leftHalf, .rightHalf, .topHalf, .bottomHalf]),
+        ("Thirds", [.leftThird, .centerThird, .rightThird]),
         ("Corners", [.topLeft, .topRight, .bottomLeft, .bottomRight]),
         ("Whole window", [.maximize, .center, .restore]),
+        ("Displays", [.previousDisplay, .nextDisplay]),
     ]
 
     private var isEnabled: Binding<Bool> {
@@ -25,6 +27,10 @@ struct WindowSettings: View {
 
     private var cycleWidths: Binding<Bool> {
         Binding(get: { store.cycleWidths }, set: { store.cycleWidths = $0 })
+    }
+
+    private var dragSnap: Binding<Bool> {
+        Binding(get: { store.dragSnap }, set: { store.dragSnap = $0 })
     }
 
     var body: some View {
@@ -43,6 +49,11 @@ struct WindowSettings: View {
                     title: "Enable window tiling",
                     subtitle: "Defaults sit on ⌃⌘, which macOS leaves almost entirely free.",
                     isOn: isEnabled)
+                SettingsToggle(
+                    title: "Snap by dragging",
+                    subtitle: "Drag a window's title bar to a screen edge or corner to tile it "
+                        + "there. Independent of the shortcuts below — you can have either, or both.",
+                    isOn: dragSnap)
                 SettingsToggle(
                     title: "Cycle widths",
                     subtitle: "Press the same half twice to step the window through ½ → ⅔ → ⅓ of "
@@ -123,6 +134,8 @@ struct WindowSettings: View {
         switch arrangement {
         case .center: return "Keeps the window's size and centres it."
         case .restore: return "Back to where the window was before you first tiled it."
+        case .previousDisplay, .nextDisplay:
+            return "Keeps the window's size and its relative position on the new display."
         default: return nil
         }
     }

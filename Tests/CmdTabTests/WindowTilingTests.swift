@@ -198,15 +198,115 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertEqual(Set(chords).count, WindowArrangement.allCases.count)
     }
 
-    /// The defaults must not collide with the in-switcher action keys, which are matched with the
-    /// trigger held — a shared chord there would be ambiguous to explain even though the two are
-    /// matched in different states.
-    func testDefaultChordsAreAllControlCommand() {
+    /// Every default holds ⌃⌘. ⇧ is a qualifier on top — the display moves sit on the same arrows
+    /// as the halves, "throw it further" — so the invariant is on `heldModifiers`, which masks it.
+    func testDefaultChordsAllHoldControlCommand() {
         let expected = CGEventFlags.maskControl.union(.maskCommand)
         for arrangement in WindowArrangement.allCases {
             XCTAssertEqual(
-                arrangement.defaultHotkey.modifiers, expected,
-                "\(arrangement.rawValue) should default to ⌃⌘")
+                arrangement.defaultHotkey.heldModifiers, expected,
+                "\(arrangement.rawValue) should hold ⌃⌘")
         }
+    }
+
+    /// The shifted display moves must stay distinct from the unshifted halves they share a key with,
+    /// or throwing a window to the next display would just tile it right.
+    func testDisplayMovesAreDistinctFromTheHalvesTheyShareAKeyWith() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.isEnabled = true
+        let half = WindowArrangement.leftHalf.defaultHotkey
+        let move = WindowArrangement.previousDisplay.defaultHotkey
+        XCTAssertEqual(half.keyCode, move.keyCode)
+        XCTAssertEqual(tiling.arrangement(code: half.keyCode, flags: half.modifiers), .leftHalf)
+        XCTAssertEqual(
+            tiling.arrangement(code: move.keyCode, flags: move.modifiers), .previousDisplay)
+    }
+
+    // MARK: - Thirds
+
+    /// Edges meet to within floating-point noise. The right third is measured back from the area's
+    /// trailing edge rather than forward from two widths, so the two meet at a value that differs in
+    /// the last bits — a gap of about 2×10⁻¹³ points, which is not a seam anyone can see.
+    func testThirdsSpanTheAreaWithoutGaps() {
+        XCTAssertEqual(frame(.leftThird)?.minX, area.minX)
+        XCTAssertEqual(frame(.leftThird)?.maxX ?? 0, frame(.centerThird)?.minX ?? 0, accuracy: 0.001)
+        XCTAssertEqual(frame(.centerThird)?.maxX ?? 0, frame(.rightThird)?.minX ?? 0, accuracy: 0.001)
+        XCTAssertEqual(frame(.rightThird)?.maxX, area.maxX)
+    }
+
+    func testThirdsAreFullHeight() {
+        for arrangement in [WindowArrangement.leftThird, .centerThird, .rightThird] {
+            XCTAssertEqual(frame(arrangement)?.height, area.height)
+            XCTAssertEqual(frame(arrangement)?.width ?? 0, area.width / 3, accuracy: 0.001)
+        }
+    }
+
+    /// A third is already a third — pressing it twice must not start resizing it.
+    func testThirdsDoNotCycle() {
+        for arrangement in [WindowArrangement.leftThird, .centerThird, .rightThird] {
+            XCTAssertFalse(arrangement.cycles)
+        }
+    }
+
+    // MARK: - Display moves
+
+    /// Not computed from the current screen: the caller re-runs them against the destination.
+    func testDisplayMovesHaveNoComputedFrame() {
+        XCTAssertNil(frame(.previousDisplay))
+        XCTAssertNil(frame(.nextDisplay))
+    }
+
+    func testOnlyDisplayMovesCarryAStep() {
+        XCTAssertEqual(WindowArrangement.previousDisplay.displayStep, -1)
+        XCTAssertEqual(WindowArrangement.nextDisplay.displayStep, 1)
+        for arrangement in WindowArrangement.allCases
+        where arrangement != .previousDisplay && arrangement != .nextDisplay {
+            XCTAssertNil(arrangement.displayStep, "\(arrangement.rawValue) is not a display move")
+        }
+    }
+}
+
+/// Zone detection for drag-to-edge snapping. Screen coordinates here are Cocoa's — bottom-up — so
+/// "top" is the maximum y, which is the opposite of everything in the tiling geometry above.
+final class DragSnapZoneTests: XCTestCase {
+    /// A 1600×1000 display at the origin.
+    private let frame = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+
+    private func zone(_ x: CGFloat, _ y: CGFloat) -> WindowArrangement? {
+        DragSnap.zone(for: CGPoint(x: x, y: y), in: frame)
+    }
+
+    func testMiddleOfTheScreenSnapsToNothing() {
+        XCTAssertNil(zone(800, 500))
+    }
+
+    func testEdgesMapToHalvesAndMaximize() {
+        XCTAssertEqual(zone(1, 500), .leftHalf)
+        XCTAssertEqual(zone(1599, 500), .rightHalf)
+        // Top is maximize, matching the edge-snap gesture every other platform ships.
+        XCTAssertEqual(zone(800, 999), .maximize)
+        XCTAssertEqual(zone(800, 1), .bottomHalf)
+    }
+
+    /// Corners take priority over the edges they sit on, and get a much wider catchment — a 12pt
+    /// box at the exact meeting of two edges is not aimable with a window in hand.
+    func testCornersWinOverEdges() {
+        XCTAssertEqual(zone(1, 999), .topLeft)
+        XCTAssertEqual(zone(1599, 999), .topRight)
+        XCTAssertEqual(zone(1, 1), .bottomLeft)
+        XCTAssertEqual(zone(1599, 1), .bottomRight)
+    }
+
+    func testJustInsideTheEdgeStillArms() {
+        XCTAssertEqual(zone(11, 500), .leftHalf)
+    }
+
+    func testWellInsideTheEdgeDoesNot() {
+        XCTAssertNil(zone(40, 500))
+    }
+
+    /// A point on no screen at all — between mismatched displays, or off the end — must not snap.
+    func testAPointOffEveryScreenSnapsToNothing() {
+        XCTAssertNil(DragSnap.zone(for: CGPoint(x: -5000, y: -5000), in: frame))
     }
 }

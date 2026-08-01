@@ -111,6 +111,7 @@ struct AppsSettings: View {
     @ObservedObject var favorites: FavoritesStore
     @StateObject private var apps = AppListModel()
     @ObservedObject private var globals = GlobalActionsStore.shared
+    @ObservedObject private var rules = AppRulesStore.shared
     @State private var query = ""
 
     private var filtered: [AppEntry] {
@@ -169,6 +170,58 @@ struct AppsSettings: View {
                         HStack {
                             Spacer()
                             Button("Add App…", action: addDirectActivation)
+                        }
+                    }
+                }
+            }
+
+            SettingsSection(
+                title: "Per-app overrides", anchor: SettingsAnchor.overrides,
+                footer: "Only apps with an override are listed. Everything else follows the global "
+                    + "settings."
+            ) {
+                if rules.configured.isEmpty {
+                    SettingsWideRow {
+                        HStack {
+                            Text("No overrides.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Add App…", action: addOverride)
+                        }
+                    }
+                } else {
+                    ForEach(rules.configured, id: \.self) { bundleID in
+                        SettingsRow(
+                            title: name(for: bundleID),
+                            subtitle: overrideSubtitle(for: bundleID),
+                            controlWidth: 250
+                        ) {
+                            HStack(spacing: 10) {
+                                Toggle(
+                                    "Windows",
+                                    isOn: Binding(
+                                        get: { rules.rule(for: bundleID).expandWindows },
+                                        set: { rules.setExpandWindows($0, for: bundleID) }))
+                                    .toggleStyle(.checkbox)
+                                    .help(
+                                        "Always list this app's windows individually, even in "
+                                        + "application mode.")
+                                Toggle(
+                                    "No tiling",
+                                    isOn: Binding(
+                                        get: { rules.rule(for: bundleID).neverTile },
+                                        set: { rules.setNeverTile($0, for: bundleID) }))
+                                    .toggleStyle(.checkbox)
+                                    .help("Never let a tiling shortcut move or resize its windows.")
+                            }
+                            .font(.system(size: 11))
+                        }
+                    }
+                    SettingsWideRow {
+                        HStack {
+                            Spacer()
+                            Button("Add App…", action: addOverride)
                         }
                     }
                 }
@@ -292,6 +345,32 @@ struct AppsSettings: View {
         let clashes = globals.activations.conflicts(with: entry.bundleID)
         guard !clashes.isEmpty else { return nil }
         return "Same shortcut as \(clashes.map(name(for:)).joined(separator: ", "))."
+    }
+
+    private func overrideSubtitle(for bundleID: String) -> String? {
+        let rule = rules.rule(for: bundleID)
+        var parts: [String] = []
+        if rule.expandWindows { parts.append("listed window-by-window") }
+        if rule.neverTile { parts.append("never tiled") }
+        // Untick both and the row deletes itself on the next change, so say so rather than leaving
+        // a row that looks like it still does something.
+        return parts.isEmpty ? "No overrides left — this row will disappear." : parts.joined(separator: ", ")
+    }
+
+    private func addOverride() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.message = "Choose apps to override"
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            guard let id = Bundle(url: url)?.bundleIdentifier else { continue }
+            // Seeded with the more common of the two so the new row does something immediately.
+            rules.setExpandWindows(true, for: id)
+        }
     }
 
     /// Reuses the same open panel the rules list uses, minus the favourite/exclude choice — there is

@@ -21,10 +21,13 @@ enum SettingsChrome {
     static let cardFill = Color.primary.opacity(0.05)
     static let cardBorder = Color.primary.opacity(0.09)
 
+    /// Divider between rows, inset to line up with the row's text rather than running wall to wall.
+    static let divider = Color.primary.opacity(0.07)
+
     /// Horizontal inset shared by section headers and row content, so a header sits over its
     /// column rather than floating between them.
     static let rowInset: CGFloat = 14
-    static let pageInset: CGFloat = 20
+    static let pageInset: CGFloat = 18
 }
 
 // MARK: - Flash (search result → the row it landed on)
@@ -54,9 +57,9 @@ struct SettingsPage<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 17) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 22, weight: .bold))
+                    Text(title).font(.system(size: 21, weight: .bold))
                     if let subtitle {
                         Text(subtitle)
                             .font(.system(size: 12))
@@ -70,8 +73,8 @@ struct SettingsPage<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, SettingsChrome.pageInset)
-            .padding(.top, 18)
-            .padding(.bottom, 28)
+            .padding(.top, 15)
+            .padding(.bottom, 24)
         }
     }
 }
@@ -195,7 +198,7 @@ extension View {
     fileprivate func settingsRowDivider() -> some View {
         overlay(alignment: .top) {
             Rectangle()
-                .fill(Color.primary.opacity(0.07))
+                .fill(SettingsChrome.divider)
                 .frame(height: SettingsChrome.hairline)
         }
     }
@@ -349,8 +352,12 @@ struct SettingsTabIcon: View {
                     colors: [start, end], startPoint: .top, endPoint: .bottom))
             .frame(width: size, height: size)
             .overlay {
-                Image(systemName: symbol)
-                    .font(.system(size: size * 0.58, weight: .medium))
+                // Falls back rather than trusting the name. An SF Symbol that does not resolve —
+                // renamed in a later macOS, or simply mistyped — renders as *nothing*, leaving a
+                // blank badge with no hint as to why.
+                Image(systemName: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil
+                    ? symbol : "questionmark")
+                    .font(.system(size: size * 0.55, weight: .medium))
                     .foregroundStyle(.white)
             }
     }

@@ -45,6 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.applyGlobalActions(globals)
         }
 
+        let appRules = AppRulesStore.shared
+        controller.appRules = appRules.rules
+        appRules.onChange = { [weak self] rules in
+            self?.controller.appRules = rules
+        }
+
         let scoped = ScopedTriggersStore.shared
         controller.scopedTriggers = scoped.scoped
         scoped.onChange = { [weak self] triggers in
@@ -66,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // After the stores are wired: enabling this reads the file straight into them, and the
         // observer it installs must not fire against half-built state.
         ConfigFile.shared.start()
+
+        // Catalogued off the main thread now, so the first query that needs it does not pay for a
+        // few hundred Info.plist reads mid-keystroke.
+        InstalledApps.warm()
 
         installSignalHandlers()
 
@@ -120,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.maxColumns = behavior.maxColumns
         controller.showDelay = behavior.showDelay / 1000
         controller.windowPreview = behavior.windowPreview
+        controller.launchFromSearch = behavior.launchFromSearch
         controller.hotkey = behavior.hotkey
         controller.sameAppHotkey = behavior.sameAppCycle ? behavior.sameAppHotkey : nil
         controller.stickyMode = behavior.stickyMode

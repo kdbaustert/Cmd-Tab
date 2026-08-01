@@ -33,6 +33,9 @@ final class TargetProvider {
     /// Whether a refresh builds one target per app or one per window.
     var mode: SwitcherMode = .apps
 
+    /// Per-app overrides. Only apps the user has given a rule appear here.
+    var appRules: [String: AppRule] = [:]
+
     /// Favourited apps, in the user's order. Any that aren't running are appended as launchable
     /// tiles.
     var favoriteBundleIDs: [String] = [] {
@@ -177,8 +180,13 @@ final class TargetProvider {
         // Both read on the main thread, like everything else in this prelude: the window builder
         // needs them and they are only used when the mode asks for windows.
         let windowMRU = self.windowMRU
-        let screenFrames = mode == .windows && NSScreen.screens.count > 1
-            ? Self.screenCGFrames() : []
+        let rules = self.appRules
+        // Apps the user has asked to always see window-by-window, even in app mode.
+        let expanding = mode == .apps
+            ? apps.filter { $0.bundleID.map { rules[$0]?.expandWindows == true } ?? false }
+            : []
+        let needsFrames = mode == .windows || !expanding.isEmpty
+        let screenFrames = needsFrames && NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
         let launchTargets = launchFavorites()
 
@@ -195,6 +203,23 @@ final class TargetProvider {
                     // counts as non-empty rather than being dropped.
                     let owning = Self.windowOwningPIDs()
                     targets.removeAll { !owning.contains($0.pid) }
+                }
+                // Splice each expanded app's windows in where its single tile was, so the list keeps
+                // the order the sort produced rather than gathering them at one end.
+                if !expanding.isEmpty {
+                    let windows = Self.withSpaceBadges(
+                        Self.windowTargets(
+                            expanding, order: order, sortOrder: sortOrder,
+                            windowMRU: windowMRU, screenFrames: screenFrames, badges: badges))
+                    let byPID = Dictionary(grouping: windows, by: \.pid)
+                    targets = targets.flatMap { target -> [SwitchTarget] in
+                        // An expanded app with no windows keeps its app tile: dropping it would make
+                        // the app vanish from the switcher entirely, which the rule never promised.
+                        guard let replacement = byPID[target.pid], !replacement.isEmpty else {
+                            return [target]
+                        }
+                        return replacement
+                    }
                 }
             case .windows:
                 // The same walk the same-app cycle does, over every switchable app rather than one.

@@ -57,9 +57,21 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 
 ### Type to filter
 
-While the switcher is open, just start typing to narrow the list to apps (or, in window mode,
-windows) whose name contains what you typed — space-separated words each have to match, so `saf 2`
-finds Safari's second window. The match is on the tile's title *and* its app name, case-insensitively.
+While the switcher is open, just start typing to narrow the list. Matching is **fuzzy and ranked**:
+each space-separated word must match as a *subsequence*, so `vsc` finds Visual Studio Code and
+`saf 2` still finds Safari's second window. The match is on the tile's title *and* its app name,
+case-insensitively, and the better of the two scores wins so a strong title match is not diluted by
+the app name trailing after it.
+
+Ranking is the point of the scoring: a prefix beats a substring beats scattered characters, matches
+at word boundaries and in consecutive runs score higher, and shorter candidates win ties. The
+selection lands on the **best** match rather than the first one in list order — typing `chr` with
+Character Viewer ahead of Chrome used to highlight the wrong one and make you arrow past it, which
+is exactly the work filtering is meant to save.
+
+When a query matches **nothing** running, the switcher offers installed apps to launch instead —
+the moment it would otherwise have said "No matches", so nothing is displaced. Turn it off with
+*Launch apps from search*.
 Because you are still holding ⌘, the character each key would type is read from the event honouring
 your keyboard layout, so it follows the physical keys rather than assuming a US layout.
 
@@ -124,6 +136,7 @@ Start at login lives in the system's Login Items, not our defaults.
 | Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
 | Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
 | Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, or minimized windows. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. | None |
+| Overview | Every binding in the app in one list, with cross-store conflicts flagged. Each pane warns about clashes inside its own store; nothing could see *across* them, and there are seven kinds of binding over five stores — a tiling chord and a direct activation on the same keys produced no warning anywhere. Shows which of a clashing pair actually fires. | — |
 | Window actions | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
 
 ### Windows
@@ -136,7 +149,10 @@ you are looking at, which is why they are not on the Shortcuts tab with the in-s
 | Enable window tiling | The master switch. **Off by default**: each binding is a real global hotkey, so while tiling is on Cmd-Tab takes those combinations away from whatever app is in front. Nothing is claimed until you ask for it. | Off |
 | Cycle widths | Press the same half twice to step the window through ½ → ⅔ → ⅓ of the screen on that side. The cycle resets when you tile a different window or pick a different arrangement. | On |
 | Halves | Left, right, top, bottom. | ⌃⌘ ← → ↑ ↓ |
+| Thirds | Left, middle, right — a third of the width, full height. | ⌃⌘ 1 2 3 |
 | Corners | Top-left, top-right, bottom-left, bottom-right — each a quarter of the usable area. | ⌃⌘ U I J K |
+| Move to previous / next display | Keeps the window's size and its relative position on the new display. ⇧ on the halves' own arrows: same key, "throw it further". | ⌃⇧⌘ ← → |
+| Snap by dragging | Drag a window's title bar to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, with a translucent preview of where it will land. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
 | Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
 | Center | Keeps the window's size and centres it; a window bigger than the screen is clamped to it. | ⌃⌘C |
 | Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. | ⌃⌘Z |
@@ -260,6 +276,11 @@ is dropped. Captures are debounced per hovered tile, run concurrently, and reuse
 window list so a cursor sweeping across tiles does not re-enumerate the system each time.
 
 ### Apps
+
+**Per-app overrides** are the settings that only became askable once the switcher grew a global
+apps/windows mode and a window tiler: *always list this app window-by-window* even in application
+mode, and *never let a tiling shortcut touch this app* (which the drag gesture honours too). Only
+apps carrying an override are stored, and a row whose overrides are all switched off deletes itself.
 
 **Direct activation** gives an app its own chord: pressing it jumps straight there, launching the
 app if it isn't running. For the handful of apps you reach for all day the switcher is pure
@@ -457,6 +478,11 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SettingsAbout.swift` | The About tab — version, permission status, source link |
 | `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
 | `WindowTiling.swift` | Tiling geometry, the binding store, and the Accessibility frame writer |
+| `DragSnap.swift` | Drag-to-edge snapping: gesture inference, zone geometry, preview overlay |
+| `ShortcutAudit.swift` | Every binding in one list, and cross-store conflict detection |
+| `FuzzyMatch.swift` | Subsequence matching with scoring, for type-to-filter |
+| `InstalledApps.swift` | The installed-app catalogue behind launch-from-search |
+| `AppRules.swift` | Per-app overrides (expand windows, never tile) |
 | `GlobalActions.swift` | Direct-activation and hide/show-all chords, and what they do |
 | `ScopedTriggers.swift` | Extra triggers that open a narrowed window list |
 | `ConfigFile.swift` | The `~/.config` mirror: file watching, write-back, live apply |

@@ -35,30 +35,34 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         }
     }
 
-    var symbol: String {
+    /// The badge's gradient. Muted System Settings-style badges, but this app's own values —
+    /// restoring the *look* does not mean restoring the palette that was copied out of another
+    /// app's source.
+    var gradient: (Color, Color) {
         switch self {
-        case .general: return "gearshape.fill"
-        case .shortcuts: return "command"
-        case .windows: return "macwindow.on.rectangle"
-        case .behavior: return "rectangle.stack.fill"
-        case .appearance: return "paintbrush.fill"
-        case .apps: return "square.grid.2x2.fill"
-        case .about: return "info.circle.fill"
+        case .general: return (Color(hex: "#8E8E93")!, Color(hex: "#6C6C70")!)
+        case .shortcuts: return (Color(hex: "#6E7BFF")!, Color(hex: "#3B45D6")!)
+        case .windows: return (Color(hex: "#3FC7C7")!, Color(hex: "#0E8F97")!)
+        case .behavior: return (Color(hex: "#A96BFF")!, Color(hex: "#6B2FD6")!)
+        case .appearance: return (Color(hex: "#FF8A5B")!, Color(hex: "#E0532B")!)
+        case .apps: return (Color(hex: "#5BC8A8")!, Color(hex: "#17916F")!)
+        case .about: return (Color(hex: "#B8B8BE")!, Color(hex: "#95959B")!)
         }
     }
 
-    /// The badge's gradient — the muted System Settings palette: grey, blue, purple, pink, green.
-    var gradient: (Color, Color) {
+    var symbol: String {
         switch self {
-        case .general: return (Color(hex: "#898A8F")!, Color(hex: "#67686E")!)
-        case .shortcuts: return (Color(hex: "#40BCFF")!, Color(hex: "#0060FF")!)
-        case .windows: return (Color(hex: "#5AC8FA")!, Color(hex: "#0A84C4")!)
-        case .behavior: return (Color(hex: "#B272FF")!, Color(hex: "#6228FF")!)
-        case .appearance: return (Color(hex: "#FF6991")!, Color(hex: "#D41E5A")!)
-        case .apps: return (Color(hex: "#4ED98F")!, Color(hex: "#12A85B")!)
-        case .about: return (Color(hex: "#8E8E93")!, Color(hex: "#5A5A5F")!)
+        case .general: return "slider.horizontal.3"
+        case .shortcuts: return "keyboard.fill"
+        // The tab is about tiling, so a split rectangle says more than a plain window outline.
+        case .windows: return "rectangle.split.2x2.fill"
+        case .behavior: return "arrow.triangle.2.circlepath"
+        case .appearance: return "paintpalette.fill"
+        case .apps: return "square.stack.fill"
+        case .about: return "info.bubble.fill"
         }
     }
+
 }
 
 /// Section anchors, so the search index and the sections themselves agree on one spelling.
@@ -72,6 +76,7 @@ enum SettingsAnchor {
     static let trigger = "shortcuts.trigger"
     static let panelKeys = "shortcuts.panelKeys"
     static let scoped = "shortcuts.scoped"
+    static let overview = "shortcuts.overview"
 
     static let tiling = "windows.tiling"
     static let allWindows = "windows.allWindows"
@@ -89,6 +94,7 @@ enum SettingsAnchor {
 
     static let appRules = "apps.rules"
     static let directActivation = "apps.directActivation"
+    static let overrides = "apps.overrides"
 
     static let permissions = "about.permissions"
     static let build = "about.build"
@@ -140,6 +146,9 @@ enum SettingsIndex {
              ["hotkey", "shortcut", "cmd tab", "command tab", "trigger", "key"]),
         item("sameApp", .shortcuts, SettingsAnchor.trigger, "Trigger", "Cycle app windows",
              ["window cycle", "same app", "backtick", "cmd `", "windows"]),
+        item("overview", .shortcuts, SettingsAnchor.overview, "Overview", "Shortcut overview",
+             ["overview", "conflict", "conflicts", "collision", "clash", "all shortcuts",
+              "bindings", "what is bound", "duplicate"]),
         item("scoped", .shortcuts, SettingsAnchor.scoped, "Scoped shortcuts",
              "Scoped shortcuts",
              ["scope", "scoped", "this app", "this display", "minimized", "all windows",
@@ -159,6 +168,13 @@ enum SettingsIndex {
              "Jump straight to an app",
              ["direct", "activate", "jump", "hotkey", "per app", "shortcut", "focus app",
               "launch"]),
+
+        item("overrides", .apps, SettingsAnchor.overrides, "Per-app overrides",
+             "Per-app overrides",
+             ["per app", "override", "rule", "expand windows", "never tile", "exception"]),
+        item("launchFromSearch", .behavior, SettingsAnchor.session, "Session",
+             "Launch apps from search",
+             ["launch", "launcher", "open app", "search", "not running", "no matches"]),
 
         item("showDelay", .behavior, SettingsAnchor.session, "Session", "Show delay",
              ["delay", "wait", "flash", "quick tap", "reveal"]),
@@ -254,7 +270,7 @@ struct SettingsRootView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-                .frame(width: 208)
+                .frame(width: 192)
                 .background(VisualEffectBackground(material: .sidebar, blurRadius: nil))
             Divider()
             detail
@@ -262,7 +278,7 @@ struct SettingsRootView: View {
                 // Deliberately no background: the window's own glass backdrop shows through here,
                 // and a second opaque fill on top of it would be the one thing that undoes it.
         }
-        .frame(minWidth: 800, idealWidth: 840, minHeight: 560, idealHeight: 640)
+        .frame(minWidth: 700, idealWidth: 760, minHeight: 500, idealHeight: 580)
         .environment(\.settingsFlash, flash)
     }
 
@@ -552,6 +568,83 @@ struct ShortcutSettings: View {
         .fixedSize()
     }
 
+    /// Every binding in the app, and anything two of them are fighting over.
+    ///
+    /// Each pane already warns about clashes inside its own store; nothing could see *across*
+    /// stores, which is where the confusing collisions live — a tiling chord and a direct
+    /// activation on the same keys produced no warning at all.
+    @ViewBuilder
+    private var overviewSection: some View {
+        let all = ShortcutAudit.entries()
+        let collisions = ShortcutAudit.collisions(in: all)
+        SettingsSection(
+            title: "Overview", anchor: SettingsAnchor.overview,
+            footer: "Bindings are matched in the order listed above, so the first one to claim a "
+                + "combination is the one that fires. Openers come first: nothing you bind can take "
+                + "the switcher's own trigger away from it."
+        ) {
+            if collisions.isEmpty {
+                SettingsRow(
+                    title: "No conflicts",
+                    subtitle: "\(all.filter { $0.chord != nil }.count) shortcuts assigned across "
+                        + "\(ShortcutEntry.Kind.allCases.count) groups."
+                ) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.green)
+                }
+            } else {
+                ForEach(collisions) { collision in
+                    SettingsRow(
+                        title: collision.display,
+                        subtitle: description(of: collision)
+                    ) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.orange)
+                    }
+                }
+            }
+            DisclosureGroup {
+                VStack(spacing: 0) {
+                    ForEach(all) { entry in
+                        HStack(spacing: 10) {
+                            Text(entry.label)
+                                .font(.system(size: 12))
+                                .foregroundStyle(entry.isActive ? .primary : .secondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text("\(entry.kind.title) · \(entry.kind.location)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                            Text(entry.display)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(entry.chord == nil ? .tertiary : .secondary)
+                                .frame(width: 78, alignment: .trailing)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Text("All bindings").font(.system(size: 13))
+            }
+            .padding(.horizontal, SettingsChrome.rowInset)
+            .padding(.vertical, 9)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(SettingsChrome.divider)
+                    .frame(height: SettingsChrome.hairline)
+                    .padding(.leading, SettingsChrome.rowInset)
+            }
+        }
+    }
+
+    private func description(of collision: ShortcutCollision) -> String {
+        let losers = collision.losers.map { "\($0.label) (\($0.kind.title))" }
+            .joined(separator: ", ")
+        guard let winner = collision.winner else { return "" }
+        return "\(winner.label) (\(winner.kind.title)) wins. Never fires: \(losers)."
+    }
+
     private func scopedSubtitle(for trigger: ScopedTrigger) -> String? {
         guard let hotkey = scoped.hotkey(for: trigger.id) else {
             return "No shortcut yet — click Not set and press a combination."
@@ -587,6 +680,8 @@ struct ShortcutSettings: View {
                     }
                 }
             }
+
+            overviewSection
 
             SettingsSection(
                 title: "Scoped shortcuts", anchor: SettingsAnchor.scoped,
@@ -773,7 +868,7 @@ final class SettingsPresenter {
     /// installed app — real work for a window most sessions never open.
     private static func makeWindow() -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 840, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 580),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
@@ -797,7 +892,11 @@ final class SettingsPresenter {
         window.isReleasedWhenClosed = false
         window.contentView = glassContent()
         window.center()
-        window.setFrameAutosaveName("CmdTabSettings")
+        // Suffixed deliberately. Setting an autosave name applies the frame saved under it, so an
+        // install that has opened Settings before would come back at the old size and never see a
+        // changed default. A new name means the size below stands once, and every resize after that
+        // is remembered as usual.
+        window.setFrameAutosaveName("CmdTabSettings.760")
         return window
     }
 
