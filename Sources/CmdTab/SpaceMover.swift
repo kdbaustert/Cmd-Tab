@@ -11,6 +11,7 @@ enum SpaceMover {
     private typealias CopySpacesForWindowsFn =
         @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
     private typealias MoveWindowsFn = @convention(c) (Int32, CFArray, UInt64) -> Void
+    private typealias SetCurrentSpaceFn = @convention(c) (Int32, CFString, UInt64) -> Void
 
     private static let handle = dlopen(
         "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight", RTLD_LAZY)
@@ -25,6 +26,8 @@ enum SpaceMover {
     private static let copySpacesForWindows =
         symbol("CGSCopySpacesForWindows", CopySpacesForWindowsFn.self)
     private static let moveWindows = symbol("CGSMoveWindowsToManagedSpace", MoveWindowsFn.self)
+    private static let setCurrentSpace =
+        symbol("CGSManagedDisplaySetCurrentSpace", SetCurrentSpaceFn.self)
 
     static var isAvailable: Bool {
         mainConnection != nil && copyManaged != nil && copySpacesForWindows != nil
@@ -80,6 +83,65 @@ enum SpaceMover {
         // is indistinguishable from the action never running.
         Log.general.notice(
             "space move: window \(window, privacy: .public) is on no standard Space (fullscreen?)")
+    }
+
+    /// Where `window` lives and what is currently in front on that window's display.
+    ///
+    /// The single source of truth for every Space decision here, so `reveal` and `isOnCurrentSpace`
+    /// cannot disagree about a window — and so the two ids can be logged side by side, which is the
+    /// only way to tell "the window really is on this Desktop" from "the lookup is lying".
+    /// nil when the layout can't be read at all.
+    static func spaceState(of window: CGWindowID)
+        -> (windowSpace: UInt64, currentSpace: UInt64, display: String)?
+    {
+        guard window != 0, let mainConnection, let copyManaged, let copySpacesForWindows else {
+            return nil
+        }
+        let cid = mainConnection()
+        guard
+            let raw = copySpacesForWindows(cid, 0x7, [NSNumber(value: window)] as CFArray)?
+                .takeRetainedValue(),
+            let space = (raw as? [NSNumber])?.first?.uint64Value, space != 0,
+            let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]]
+        else { return nil }
+        for display in displays {
+            guard let spaces = display["Spaces"] as? [[String: Any]],
+                spaces.contains(where: { spaceID(from: $0) == space }),
+                let identifier = display["Display Identifier"] as? String
+            else { continue }
+            let current = (display["Current Space"] as? [String: Any]).flatMap(spaceID(from:)) ?? 0
+            return (space, current, identifier)
+        }
+        return nil
+    }
+
+    /// Switches whichever display holds `window` to the Space that window is on. True when a switch
+    /// was actually needed and issued.
+    ///
+    /// Without this a window on another Desktop cannot be reached at all: `AXRaise` only orders
+    /// windows *within* the Space they already occupy, and activating an app does not follow one of
+    /// its windows across Desktops. Clicking the preview thumbnail of a window on Desktop 2 while
+    /// looking at Desktop 1 therefore brought the app forward on Desktop 1 and left the clicked
+    /// window exactly where it was.
+    ///
+    /// Works per display, so it covers both halves of the same problem: the target Space may be on
+    /// another monitor, in which case that monitor is the one switched.
+    @discardableResult
+    static func reveal(window: CGWindowID) -> Bool {
+        guard let setCurrentSpace, let mainConnection,
+            let state = spaceState(of: window)
+        else {
+            Log.general.notice("space reveal: no Space for window \(window, privacy: .public)")
+            return false
+        }
+        // Already looking at it. Worth checking — a redundant switch still animates, which on the
+        // common case (same Desktop) would put a needless lurch in front of every pick.
+        guard state.windowSpace != state.currentSpace else { return false }
+        Log.general.notice(
+            "space reveal: window \(window, privacy: .public) space \(state.currentSpace, privacy: .public) -> \(state.windowSpace, privacy: .public)"
+        )
+        setCurrentSpace(mainConnection(), state.display as CFString, state.windowSpace)
+        return true
     }
 
     /// Every user Space in order, flattened across displays.

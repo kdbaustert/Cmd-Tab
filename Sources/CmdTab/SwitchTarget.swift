@@ -68,6 +68,9 @@ extension SwitchTarget {
 
     /// Brings the target forward. Unminimizing has to happen before the raise, and the app
     /// activation has to happen after it, or the window comes up behind its own app.
+    ///
+    /// A window target defers to `focusWindow`, which additionally switches Desktops when the window
+    /// lives on another one — the difference between going to a window and dragging it to you.
     func focus() {
         // A favourite that isn't running launches instead of switching — handled before the
         // running-app guard below, which would otherwise reject its absent pid.
@@ -87,15 +90,32 @@ extension SwitchTarget {
             Self.restoreWindowIfAllMinimized(pid: pid)
 
         case .window(_, let window):
-            if isMinimized {
-                AXUIElementSetAttributeValue(
-                    window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
-            }
             if app.isHidden { app.unhide() }
-            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-            AXUIElementSetAttributeValue(
-                window, kAXMainAttribute as CFString, true as CFTypeRef)
-            app.activate()
+            // Routed through `focusWindow` so the same-app cycle obeys the Desktop rule the hover
+            // preview's click does — see there. Raising a window that lives on another Desktop drags
+            // it onto the current one rather than taking you to it, so committing to a window on
+            // Desktop 2 used to quietly pull it over and scramble a multi-Desktop layout.
+            let parsed = windowID
+            let wasMinimized = isMinimized
+            let pid = self.pid
+            Self.focusQueue.async {
+                let resolved = parsed ?? TargetProvider.windowID(window)
+                guard let id = resolved, id != 0, !wasMinimized else {
+                    // Either no id to look a Space up with, or a minimized window — which sits in
+                    // the Dock, on no Desktop at all, so there is nothing to switch to first and
+                    // the direct raise is both correct and what this path has always done.
+                    AXUIElementSetAttributeValue(
+                        window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
+                    AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                    AXUIElementSetAttributeValue(
+                        window, kAXMainAttribute as CFString, true as CFTypeRef)
+                    DispatchQueue.main.async {
+                        NSRunningApplication(processIdentifier: pid)?.activate()
+                    }
+                    return
+                }
+                Self.focusWindow(id: id, pid: pid)
+            }
 
         case .launch:
             break  // handled above
@@ -140,27 +160,91 @@ extension SwitchTarget {
     /// falls back to just activating the app.
     static func focusWindow(id: CGWindowID, pid: pid_t) {
         focusQueue.async {
-            let raised = raise(window: id, pid: pid)
+            // Switching Desktops comes first, before anything touches the window over Accessibility.
+            //
+            // Raising, maining or focusing a window that lives on another Space does *not* take you
+            // to it — macOS pulls the window onto the Space you are already on. That is what made
+            // clicking one thumbnail drag the other window onto the current Desktop, and it also hid
+            // the problem from this log: the raise relocated the window, so the Space lookup that
+            // followed saw it on the current Space and reported nothing to switch to.
+            //
+            // Reading the window's Space first and moving *ourselves* there is the only order that
+            // leaves the user's arrangement alone. It covers other displays too, since a Space
+            // belongs to a display — `reveal` switches whichever monitor holds the target Space.
+            let state = SpaceMover.spaceState(of: id)
+            let switched = SpaceMover.reveal(window: id)
+            Log.general.notice(
+                "focus window \(id, privacy: .public): windowSpace=\(state?.windowSpace ?? 0, privacy: .public) current=\(state?.currentSpace ?? 0, privacy: .public) switch=\(switched, privacy: .public)"
+            )
+            // Nothing touches the app or the window until we have actually arrived on its Desktop.
+            //
+            // `activate()` used to run here, immediately, while the transition was still in flight —
+            // and activating an app whose current window is elsewhere gathers that window to the
+            // Space you are on, which relocated the window just as surely as an early raise did.
+            // Both halves have to wait for the arrival, so both now live behind the same gate.
+            settle(window: id, pid: pid, attempts: 14, delay: switched ? 0.15 : 0.02)
+        }
+    }
+
+    /// Waits until `window` is genuinely on screen, then raises it and activates its app.
+    ///
+    /// `NSRunningApplication.activate()` is what relocates a window across Desktops — measured, not
+    /// assumed: activating an app whose window sits on another Space gathers that window onto the
+    /// Space you are looking at, while an `AXRaise` on the same window does nothing at all. So the
+    /// activation is the step that must not happen until the switch has landed.
+    ///
+    /// The gate is on-screen membership rather than the window server's `Current Space` field,
+    /// because that field flips the instant a switch is *issued* while the transition still has
+    /// several hundred milliseconds to run — so it read as "arrived" during exactly the window in
+    /// which activating still gathered the window. A window only joins the on-screen list once its
+    /// Desktop is actually being displayed, which is the thing worth waiting for.
+    ///
+    /// Polled rather than given a fixed delay: the wait has two unrelated causes with no shared
+    /// timescale — the transition, and an app whose accessibility tree is still waking up
+    /// (Chromium, Electron). The poll stops the moment the window is reachable, which on the common
+    /// case of a same-Desktop pick is the first attempt.
+    private static func settle(
+        window id: CGWindowID, pid: pid_t, attempts: Int, delay: TimeInterval
+    ) {
+        guard attempts > 0 else {
+            // Deliberately gives up rather than acting anyway. Activating or raising at this point
+            // would be doing it to a window still on another Desktop, which relocates it — and
+            // silently scrambling a multi-Desktop layout is far worse than a pick that did nothing.
+            Log.general.notice(
+                "focus window \(id, privacy: .public): never reached its Space, gave up")
+            return
+        }
+        focusQueue.asyncAfter(deadline: .now() + delay) {
+            guard isOnScreen(window: id) else {
+                settle(window: id, pid: pid, attempts: attempts - 1, delay: delay)
+                return
+            }
+            // The window is genuinely in front now, so neither step below can relocate it. Order
+            // matters: the raise goes first, measured to be harmless off-Space and here making the
+            // clicked window the app's front one, so the activation that follows has nothing else
+            // to surface.
+            _ = raise(window: id, pid: pid)
             DispatchQueue.main.async {
                 let app = NSRunningApplication(processIdentifier: pid)
                 if app?.isHidden == true { app?.unhide() }
                 app?.activate()
-                guard !raised else { return }
-                // The raise found no matching window. Apps that build their accessibility tree on
-                // demand — Chromium, Electron — report *no* windows at all until they are active,
-                // so the first attempt was against an empty list. Now that the app has been brought
-                // forward, its tree is live and the same lookup usually succeeds; without this
-                // retry, clicking any of their thumbnails would activate the app but leave whichever
-                // window was already in front, which is not the one that was clicked.
-                focusQueue.asyncAfter(deadline: .now() + 0.15) {
-                    _ = raise(window: id, pid: pid)
-                }
             }
         }
     }
 
-    /// Unminimizes, raises and mains the window with `id`. False when the app's Accessibility list
-    /// has no such window, which is the caller's cue to try again once it is active.
+    /// Whether the window is currently displayed — false while it sits on another Desktop, which is
+    /// how a Desktop transition is known to have finished. Public `CGWindowList`, no private API.
+    private static func isOnScreen(window: CGWindowID) -> Bool {
+        guard window != 0 else { return true }
+        guard
+            let list = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return true }
+        return list.contains { ($0[kCGWindowNumber as String] as? CGWindowID) == window }
+    }
+
+    /// Unminimizes, raises and focuses the window with `id`. False when the app's Accessibility list
+    /// has no such window — worth knowing, but every caller simply tries again once it is active.
     @discardableResult
     private static func raise(window id: CGWindowID, pid: pid_t) -> Bool {
         guard id != 0,
@@ -171,6 +255,9 @@ extension SwitchTarget {
             window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
         AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, true as CFTypeRef)
+        // Main is the app's own notion of its current window; focused is what actually moves the
+        // keyboard there, and the two come apart when the window is on another display's Space.
+        AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, true as CFTypeRef)
         return true
     }
 
