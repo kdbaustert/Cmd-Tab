@@ -78,6 +78,24 @@ final class ConfigFile: ObservableObject {
         observeSettingsChanges()
     }
 
+    /// Re-reads the switch from `UserDefaults` and starts or stops watching to match.
+    ///
+    /// Called after an import or a reset, both of which write the key underneath us: "Reset to
+    /// defaults" clears it, and without this the app went on mirroring to a file the preferences
+    /// said it had stopped using — a watcher running against a setting that was no longer true.
+    /// Guarded on an actual change so re-reading cannot tear down a healthy watcher.
+    func reload() {
+        let stored = UserDefaults.standard.bool(forKey: Key.enabled)
+        guard stored != isEnabled else { return }
+        isEnabled = stored
+        if stored {
+            beginWatching()
+            observeSettingsChanges()
+        } else {
+            stopWatching()
+        }
+    }
+
     func setEnabled(_ enabled: Bool) {
         guard enabled != isEnabled else { return }
         isEnabled = enabled

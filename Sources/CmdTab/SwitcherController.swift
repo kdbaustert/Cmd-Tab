@@ -519,7 +519,14 @@ final class SwitcherController {
         }
         // Scoped triggers last among the openers, for the same reason: a chord shared with either
         // built-in trigger keeps its built-in meaning.
-        if let match = scopedTriggers.scope(code: code, flags: flags) {
+        //
+        // Inert while we are frontmost, like the other configurable chords. Their recorder lives in
+        // the settings window, and a bound chord matched here would be swallowed before the
+        // recorder's own monitor could see it — so no assigned combination could ever be
+        // re-recorded. The two built-in triggers above are deliberately *not* guarded: they are
+        // recorded by a different control, and opening the switcher from the settings window is
+        // long-standing behaviour.
+        if !NSApp.isActive, let match = scopedTriggers.scope(code: code, flags: flags) {
             return openScoped(match.scope, held: match.held, backwards: backwards)
         }
         return false
@@ -542,12 +549,18 @@ final class SwitcherController {
     /// own callback (which is on the main run loop), so they happen inline; every Accessibility
     /// call — the part that can block — happens on `WindowTiler`'s queue.
     private func applyTiling(_ arrangement: WindowArrangement) {
-        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
-            pid != ProcessInfo.processInfo.processIdentifier
-        else { return }
-        WindowTiler.apply(
-            arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
-            cycleWidths: tiling.cycleWidths)
+        let cycleWidths = tiling.cycleWidths
+        // Posted, not inline. `frontmostApplication` and the screen walk are both NSWorkspace/AppKit
+        // reads, which the class invariant keeps off the tap callback — and there is nothing to
+        // report back, since the key is already swallowed by the time this runs.
+        DispatchQueue.main.async {
+            guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                pid != ProcessInfo.processInfo.processIdentifier
+            else { return }
+            WindowTiler.apply(
+                arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
+                cycleWidths: cycleWidths)
+        }
     }
 
     /// Moves the highlight.

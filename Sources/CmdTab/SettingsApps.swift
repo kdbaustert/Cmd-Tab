@@ -79,6 +79,13 @@ final class AppListModel: ObservableObject {
         }
     }
 
+    /// The display name for an app that is not in `entries` — a direct-activation target that is
+    /// not running and is neither favourited nor excluded. Shares `installedCache`, so a settings
+    /// pane that asks on every render pays the LaunchServices lookup once.
+    func installedName(for bundleID: String) -> String {
+        installedEntry(for: bundleID).name
+    }
+
     /// Resolves a bundle identifier to something displayable. Falls back to the raw identifier
     /// so an app that has since been uninstalled still gets a row the user can untick. Shares
     /// `appInfo` with the launch tiles so a row cannot read "Xcode.app" where the tile says
@@ -268,9 +275,14 @@ struct AppsSettings: View {
     ///
     /// Falls through to the raw identifier rather than hiding the row: an app that has since been
     /// uninstalled still needs to be removable, which it cannot be if it does not appear.
+    ///
+    /// The not-running lookup is cached. `FavoritesStore.appInfo` is a LaunchServices call plus two
+    /// disk reads, and this is called from a view body — once per direct-activation row, on every
+    /// render, including every keystroke into the search field above it. `AppListModel` caches the
+    /// same lookup for exactly this reason.
     private func name(for bundleID: String) -> String {
         if let entry = apps.entries.first(where: { $0.id == bundleID }) { return entry.name }
-        return FavoritesStore.appInfo(for: bundleID)?.name ?? bundleID
+        return apps.installedName(for: bundleID)
     }
 
     private func activationSubtitle(for entry: DirectActivation) -> String? {

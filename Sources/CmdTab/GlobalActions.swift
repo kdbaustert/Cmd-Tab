@@ -249,6 +249,15 @@ final class GlobalActionsStore: ObservableObject {
 
 // MARK: - Performing
 
+/// Everything here is posted rather than run inline.
+///
+/// The only caller is the event-tap callback, and `SwitcherController`'s invariant is explicit that
+/// NSWorkspace and LaunchServices belong behind a `DispatchQueue.main.async`: a tap that overruns
+/// the system's deadline is disabled outright, and while it is down *every* keystroke on the machine
+/// is dropped. `perform(.hide)` walks every running application and sends each one an IPC `hide()`,
+/// and `activate` can reach LaunchServices for an app that is not running — neither is anywhere near
+/// cheap enough for the callback. Deferring costs nothing: nothing here reports back, and the key is
+/// already swallowed by the time these run.
 enum GlobalActions {
     /// Brings an app forward, launching it if it is not running.
     ///
@@ -256,49 +265,54 @@ enum GlobalActions {
     /// bundle: `openApplication` on a running app works, but it also asks LaunchServices to resolve
     /// and open the bundle, which is a disk hit on the path where the app is already right there.
     static func activate(bundleID: String) {
-        if let running = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == bundleID && !$0.isTerminated
-        }) {
-            running.activate(options: [.activateAllWindows])
-            return
+        DispatchQueue.main.async {
+            if let running = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleID && !$0.isTerminated
+            }) {
+                running.activate(options: [.activateAllWindows])
+                return
+            }
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            else {
+                Log.general.error("direct activation: no app for \(bundleID, privacy: .public)")
+                return
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            Log.general.error("direct activation: no app for \(bundleID, privacy: .public)")
-            return
-        }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: configuration)
     }
 
     /// Bundle ids hidden by the last "hide all", so "show all" restores exactly those.
     ///
     /// Without it, showing all would also unhide apps the user had hidden themselves, quietly
     /// undoing a decision this feature never made.
-    private static var hiddenByUs: [String] = []
+    @MainActor private static var hiddenByUs: [String] = []
 
     static func perform(_ action: AllWindowsAction) {
-        switch action {
-        case .hide:
-            var hidden: [String] = []
-            for app in NSWorkspace.shared.runningApplications {
-                guard app.activationPolicy == .regular, !app.isHidden, !app.isTerminated,
-                    let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier
-                else { continue }
-                if app.hide() { hidden.append(id) }
+        DispatchQueue.main.async {
+            switch action {
+            case .hide:
+                var hidden: [String] = []
+                for app in NSWorkspace.shared.runningApplications {
+                    guard app.activationPolicy == .regular, !app.isHidden, !app.isTerminated,
+                        let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier
+                    else { continue }
+                    if app.hide() { hidden.append(id) }
+                }
+                hiddenByUs = hidden
+            case .show:
+                // Restore what we hid; if that list is empty — a fresh launch, say — fall back to
+                // unhiding everything, which is what someone pressing "show all" plainly means.
+                let targets = hiddenByUs
+                for app in NSWorkspace.shared.runningApplications {
+                    guard app.activationPolicy == .regular, app.isHidden,
+                        let id = app.bundleIdentifier
+                    else { continue }
+                    if targets.isEmpty || targets.contains(id) { app.unhide() }
+                }
+                hiddenByUs = []
             }
-            hiddenByUs = hidden
-        case .show:
-            // Restore what we hid; if that list is empty — a fresh launch, say — fall back to
-            // unhiding everything, which is what someone pressing "show all" plainly means.
-            let targets = hiddenByUs
-            for app in NSWorkspace.shared.runningApplications {
-                guard app.activationPolicy == .regular, app.isHidden,
-                    let id = app.bundleIdentifier
-                else { continue }
-                if targets.isEmpty || targets.contains(id) { app.unhide() }
-            }
-            hiddenByUs = []
         }
     }
 }
