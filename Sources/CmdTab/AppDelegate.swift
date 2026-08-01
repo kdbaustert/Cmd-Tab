@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// wholesale on any change rather than tracking which field moved.
     private func applyBehavior(_ behavior: BehaviorStore) {
         controller.sortOrder = behavior.sortOrder
+        controller.layout = behavior.layout
         controller.hideEmptyApps = behavior.hideEmptyApps
         controller.panelAppearance = behavior.panelAppearance
         controller.panelPosition = behavior.panelPosition

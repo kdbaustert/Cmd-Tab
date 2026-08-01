@@ -228,6 +228,17 @@ final class SwitcherPanel: NSPanel {
         let count = model.targets.count
         guard count > 0 else { return 1 }
         let metrics = model.metrics
+        // A list wraps on *height*: rows stack downward, so what runs out first is vertical room,
+        // and a second column is what a long list needs rather than a narrower row.
+        if model.layout == .list {
+            let row = metrics.listRow(for: model.mode)
+            let available = screen.visibleFrame.height * Metrics.maxScreenFraction
+                - Metrics.panelPadding * 2
+            let perColumn = max(Int(available / (row.height + Metrics.rowGap)), 1)
+            var needed = Int((Double(count) / Double(perColumn)).rounded(.up))
+            if cap > 0 { needed = min(needed, cap) }
+            return max(needed, 1)
+        }
         let tileWidth = metrics.tile(for: model.mode, showsTitle: model.showsTitle).width
             + Metrics.tileGap
         let available = screen.visibleFrame.width * Metrics.maxScreenFraction

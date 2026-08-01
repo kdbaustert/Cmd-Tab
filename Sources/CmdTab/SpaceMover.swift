@@ -85,15 +85,28 @@ enum SpaceMover {
             "space move: window \(window, privacy: .public) is on no standard Space (fullscreen?)")
     }
 
+    /// Where a window lives and what is currently in front on that window's display.
+    struct SpaceState {
+        let windowSpace: UInt64
+        let currentSpace: UInt64
+        let display: String
+    }
+
+    /// What `reveal` found and did. The state comes back with it so callers can log where the
+    /// window was without paying for the whole display/Space enumeration a second time.
+    struct Reveal {
+        /// nil when the layout could not be read at all.
+        let state: SpaceState?
+        /// Whether a Space switch was actually needed and issued.
+        let switched: Bool
+    }
+
     /// Where `window` lives and what is currently in front on that window's display.
     ///
-    /// The single source of truth for every Space decision here, so `reveal` and `isOnCurrentSpace`
-    /// cannot disagree about a window — and so the two ids can be logged side by side, which is the
-    /// only way to tell "the window really is on this Desktop" from "the lookup is lying".
-    /// nil when the layout can't be read at all.
-    static func spaceState(of window: CGWindowID)
-        -> (windowSpace: UInt64, currentSpace: UInt64, display: String)?
-    {
+    /// The single source of truth for every Space decision here, so the two ids can be logged side
+    /// by side — the only way to tell "the window really is on this Desktop" from "the lookup is
+    /// lying". nil when the layout can't be read at all.
+    private static func spaceState(of window: CGWindowID) -> SpaceState? {
         guard window != 0, let mainConnection, let copyManaged, let copySpacesForWindows else {
             return nil
         }
@@ -101,22 +114,31 @@ enum SpaceMover {
         guard
             let raw = copySpacesForWindows(cid, 0x7, [NSNumber(value: window)] as CFArray)?
                 .takeRetainedValue(),
-            let space = (raw as? [NSNumber])?.first?.uint64Value, space != 0,
+            let occupied = (raw as? [NSNumber])?.map({ $0.uint64Value }).filter({ $0 != 0 }),
+            !occupied.isEmpty,
             let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]]
         else { return nil }
+        // A window can sit on several Spaces at once — an app set to "All Desktops" in the Dock's
+        // options being the everyday case. Whichever of them is already in front is the answer:
+        // taking the first would report a window the user is looking at as living elsewhere, and
+        // `reveal` would then animate them off the Desktop they are on to "reach" it.
+        var elsewhere: SpaceState?
         for display in displays {
             guard let spaces = display["Spaces"] as? [[String: Any]],
-                spaces.contains(where: { spaceID(from: $0) == space }),
                 let identifier = display["Display Identifier"] as? String
             else { continue }
             let current = (display["Current Space"] as? [String: Any]).flatMap(spaceID(from:)) ?? 0
-            return (space, current, identifier)
+            for space in spaces.compactMap(spaceID(from:)) where occupied.contains(space) {
+                let state = SpaceState(
+                    windowSpace: space, currentSpace: current, display: identifier)
+                if space == current { return state }
+                if elsewhere == nil { elsewhere = state }
+            }
         }
-        return nil
+        return elsewhere
     }
 
-    /// Switches whichever display holds `window` to the Space that window is on. True when a switch
-    /// was actually needed and issued.
+    /// Switches whichever display holds `window` to the Space that window is on.
     ///
     /// Without this a window on another Desktop cannot be reached at all: `AXRaise` only orders
     /// windows *within* the Space they already occupy, and activating an app does not follow one of
@@ -127,21 +149,25 @@ enum SpaceMover {
     /// Works per display, so it covers both halves of the same problem: the target Space may be on
     /// another monitor, in which case that monitor is the one switched.
     @discardableResult
-    static func reveal(window: CGWindowID) -> Bool {
-        guard let setCurrentSpace, let mainConnection,
-            let state = spaceState(of: window)
-        else {
+    static func reveal(window: CGWindowID) -> Reveal {
+        guard let state = spaceState(of: window) else {
             Log.general.notice("space reveal: no Space for window \(window, privacy: .public)")
-            return false
+            return Reveal(state: nil, switched: false)
         }
         // Already looking at it. Worth checking — a redundant switch still animates, which on the
         // common case (same Desktop) would put a needless lurch in front of every pick.
-        guard state.windowSpace != state.currentSpace else { return false }
+        guard state.windowSpace != state.currentSpace else {
+            return Reveal(state: state, switched: false)
+        }
+        guard let setCurrentSpace, let mainConnection else {
+            Log.general.notice("space reveal: cannot switch Space, private symbol unavailable")
+            return Reveal(state: state, switched: false)
+        }
         Log.general.notice(
             "space reveal: window \(window, privacy: .public) space \(state.currentSpace, privacy: .public) -> \(state.windowSpace, privacy: .public)"
         )
         setCurrentSpace(mainConnection(), state.display as CFString, state.windowSpace)
-        return true
+        return Reveal(state: state, switched: true)
     }
 
     /// Every user Space in order, flattened across displays.

@@ -112,94 +112,58 @@ struct AppsSettings: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            list
-            Divider()
-            footer
+        SettingsPage(
+            title: "Apps",
+            subtitle: "Star an app to keep it in the switcher even when it isn't running; picking "
+                + "it launches it. Excluded apps never appear."
+        ) {
+            SettingsSection(title: "App rules", anchor: SettingsAnchor.appRules, footer: summary) {
+                SettingsWideRow {
+                    HStack(spacing: 8) {
+                        SettingsSearchField(text: $query)
+                        Button("Add App…", action: addApps)
+                        Button("Clear All", action: clearAll)
+                            .disabled(store.excluded.isEmpty && favorites.favorites.isEmpty)
+                    }
+                }
+                columnCaptions
+                list
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // An app that is not running needs a row of its own once it is favourited or excluded, so
         // the list is rebuilt rather than just re-rendered.
         .onChange(of: store.excluded) { apps.setNeedsReload() }
         .onChange(of: favorites.favorites) { apps.setNeedsReload() }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Apps").font(.system(size: 13, weight: .semibold))
-            Text(
-                "Star an app to keep it in the switcher even when it isn't running; picking it "
-                + "launches it. Excluded apps never appear, in either mode.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                TextField("Search", text: $query)
-                    .textFieldStyle(.plain)
-                if !query.isEmpty {
-                    Button {
-                        query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(0.06)))
-            .padding(.top, 8)
-        }
-        .padding(12)
-    }
-
     @ViewBuilder
     private var list: some View {
         if filtered.isEmpty {
-            VStack {
-                Spacer()
-                Text(query.isEmpty ? "No apps running" : "No matches")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
+            Text(query.isEmpty ? "No apps running" : "No matches")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 24)
         } else {
-            ScrollView {
-                // The captions are pinned: scrolled away they would leave exactly the two
-                // unlabelled controls per row they exist to explain.
-                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    Section {
-                        ForEach(filtered) { entry in
-                            AppRow(
-                                entry: entry,
-                                isFavorite: Binding(
-                                    get: { isFavorite(entry.id) },
-                                    set: { setFavorite($0, for: entry.id) }),
-                                isExcluded: Binding(
-                                    get: { store.isExcluded(entry.id) },
-                                    set: { setExcluded($0, for: entry.id) }))
-                            Divider().padding(.leading, 44)
-                        }
-                    } header: {
-                        columnCaptions
-                    }
+            // The page scrolls as a whole, so the rows go straight into the card rather than into a
+            // scroll view of their own — a list that scrolls inside a page that also scrolls is two
+            // wheels fighting over one gesture.
+            LazyVStack(spacing: 0) {
+                ForEach(filtered) { entry in
+                    AppRow(
+                        entry: entry,
+                        isFavorite: Binding(
+                            get: { isFavorite(entry.id) },
+                            set: { setFavorite($0, for: entry.id) }),
+                        isExcluded: Binding(
+                            get: { store.isExcluded(entry.id) },
+                            set: { setExcluded($0, for: entry.id) }))
                 }
             }
         }
     }
 
-    /// Column captions, so the star and the switch are not two unlabelled controls. Rows scroll
-    /// underneath it, so it needs its own background — `.bar` rather than a flat colour, which
-    /// would have to guess the tab view's content colour and would show as a mismatched band
-    /// wherever the guess was wrong.
+    /// Column captions, so the star and the switch are not two unlabelled controls.
     private var columnCaptions: some View {
         HStack(spacing: 12) {
             Spacer()
@@ -208,22 +172,11 @@ struct AppsSettings: View {
         }
         .font(.system(size: 10))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(.bar)
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            Button("Add App…", action: addApps)
-            Spacer()
-            Text(summary)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            Button("Clear All", action: clearAll)
-                .disabled(store.excluded.isEmpty && favorites.favorites.isEmpty)
+        .padding(.horizontal, SettingsChrome.rowInset)
+        .padding(.vertical, 5)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 0.5)
         }
-        .padding(12)
     }
 
     private var summary: String {
@@ -361,10 +314,18 @@ private struct AppRow: View {
                 .frame(width: 40, alignment: .center)
                 .help("Never show this app in the switcher.")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, SettingsChrome.rowInset)
         .padding(.vertical, 6)
         // The whole row used to toggle the exclusion switch. With two controls on it there is no
         // single thing a row-wide tap should mean, so each control is hit on its own now.
         .contentShape(Rectangle())
+        // Rows sit directly in the section card, so each carries the hairline that separates it
+        // from the one above — the same treatment `SettingsRow` gives itself.
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.07))
+                .frame(height: SettingsChrome.hairline)
+                .padding(.leading, 44)
+        }
     }
 }

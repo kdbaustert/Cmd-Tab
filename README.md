@@ -25,13 +25,13 @@ raise windows without it.
 
 The switcher itself never needs Screen Recording: tiles are app icons, and window *titles* come
 from the Accessibility API rather than `CGWindowListCopyWindowInfo`. The one exception is the
-optional **window preview on hover** (Settings → Appearance) — its live thumbnails are captured
+optional **window preview on hover** (Settings → Behavior) — its live thumbnails are captured
 with ScreenCaptureKit, so turning it on prompts for Screen Recording. Leave it off and that second
 permission is never touched.
 
 ## Keys
 
-The trigger below is ⌘-Tab by default and rebindable in **Settings → General**. In the table it
+The trigger below is ⌘-Tab by default and rebindable in **Settings → Shortcuts**. In the table it
 stands in for whatever combination is bound; the held modifier is whatever that combination uses.
 
 | Key | Action |
@@ -65,7 +65,7 @@ your keyboard layout, so it follows the physical keys rather than assuming a US 
 
 The window actions live on ⌥ (**⌘-⌥-Q/W/H**, and the rest in the table) precisely so the bare
 letters stay free for this — otherwise you could never search for a word containing q, w or h. Every
-one of those bindings is rebindable in **Settings → General → Switcher shortcuts**. A digit still jumps to that
+one of those bindings is rebindable in **Settings → Shortcuts → In-switcher keys**. A digit still jumps to that
 tile when the filter is empty; once you have started a query, digits type into it instead (so you can
 find *1Password*). The number badges hide while a filter is active, since the jump is off. **Esc**
 backs out of the query first and only dismisses the switcher on a second press, the way a search
@@ -78,7 +78,7 @@ polling the cursor position on a timer, and clicks are caught in the panel's `se
 is used rather than a global mouse-moved monitor because such a monitor only sees events bound for
 *other* apps — so whenever Cmd-Tab itself is frontmost the highlight would stop following the cursor.
 With **Preview windows on hover** enabled, pausing over an app tile also floats live thumbnails of
-that app's windows beside it — see [Appearance](#appearance).
+that app's windows beside it — see [Window preview on hover](#window-preview-on-hover).
 
 The first nine tiles carry their number in the bottom-right corner. The number switches
 immediately rather than moving the highlight — waiting for ⌘ to come up would make it slower than
@@ -94,27 +94,64 @@ the keys *labelled* 0–9 on ANSI-style layouts.
 
 ## Settings
 
-**Menu bar → Settings…**, in three tabs.
+**Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of five tabs, each with
+its own gradient icon badge, and a search field above them. Typing in the search field replaces the
+tab list with matching settings, named by the tab and section they live in; picking one switches to
+that tab, scrolls to the section and outlines it for a moment.
+
+Content is built from titled sections whose rows sit inside a rounded card — label and explanation
+on the left, control on the right — so the explanation for a setting sits under it rather than in a
+tooltip.
 
 ### General
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| Shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
-| Switch between | Applications or individual windows. | Applications |
-| Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
-| Skip minimized windows | Window mode only: leave minimized windows out of the list rather than showing them dimmed. | Off |
-| Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). Unconditional: Tab-cycling with ⌘ held used to opt back into switching on release, which meant the ordinary ⌘-Tab-Tab gesture closed the panel the moment ⌘ came up. A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
-| Switcher shortcuts | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
+| Show menu-bar icon | Off leaves no menu-bar item; reopening Cmd-Tab from Finder is then the way back to Settings. | On |
 | Start at login | Registers the app as a login item via `SMAppService`. | Off |
+| Menu-bar glyph | Which artwork the menu-bar item shows. The menu shows each glyph rather than only its name. | Command |
+| Settings file | Export or import every preference, favourites and exclusions included, as JSON. | — |
+| Reset to defaults | Clears every Cmd-Tab preference. | — |
 
-Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `mode`, `sortOrder`,
-`skipMinimized`, `stickyMode`); Start at login lives in the system's Login Items, not our
-defaults.
+Start at login lives in the system's Login Items, not our defaults.
+
+### Shortcuts
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
+| Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
+| Window actions | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
+
+### Behavior
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Show delay | How long to wait before drawing the panel, so a quick tap switches with no flash. | 0 ms |
+| Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
+| Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
+| Hide apps with no windows | An app whose windows are all minimized counts as empty. | Off |
+| Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
+| Show on | Which displays get a panel. | Automatic |
+| Preview windows on hover | See [Window preview on hover](#window-preview-on-hover). | Off |
+
+Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `sortOrder`, `stickyMode`,
+`showDelayMs`, `hideEmptyApps`, `panelPosition`, `panelScreens`).
 
 ### Appearance
 
-Four sliders, which together are the entire `Metrics` the panel lays itself out from:
+**Layout** comes first, because it decides what everything below it is describing:
+
+| Layout | What it draws | Wraps on |
+| --- | --- | --- |
+| Grid | Icons in a wrapping grid, with the selected target's name in a caption underneath. | Width — a row fills until it reaches 86% of the screen, then wraps. |
+| List | One target per row: a smaller icon with the name beside it, and the ⌘-number hint, display and Space markers along the trailing edge. No caption — every row already carries its name. | Height — rows stack downward and start a second column when they would run off the screen, each column filling top to bottom so the reading order still matches the order the trigger steps through. |
+
+Both are driven by the same sliders: a list row's icon is 42% of the icon-size setting, and the
+row's width scales with it too, so one control still scales the whole panel. **Max columns** caps
+the wrap in either layout (0 = automatic). Persists as `switcherLayout`.
+
+The sliders below it are the `Metrics` the panel lays itself out from:
 
 | Slider | Range | Default | What it moves |
 | --- | --- | --- | --- |
@@ -141,7 +178,7 @@ Below the sliders are three more controls:
 | --- | --- | --- |
 | Highlight colour | The tint of the selected tile. Persists as a hex string (`highlightColorHex`). | System accent |
 | Appearance | Forces the panel Light or Dark, or matches the system. | Match system |
-| Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
+| Material | The frosted glass behind the tiles, with an optional custom blur radius over it. | HUD |
 
 ### Window preview on hover
 
@@ -334,13 +371,15 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SwitcherController.swift` | State machine — decides what to swallow and when to commit |
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |
 | `SwitcherPanel.swift` | Non-activating overlay window |
-| `SwitcherView.swift` | SwiftUI tile grid |
+| `SwitcherView.swift` | SwiftUI tile grid and list, and the `Metrics` both are laid out from |
 | `WindowPreview.swift` | Hover window-preview capture (ScreenCaptureKit) and its floating panel |
 | `SwitchTarget.swift` | An app or window, and how to raise it |
 | `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |
 | `ExclusionStore.swift` | The set of excluded apps, persisted by bundle identifier |
 | `AppearanceStore.swift` | The four appearance values, persisted |
-| `SettingsWindow.swift` | Settings window shell and the General tab |
+| `SettingsWindow.swift` | Settings window shell, the search index, and the General/Shortcuts/Behavior tabs |
+| `SettingsChrome.swift` | The settings window's vocabulary: pages, section cards, rows, sidebar badges |
+| `SettingsAppearance.swift` | The Appearance tab — layout, theme, panel and the metric sliders |
 | `SettingsApps.swift` | The Apps tab — the app list with its favourite and exclude controls |
 | `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
 

@@ -110,6 +110,17 @@ final class SwitcherController {
         }
     }
 
+    /// Grid or list. Relayouts a visible panel, like the metrics do — it changes the panel's whole
+    /// shape, so leaving an open switcher on the old one would be the odd behaviour.
+    var layout: SwitcherLayout {
+        get { model.layout }
+        set {
+            guard newValue != model.layout else { return }
+            model.layout = newValue
+            if isVisible { panels.layout() }
+        }
+    }
+
     var excludedBundleIDs: Set<String> {
         get { provider.excludedBundleIDs }
         set {

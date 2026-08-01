@@ -27,6 +27,8 @@ final class SwitcherModel: ObservableObject {
     /// Indices into `targets` that match the current query. Empty when no query.
     @Published private(set) var matchingIndices: Set<Int> = []
     @Published var mode: SwitcherMode = .apps
+    /// Grid of icons, or one target per row.
+    @Published var layout: SwitcherLayout = .grid
     /// Every panel dimension; see `Metrics`.
     @Published var metrics: Metrics = .default
     /// Tint of the selected tile's highlight.

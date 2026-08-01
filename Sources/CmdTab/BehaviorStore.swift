@@ -16,6 +16,38 @@ enum SortOrder: String, CaseIterable {
     }
 }
 
+/// How the switcher arranges its targets.
+///
+/// Grid is the ⌘-Tab shape: icons in a wrapping grid with the selected one's name in a caption
+/// underneath. List trades that for one target per row with the name beside the icon, which reads
+/// far better when the names matter more than the artwork — a dozen windows of the same app, say.
+enum SwitcherLayout: String, CaseIterable {
+    case grid
+    case list
+
+    var title: String {
+        switch self {
+        case .grid: return "Grid"
+        case .list: return "List"
+        }
+    }
+
+    /// The one-line explanation under each option in Settings → Appearance.
+    var detail: String {
+        switch self {
+        case .grid: return "Icons in a wrapping grid, with the selected name below."
+        case .list: return "One target per row, name beside the icon."
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .grid: return "square.grid.2x2"
+        case .list: return "list.bullet"
+        }
+    }
+}
+
 /// Which appearance the panel forces on itself, regardless of the system setting.
 enum PanelAppearance: String, CaseIterable {
     case system
@@ -212,6 +244,7 @@ enum BehaviorDefault {
 // non-`Codable` `RawRepresentable`, which writes the bare `rawValue` — the same bytes the previous
 // hand-rolled `store(x.rawValue, …)` wrote.
 extension SortOrder: Defaults.Serializable {}
+extension SwitcherLayout: Defaults.Serializable {}
 extension PanelAppearance: Defaults.Serializable {}
 extension PanelMaterial: Defaults.Serializable {}
 extension PanelPosition: Defaults.Serializable {}
@@ -230,6 +263,9 @@ extension MenuBarIcon: Defaults.Serializable {}
 /// strings, so renaming one silently discards that preference on the next launch.
 extension Defaults.Keys {
     static let sortOrder = Key<SortOrder>("sortOrder", default: .recentlyUsed)
+    /// Grid is the default because it is the shape ⌘-Tab has always had; an existing install sees
+    /// no change until it picks List.
+    static let switcherLayout = Key<SwitcherLayout>("switcherLayout", default: .grid)
     static let panelAppearance = Key<PanelAppearance>("panelAppearance", default: .system)
     static let panelPosition = Key<PanelPosition>("panelPosition", default: .center)
     static let panelScreens = Key<PanelScreens>("panelScreens", default: .automatic)
@@ -288,7 +324,7 @@ final class BehaviorStore: ObservableObject {
     /// Every key this store owns. `ownedDefaultsKeys` is derived from it, so a setting declared
     /// above cannot be quietly missed by export, import and reset.
     private static let ownedKeys: [Defaults._AnyKey] = [
-        .sortOrder, .panelAppearance, .panelPosition, .panelScreens, .panelMaterial,
+        .sortOrder, .switcherLayout, .panelAppearance, .panelPosition, .panelScreens, .panelMaterial,
         .highlightColorHex,
         .hotkeyKeyCode, .hotkeyModifiers, .sameAppKeyCode, .sameAppModifiers,
         .stickyMode, .sameAppCycle, .hideEmptyApps, .showDelay, .maxColumns,
@@ -316,6 +352,11 @@ final class BehaviorStore: ObservableObject {
 
     @Published var sortOrder: SortOrder = Defaults[.sortOrder] {
         didSet { persist(sortOrder, oldValue, to: .sortOrder) }
+    }
+    /// Grid or list. Structural rather than cosmetic — it changes what a tile *is* — so it is not
+    /// carried in a `Theme`, for the same reason `maxColumns` is not.
+    @Published var layout: SwitcherLayout = Defaults[.switcherLayout] {
+        didSet { persist(layout, oldValue, to: .switcherLayout) }
     }
     @Published var panelAppearance: PanelAppearance = Defaults[.panelAppearance] {
         didSet { persist(panelAppearance, oldValue, to: .panelAppearance) }
@@ -433,6 +474,7 @@ final class BehaviorStore: ObservableObject {
             onChange?()  // one coalesced notification after the whole batch
         }
         sortOrder = Defaults[.sortOrder]
+        layout = Defaults[.switcherLayout]
         panelAppearance = Defaults[.panelAppearance]
         panelPosition = Defaults[.panelPosition]
         highlightColor = Color(hex: Defaults[.highlightColorHex]) ?? Self.defaultHighlight

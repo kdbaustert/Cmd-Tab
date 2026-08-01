@@ -15,6 +15,9 @@ struct Metrics: Equatable {
     /// Gap between neighbouring highlight rects. Fixed, and deliberately not zero: adjacent
     /// selections touching each other reads as one smeared blob rather than two tiles.
     static let tileGap: CGFloat = 6
+    /// The same idea between list rows, but tighter — a list reads as a list because the rows are
+    /// close together, and the highlight is a full-width bar that a wide gap breaks into stripes.
+    static let rowGap: CGFloat = 2
     /// Kept modest — a large radius against a thin `panelPadding` bites into the corner tiles.
     static let corner: CGFloat = 16
     /// The switcher never grows past this share of the screen before it wraps to a new row.
@@ -52,6 +55,26 @@ struct Metrics: Equatable {
 
     /// Window mode puts a title under the icon, so it gets a smaller icon to pay for it.
     var windowIconSize: CGFloat { (iconSize * 0.75).rounded() }
+
+    /// Icon edge length in the list layout. A row puts the name *beside* the icon rather than under
+    /// it, so it wants a much smaller one than a grid tile — but it still tracks the icon-size
+    /// slider, which stays the single control that scales the whole panel. Clamped so neither end of
+    /// that slider turns a row into a postage stamp or a billboard.
+    var listIconSize: CGFloat { (iconSize * 0.42).rounded().clamped(to: 18...44) }
+
+    /// One row of the list layout: icon, then a line of title — two in window mode, where the app
+    /// name sits under it.
+    ///
+    /// Width is derived from the icon size rather than fixed, for the same reason the tiles are:
+    /// someone who has scaled the panel up wants the names to have room to match. Every row is the
+    /// same width, so this is also the width of the list.
+    func listRow(for mode: SwitcherMode) -> CGSize {
+        let lines: CGFloat = mode == .windows ? 2 : 1
+        return CGSize(
+            width: (iconSize * 4).rounded().clamped(to: 260...520),
+            height: (max(listIconSize, lines * 16) + 8
+                + (iconSpacing * 0.25).clamped(to: 0...12)).rounded())
+    }
 
     func icon(for mode: SwitcherMode) -> CGFloat {
         mode == .windows ? windowIconSize : iconSize
@@ -92,6 +115,19 @@ private struct TileFrameKey: PreferenceKey {
     }
 }
 
+extension View {
+    /// Reports this tile's laid-out frame under `index`, in the panel's content coordinate space.
+    /// Both layouts use it, so the panel's hit-testing does not care which one drew the target.
+    fileprivate func reportingFrame(at index: Int) -> some View {
+        background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: TileFrameKey.self,
+                    value: [index: geo.frame(in: .named(SwitcherView.space))])
+            })
+    }
+}
+
 struct SwitcherView: View {
     @ObservedObject var model: SwitcherModel
     let columns: Int
@@ -109,11 +145,26 @@ struct SwitcherView: View {
 
     private var metrics: Metrics { model.metrics }
     private var tile: CGSize { metrics.tile(for: model.mode, showsTitle: model.showsTitle) }
+    private var row: CGSize { metrics.listRow(for: model.mode) }
+    private var isList: Bool { model.layout == .list }
+
+    /// Width of the laid-out targets. The caption and the search bar are clamped to it so a long
+    /// title or query cannot become the widest child and stretch the panel around it.
+    private var contentWidth: CGFloat {
+        let count = CGFloat(max(columns, 1))
+        return isList
+            ? count * row.width + (count - 1) * Metrics.tileGap
+            : count * tile.width
+    }
 
     var body: some View {
         VStack(spacing: metrics.titleSpacing) {
             if model.targets.isEmpty {
                 noMatches
+            } else if isList {
+                // No caption: every row carries its own name, so the caption would only repeat the
+                // selected row back at the user.
+                list
             } else {
                 grid
                 caption
@@ -141,7 +192,6 @@ struct SwitcherView: View {
             spacing: Metrics.tileGap
         ) {
             ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
-                let isMatch = model.matchingIndices.isEmpty || model.matchingIndices.contains(index)
                 TargetTile(
                     target: target,
                     size: tile,
@@ -149,24 +199,68 @@ struct SwitcherView: View {
                     titleSpacing: metrics.titleSpacing,
                     showsTitle: model.showsTitle,
                     isSelected: index == model.selection,
-                    isMatch: isMatch,
+                    isMatch: isMatch(index),
                     highlightColor: model.highlightColor,
                     corner: model.tileCorner,
                     titleFont: model.titleFont(size: model.titleFontSize),
-                    // The ⌘-number jump is disabled while filtering (digits type into the query),
-                    // so the badges come off too. The tenth tile is labelled 0, because 0 is the key
-                    // that selects it — there is no ⌘-10 to press.
-                    number: model.showNumbers && model.query.isEmpty && index < 10
-                        ? (index + 1) % 10 : nil,
+                    number: number(for: index),
                     showsBadges: model.showBadges)
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: TileFrameKey.self,
-                                value: [index: geo.frame(in: .named(SwitcherView.space))])
-                        })
+                    .reportingFrame(at: index)
             }
         }
+    }
+
+    /// The list layout: one target per row.
+    ///
+    /// Wraps into further columns when the rows would run off the screen, filling each column top to
+    /// bottom before starting the next — so the reading order still matches the order the trigger
+    /// steps through, which a row-major grid could not give a list. The panel decides how many
+    /// columns fit; the split between them happens here.
+    private var list: some View {
+        let count = model.targets.count
+        let columnCount = max(columns, 1)
+        let perColumn = max(1, Int((Double(count) / Double(columnCount)).rounded(.up)))
+        return HStack(alignment: .top, spacing: Metrics.tileGap) {
+            // `Array` rather than the bare ranges: both bounds move with the target list, and
+            // `ForEach` over a non-constant `Range` is the one shape SwiftUI warns about.
+            ForEach(Array(0..<columnCount), id: \.self) { column in
+                let start = column * perColumn
+                let end = min(start + perColumn, count)
+                VStack(spacing: Metrics.rowGap) {
+                    ForEach(Array(start..<max(start, end)), id: \.self) { index in
+                        TargetRow(
+                            target: model.targets[index],
+                            size: row,
+                            iconSize: metrics.listIconSize,
+                            showsAppName: model.mode == .windows,
+                            isSelected: index == model.selection,
+                            isMatch: isMatch(index),
+                            highlightColor: model.highlightColor,
+                            corner: model.tileCorner,
+                            titleFont: model.titleFont(size: model.titleFontSize + 2),
+                            subtitleFont: model.titleFont(size: model.titleFontSize),
+                            number: number(for: index),
+                            showsBadges: model.showBadges)
+                            .reportingFrame(at: index)
+                    }
+                }
+                .frame(width: row.width)
+            }
+        }
+    }
+
+    /// Whether this target survives the current filter. Non-matches stay visible but dimmed.
+    private func isMatch(_ index: Int) -> Bool {
+        model.matchingIndices.isEmpty || model.matchingIndices.contains(index)
+    }
+
+    /// The digit that jumps to this target, or nil where there is none.
+    ///
+    /// The ⌘-number jump is disabled while filtering (digits type into the query), so the badges
+    /// come off too. The tenth target is labelled 0, because 0 is the key that selects it — there is
+    /// no ⌘-10 to press.
+    private func number(for index: Int) -> Int? {
+        model.showNumbers && model.query.isEmpty && index < 10 ? (index + 1) % 10 : nil
     }
 
     /// The live type-to-filter query, shown only while one is being typed.
@@ -185,7 +279,7 @@ struct SwitcherView: View {
         // one- or two-match list would otherwise be the widest child and stretch the panel around
         // it. Purely cosmetic now — hit-testing reads the frames the tiles report, so an off-centre
         // grid is no longer a correctness problem, just an ugly one.
-        .frame(maxWidth: CGFloat(max(columns, 1)) * tile.width)
+        .frame(maxWidth: contentWidth)
     }
 
     private var noMatches: some View {
@@ -214,7 +308,7 @@ struct SwitcherView: View {
                         .lineLimit(1)
                 }
             }
-            .frame(maxWidth: CGFloat(max(columns, 1)) * tile.width)
+            .frame(maxWidth: contentWidth)
         }
     }
 }
@@ -240,7 +334,8 @@ private struct TargetTile: View {
 
     var body: some View {
         VStack(spacing: titleSpacing) {
-            icon
+            TargetIcon(
+                target: target, iconSize: iconSize, number: number, showsBadges: showsBadges)
             if showsTitle {
                 Text(target.title)
                     .font(titleFont)
@@ -267,14 +362,105 @@ private struct TargetTile: View {
                 }
         }
     }
+}
 
-    /// Both badges hang off the icon rather than the tile. The tile grows and shrinks with the
-    /// icon spacing slider, so a badge pinned to *its* corner would drift away from the artwork
-    /// as that changes; pinned to the icon, it stays on the corner at every setting.
-    ///
-    /// The status badge takes bottom-leading because the number owns bottom-trailing.
-    @ViewBuilder
-    private var icon: some View {
+/// One row of the list layout: icon, name, and — where a tile would put them on the artwork — the
+/// display/Space markers and the ⌘-number hint along the trailing edge.
+private struct TargetRow: View {
+    let target: SwitchTarget
+    let size: CGSize
+    let iconSize: CGFloat
+    /// Window mode puts the owning app's name under the window title.
+    let showsAppName: Bool
+    let isSelected: Bool
+    let isMatch: Bool
+    let highlightColor: Color
+    let corner: CGFloat
+    let titleFont: Font
+    let subtitleFont: Font
+    let number: Int?
+    let showsBadges: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TargetIcon(target: target, iconSize: iconSize, number: nil, showsBadges: false)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(target.title)
+                    .font(titleFont)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .lineLimit(1)
+                if showsAppName {
+                    Text(target.appName)
+                        .font(subtitleFont)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            // The name column takes whatever the badges leave, and truncates rather than pushing
+            // them off the row: every row is the same width, so there is no growing out of it.
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if showsBadges, let display = target.displayIndex {
+                DisplayBadge(number: display + 1)  // 1-based for humans
+            }
+            if showsBadges, let space = target.spaceIndex {
+                SpaceBadge(number: space + 1)
+            }
+            if let number {
+                RowNumber(number: number)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(width: size.width, height: size.height)
+        .opacity(isMatch ? 1 : 0.3)
+        .background {
+            // Same treatment as `TargetTile` — see the reasoning there.
+            let shape = RoundedRectangle(cornerRadius: min(corner, size.height / 2), style: .continuous)
+            shape
+                .fill(highlightColor.opacity(isSelected ? 0.30 : 0))
+                .overlay {
+                    shape.strokeBorder(.primary.opacity(isSelected ? 0.28 : 0), lineWidth: 1)
+                }
+        }
+    }
+}
+
+/// The ⌘-number hint on a list row. Set in the panel's own text colours rather than the tile
+/// badge's fixed black-on-grey: on a row it sits against the glass, not against app artwork, so it
+/// can follow the appearance the way the rest of the row does.
+private struct RowNumber: View {
+    let number: Int
+
+    var body: some View {
+        Text("\(number)")
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .frame(width: 18, height: 18)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color.primary.opacity(0.08)))
+    }
+}
+
+/// A target's artwork with everything that hangs off it.
+///
+/// Every badge hangs off the icon rather than the tile. The tile grows and shrinks with the icon
+/// spacing slider, so a badge pinned to *its* corner would drift away from the artwork as that
+/// changes; pinned to the icon, it stays on the corner at every setting.
+///
+/// The status badge takes bottom-leading because the number owns bottom-trailing. Shared with the
+/// list layout, which draws the same icon but hands the number and the display/Space badges to the
+/// row — a row has width to spare and corners of its own, so crowding them onto a 20pt icon there
+/// would be a waste of both.
+private struct TargetIcon: View {
+    let target: SwitchTarget
+    let iconSize: CGFloat
+    let number: Int?
+    let showsBadges: Bool
+
+    var body: some View {
         ZStack(alignment: .bottomLeading) {
             Group {
                 if let image = target.icon {

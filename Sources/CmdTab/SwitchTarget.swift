@@ -99,19 +99,14 @@ extension SwitchTarget {
             let wasMinimized = isMinimized
             let pid = self.pid
             Self.focusQueue.async {
-                let resolved = parsed ?? TargetProvider.windowID(window)
-                guard let id = resolved, id != 0, !wasMinimized else {
+                let resolved = Self.windowID(of: window, parsed: parsed, pid: pid)
+                guard let id = resolved, !wasMinimized else {
                     // Either no id to look a Space up with, or a minimized window — which sits in
                     // the Dock, on no Desktop at all, so there is nothing to switch to first and
                     // the direct raise is both correct and what this path has always done.
-                    AXUIElementSetAttributeValue(
-                        window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
-                    AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-                    AXUIElementSetAttributeValue(
-                        window, kAXMainAttribute as CFString, true as CFTypeRef)
-                    DispatchQueue.main.async {
-                        NSRunningApplication(processIdentifier: pid)?.activate()
-                    }
+                    Self.beginFocus()
+                    Self.raise(element: window)
+                    Self.activate(pid: pid)
                     return
                 }
                 Self.focusWindow(id: id, pid: pid)
@@ -130,6 +125,10 @@ extension SwitchTarget {
     /// every Accessibility call here is IPC that can block on a wedged app.
     private static func restoreWindowIfAllMinimized(pid: pid_t) {
         focusQueue.async {
+            // An app pick supersedes any window pick still waiting for its Desktop, whether or not
+            // the restore below ends up being needed.
+            beginFocus()
+
             // Every window, not just the switchable ones: an app showing only a dialog still has
             // something on screen, and restoring a minimized window over it would be wrong. The
             // role check is what keeps Finder's desktop (an AXScrollArea) out.
@@ -139,19 +138,62 @@ extension SwitchTarget {
             guard !windows.contains(where: { !AX.isMinimized($0) }) else { return }
             guard let target = windows.first else { return }
 
-            AXUIElementSetAttributeValue(
-                target, kAXMinimizedAttribute as CFString, false as CFTypeRef)
-            AXUIElementPerformAction(target, kAXRaiseAction as CFString)
-            AXUIElementSetAttributeValue(target, kAXMainAttribute as CFString, true as CFTypeRef)
+            raise(element: target)
 
             Log.targets.notice("restored a minimized window for pid \(pid)")
 
             // Restoring does not reliably bring the app forward on its own, and by now our own
             // activation has already happened.
-            DispatchQueue.main.async {
-                NSRunningApplication(processIdentifier: pid)?.activate()
-            }
+            activate(pid: pid)
         }
+    }
+
+    /// The `CGWindowID` for a window, by whichever of three routes answers first — each fails on a
+    /// different set of apps. The AX element is the most direct; the id parsed out of a window
+    /// target's `"win:<id>"` only exists for window targets; the frame match is the backstop for
+    /// hosts where `_AXUIElementGetWindow` returns 0 (Electron, Catalyst). Missing the third route
+    /// is how those apps used to skip the Desktop switch entirely and get dragged over instead.
+    private static func windowID(of element: AXUIElement?, parsed: CGWindowID?, pid: pid_t)
+        -> CGWindowID?
+    {
+        let id =
+            element.flatMap(TargetProvider.windowID)
+            ?? parsed
+            ?? element.flatMap { TargetProvider.windowID(matching: $0, pid: pid) }
+        return id == 0 ? nil : id
+    }
+
+    /// The AX element for the window with `id`, when the app's Accessibility list has one. Empty for
+    /// apps that build that list lazily (Chromium, Electron) until they are active.
+    private static func axWindow(id: CGWindowID, pid: pid_t) -> AXUIElement? {
+        guard id != 0 else { return nil }
+        return AX.windows(of: AX.application(pid))
+            .first(where: { TargetProvider.windowID($0) == id })
+    }
+
+    /// Brings `pid` forward, unhiding it first if it is hidden. `NSRunningApplication` is
+    /// main-thread work; every caller here is on `focusQueue`.
+    private static func activate(pid: pid_t) {
+        DispatchQueue.main.async {
+            let app = NSRunningApplication(processIdentifier: pid)
+            if app?.isHidden == true { app?.unhide() }
+            app?.activate()
+        }
+    }
+
+    /// Counts picks. A `settle` chain captures this at its start and stops the moment it no longer
+    /// matches, so a pick still waiting for its Desktop to arrive cannot activate its app up to two
+    /// seconds later and yank the user off whatever they picked in the meantime. Activation used to
+    /// be synchronous with the pick, which made that impossible by construction; the wait for the
+    /// Space transition is what opened the gap.
+    ///
+    /// Only ever touched from `focusQueue`, which is serial — no lock needed.
+    private static var focusGeneration: UInt64 = 0
+
+    @discardableResult
+    private static func beginFocus() -> UInt64 {
+        focusGeneration &+= 1
+        return focusGeneration
     }
 
     /// Focuses a specific window of an app by its `CGWindowID` — used when a hover-preview thumbnail
@@ -160,6 +202,29 @@ extension SwitchTarget {
     /// falls back to just activating the app.
     static func focusWindow(id: CGWindowID, pid: pid_t) {
         focusQueue.async {
+            let generation = beginFocus()
+            let element = axWindow(id: id, pid: pid)
+
+            // A minimized window sits in the Dock, on no Desktop at all: there is nothing to switch
+            // to first, it can never join the on-screen list the gate below waits on, and the
+            // restore is the whole of the work. Not an edge case — the hover preview offers
+            // minimized windows as thumbnails, so this is a path users reach by clicking one.
+            if let element, AX.isMinimized(element) {
+                raise(element: element)
+                activate(pid: pid)
+                return
+            }
+
+            // A hidden app's windows are likewise in no on-screen list, so the unhide has to happen
+            // out here: inside the gate it was unreachable, because the gate could not open until it
+            // had already happened. Its windows do still live on a Desktop, though, so the Space
+            // logic below still applies and the poll waits for the unhide to land.
+            if NSRunningApplication(processIdentifier: pid)?.isHidden == true {
+                DispatchQueue.main.async {
+                    NSRunningApplication(processIdentifier: pid)?.unhide()
+                }
+            }
+
             // Switching Desktops comes first, before anything touches the window over Accessibility.
             //
             // Raising, maining or focusing a window that lives on another Space does *not* take you
@@ -171,10 +236,9 @@ extension SwitchTarget {
             // Reading the window's Space first and moving *ourselves* there is the only order that
             // leaves the user's arrangement alone. It covers other displays too, since a Space
             // belongs to a display — `reveal` switches whichever monitor holds the target Space.
-            let state = SpaceMover.spaceState(of: id)
-            let switched = SpaceMover.reveal(window: id)
+            let reveal = SpaceMover.reveal(window: id)
             Log.general.notice(
-                "focus window \(id, privacy: .public): windowSpace=\(state?.windowSpace ?? 0, privacy: .public) current=\(state?.currentSpace ?? 0, privacy: .public) switch=\(switched, privacy: .public)"
+                "focus window \(id, privacy: .public): windowSpace=\(reveal.state?.windowSpace ?? 0, privacy: .public) current=\(reveal.state?.currentSpace ?? 0, privacy: .public) switch=\(reveal.switched, privacy: .public)"
             )
             // Nothing touches the app or the window until we have actually arrived on its Desktop.
             //
@@ -182,7 +246,9 @@ extension SwitchTarget {
             // and activating an app whose current window is elsewhere gathers that window to the
             // Space you are on, which relocated the window just as surely as an early raise did.
             // Both halves have to wait for the arrival, so both now live behind the same gate.
-            settle(window: id, pid: pid, attempts: 14, delay: switched ? 0.15 : 0.02)
+            settle(
+                window: id, pid: pid, attempts: 14, delay: reveal.switched ? 0.15 : 0.02,
+                generation: generation, actWhenUnreached: !reveal.switched)
         }
     }
 
@@ -203,54 +269,90 @@ extension SwitchTarget {
     /// timescale — the transition, and an app whose accessibility tree is still waking up
     /// (Chromium, Electron). The poll stops the moment the window is reachable, which on the common
     /// case of a same-Desktop pick is the first attempt.
+    ///
+    /// `actWhenUnreached` says what to do if it never arrives, and is the difference between the two
+    /// ways a pick can fail. See the give-up branch.
     private static func settle(
-        window id: CGWindowID, pid: pid_t, attempts: Int, delay: TimeInterval
+        window id: CGWindowID, pid: pid_t, attempts: Int, delay: TimeInterval,
+        generation: UInt64, actWhenUnreached: Bool
     ) {
+        guard generation == focusGeneration else { return }  // superseded by a later pick
         guard attempts > 0 else {
-            // Deliberately gives up rather than acting anyway. Activating or raising at this point
-            // would be doing it to a window still on another Desktop, which relocates it — and
-            // silently scrambling a multi-Desktop layout is far worse than a pick that did nothing.
+            guard actWhenUnreached else {
+                // A Space switch really was issued and never landed, so the window is still on
+                // another Desktop: activating or raising it now would relocate it, and silently
+                // scrambling a multi-Desktop layout is far worse than a pick that did nothing.
+                Log.general.notice(
+                    "focus window \(id, privacy: .public): never reached its Space, gave up")
+                return
+            }
+            // No switch was needed or one could not be issued at all, so nothing is in flight and
+            // there is no Desktop to drag the window off. Whatever is keeping it out of the
+            // on-screen list, acting is safe and doing nothing would make the pick a silent no-op —
+            // which is what happens on a macOS where the private Space symbols have gone missing.
             Log.general.notice(
-                "focus window \(id, privacy: .public): never reached its Space, gave up")
+                "focus window \(id, privacy: .public): never appeared on screen, focusing anyway")
+            focusAndActivate(window: id, pid: pid, generation: generation)
             return
         }
         focusQueue.asyncAfter(deadline: .now() + delay) {
+            guard generation == focusGeneration else { return }
             guard isOnScreen(window: id) else {
-                settle(window: id, pid: pid, attempts: attempts - 1, delay: delay)
+                settle(
+                    window: id, pid: pid, attempts: attempts - 1, delay: delay,
+                    generation: generation, actWhenUnreached: actWhenUnreached)
                 return
             }
-            // The window is genuinely in front now, so neither step below can relocate it. Order
-            // matters: the raise goes first, measured to be harmless off-Space and here making the
-            // clicked window the app's front one, so the activation that follows has nothing else
-            // to surface.
-            _ = raise(window: id, pid: pid)
-            DispatchQueue.main.async {
-                let app = NSRunningApplication(processIdentifier: pid)
-                if app?.isHidden == true { app?.unhide() }
-                app?.activate()
-            }
+            focusAndActivate(window: id, pid: pid, generation: generation)
+        }
+    }
+
+    /// Raises the window and brings its app forward, retrying the raise once the app is up.
+    ///
+    /// Order matters: the raise goes first, measured to be harmless off-Space and here making the
+    /// picked window the app's front one, so the activation that follows has nothing else to
+    /// surface. Runs on `focusQueue`.
+    private static func focusAndActivate(window id: CGWindowID, pid: pid_t, generation: UInt64) {
+        let raised = raise(window: id, pid: pid)
+        activate(pid: pid)
+        // Apps that build their accessibility tree lazily (Chromium, Electron) report *no* windows
+        // until they are active, so the raise above found nothing and the activation surfaced
+        // whichever window happened to be frontmost rather than the picked one. Retry now that the
+        // app is coming up — the only thing that makes the pick land for those apps.
+        guard !raised else { return }
+        focusQueue.asyncAfter(deadline: .now() + 0.15) {
+            guard generation == focusGeneration else { return }
+            raise(window: id, pid: pid)
         }
     }
 
     /// Whether the window is currently displayed — false while it sits on another Desktop, which is
     /// how a Desktop transition is known to have finished. Public `CGWindowList`, no private API.
+    ///
+    /// Asks about the one window rather than snapshotting every window on the system: this runs up
+    /// to fourteen times per switch, on the latency-sensitive focus path.
     private static func isOnScreen(window: CGWindowID) -> Bool {
         guard window != 0 else { return true }
         guard
             let list = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+                [.optionOnScreenOnly, .optionIncludingWindow, .excludeDesktopElements], window)
+                as? [[String: Any]]
         else { return true }
-        return list.contains { ($0[kCGWindowNumber as String] as? CGWindowID) == window }
+        return !list.isEmpty
     }
 
     /// Unminimizes, raises and focuses the window with `id`. False when the app's Accessibility list
-    /// has no such window — worth knowing, but every caller simply tries again once it is active.
+    /// has no such window, which is worth knowing: it is how a lazily-built tree announces itself,
+    /// and the caller retries once the app is active.
     @discardableResult
     private static func raise(window id: CGWindowID, pid: pid_t) -> Bool {
-        guard id != 0,
-            let window = AX.windows(of: AX.application(pid))
-                .first(where: { TargetProvider.windowID($0) == id })
-        else { return false }
+        guard let window = axWindow(id: id, pid: pid) else { return false }
+        raise(element: window)
+        return true
+    }
+
+    /// Unminimizes, raises and focuses an AX window.
+    private static func raise(element window: AXUIElement) {
         AXUIElementSetAttributeValue(
             window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
@@ -258,7 +360,6 @@ extension SwitchTarget {
         // Main is the app's own notion of its current window; focused is what actually moves the
         // keyboard there, and the two come apart when the window is on another display's Space.
         AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, true as CFTypeRef)
-        return true
     }
 
     func quitApp() {
@@ -327,15 +428,10 @@ extension SwitchTarget {
         let parsedWindowID = windowID
         Self.focusQueue.async {
             if case .launch = kind { return }
-            // Three routes, each failing on a different set of apps, and all three resolve *this*
-            // window rather than guessing at the app's frontmost one. The AX element is most direct;
-            // the parsed `"win:<id>"` only exists for window targets; the frame match is the backstop
-            // for hosts where `_AXUIElementGetWindow` returns 0.
+            // All three routes resolve *this* window rather than guessing at the app's frontmost
+            // one — see `windowID(of:parsed:pid:)` for why it takes three.
             let element = Self.resolveWindow(kind)
-            let id = element.flatMap(TargetProvider.windowID)
-                ?? parsedWindowID
-                ?? element.flatMap { TargetProvider.windowID(matching: $0, pid: pid) }
-            guard let id else {
+            guard let id = Self.windowID(of: element, parsed: parsedWindowID, pid: pid) else {
                 Log.general.error("space move: no window id for pid \(pid, privacy: .public)")
                 return
             }
