@@ -15,6 +15,7 @@ import SwiftUI
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case shortcuts
+    case windows
     case behavior
     case appearance
     case apps
@@ -26,6 +27,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .shortcuts: return "Shortcuts"
+        case .windows: return "Windows"
         case .behavior: return "Behavior"
         case .appearance: return "Appearance"
         case .apps: return "Apps"
@@ -37,6 +39,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape.fill"
         case .shortcuts: return "command"
+        case .windows: return "macwindow.on.rectangle"
         case .behavior: return "rectangle.stack.fill"
         case .appearance: return "paintbrush.fill"
         case .apps: return "square.grid.2x2.fill"
@@ -49,6 +52,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return (Color(hex: "#898A8F")!, Color(hex: "#67686E")!)
         case .shortcuts: return (Color(hex: "#40BCFF")!, Color(hex: "#0060FF")!)
+        case .windows: return (Color(hex: "#5AC8FA")!, Color(hex: "#0A84C4")!)
         case .behavior: return (Color(hex: "#B272FF")!, Color(hex: "#6228FF")!)
         case .appearance: return (Color(hex: "#FF6991")!, Color(hex: "#D41E5A")!)
         case .apps: return (Color(hex: "#4ED98F")!, Color(hex: "#12A85B")!)
@@ -65,6 +69,8 @@ enum SettingsAnchor {
 
     static let trigger = "shortcuts.trigger"
     static let panelKeys = "shortcuts.panelKeys"
+
+    static let tiling = "windows.tiling"
 
     static let session = "behavior.session"
     static let contents = "behavior.contents"
@@ -124,6 +130,10 @@ enum SettingsIndex {
              "Window action keys",
              ["quit", "close", "hide", "minimize", "zoom", "rebind", "action", "keys"]),
 
+        item("tiling", .windows, SettingsAnchor.tiling, "Window tiling", "Window tiling",
+             ["tile", "tiling", "snap", "halves", "half", "corner", "quarter", "maximize",
+              "fullscreen", "center", "centre", "arrange", "window management", "restore",
+              "left half", "right half", "cycle widths", "thirds"]),
         item("showDelay", .behavior, SettingsAnchor.session, "Session", "Show delay",
              ["delay", "wait", "flash", "quick tap", "reveal"]),
         item("sticky", .behavior, SettingsAnchor.session, "Session", "Stay open",
@@ -349,6 +359,8 @@ struct SettingsRootView: View {
             GeneralSettings(loginItem: .shared, behavior: .shared)
         case .shortcuts:
             ShortcutSettings(behavior: .shared)
+        case .windows:
+            WindowSettings(store: .shared)
         case .behavior:
             BehaviorSettings(behavior: .shared)
         case .appearance:

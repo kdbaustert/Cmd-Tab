@@ -33,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.shortcuts = bindings
         }
 
+        let tiling = WindowTilingStore.shared
+        controller.tiling = tiling.tiling
+        tiling.onChange = { [weak self] bindings in
+            self?.controller.tiling = bindings
+        }
+
         let appearance = AppearanceStore.shared
         controller.metrics = appearance.metrics
         appearance.onChange = { [weak self] metrics in

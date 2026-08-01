@@ -54,5 +54,6 @@ enum SettingsIO {
         ExclusionStore.shared.reload()
         FavoritesStore.shared.reload()
         SwitcherShortcutsStore.shared.reload()
+        WindowTilingStore.shared.reload()
     }
 }

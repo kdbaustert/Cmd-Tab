@@ -121,6 +121,10 @@ final class SwitcherController {
         }
     }
 
+    /// The window-tiling bindings, as a snapshot the tap callback can read without touching a store.
+    /// Pushed by `AppDelegate` whenever they change.
+    var tiling: WindowTilingBindings = .defaults
+
     /// Applications or individual windows. Rebuilds the list, since it changes what a target *is*.
     var mode: SwitcherMode {
         get { provider.mode }
@@ -462,6 +466,22 @@ final class SwitcherController {
             return true
         }
 
+        // Window tiling is matched on both edges, before the keyUp gate below.
+        //
+        // Swallowing only the keydown left an unpaired key-up on the way to the frontmost app, and
+        // anything tracking raw key state from up/down pairs — virtualisers, VNC and RDP clients,
+        // remote terminals — reads that as a release with no press and can strand a modifier inside
+        // the guest. The visible-panel branch already swallows both edges for the same reason.
+        if let arrangement = tilingArrangement(code: code, flags: flags) {
+            // Only a fresh keydown acts. Key repeat is swallowed but ignored — cycling ½ → ⅔ → ⅓
+            // under autorepeat would strobe the window through every width in a fraction of a
+            // second — and the keyup only has to be consumed, not acted on.
+            if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                applyTiling(arrangement)
+            }
+            return true
+        }
+
         // Idle: only a trigger keydown opens anything.
         if type == .keyUp { return false }
         let backwards = flags.contains(.maskShift)
@@ -474,6 +494,31 @@ final class SwitcherController {
             return openSameApp(backwards: backwards)
         }
         return false
+    }
+
+    /// The arrangement a keypress fires, or nil when tiling must keep its hands off this one.
+    ///
+    /// Tiling is deliberately inert while Cmd-Tab itself is frontmost — which in practice means the
+    /// settings window is open and key. Without that, the tap consumed every bound chord before the
+    /// shortcut recorder's own monitor could see it, so no already-assigned combination could ever
+    /// be re-recorded (swapping two arrangements around was impossible), and the keypress snapped
+    /// the settings window itself instead. We are also the one app whose windows this feature has no
+    /// business moving.
+    private func tilingArrangement(code: Int, flags: CGEventFlags) -> WindowArrangement? {
+        guard !NSApp.isActive else { return nil }
+        return tiling.arrangement(code: code, flags: flags)
+    }
+
+    /// Snaps the focused window. Both reads here are main-thread reads and this runs on the tap's
+    /// own callback (which is on the main run loop), so they happen inline; every Accessibility
+    /// call — the part that can block — happens on `WindowTiler`'s queue.
+    private func applyTiling(_ arrangement: WindowArrangement) {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            pid != ProcessInfo.processInfo.processIdentifier
+        else { return }
+        WindowTiler.apply(
+            arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
+            cycleWidths: tiling.cycleWidths)
     }
 
     /// Moves the highlight.

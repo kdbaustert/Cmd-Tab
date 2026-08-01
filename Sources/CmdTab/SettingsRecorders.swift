@@ -5,6 +5,13 @@ import SwiftUI
 /// switcher stays open only while that modifier is held.
 struct HotkeyRecorder: View {
     @Binding var hotkey: Hotkey
+    /// Whether a recorded combination is checked against the in-switcher action bindings.
+    ///
+    /// True for the switcher triggers, which hold their modifier for the whole session and so can
+    /// strand an action that needs the same one as an *extra*. False for the window-tiling
+    /// bindings: those are matched only when nothing is open, hold nothing, and therefore cannot
+    /// shadow anything.
+    var validatesAgainstActions = true
     @State private var recording = false
     @State private var monitor: Any?
 
@@ -46,6 +53,10 @@ struct HotkeyRecorder: View {
     /// to move the affected bindings. Letting it through would break the actions *and* misroute
     /// their keys into type-to-filter, with no visible cause.
     private func apply(_ candidate: Hotkey) {
+        guard validatesAgainstActions else {
+            hotkey = candidate
+            return
+        }
         let store = SwitcherShortcutsStore.shared
         let shadowed = store.shortcuts.actionsShadowed(by: candidate)
         guard !shadowed.isEmpty else {

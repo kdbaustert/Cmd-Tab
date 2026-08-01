@@ -212,6 +212,16 @@ struct Hotkey: Equatable {
         case 48: return "⇥"
         case 49: return "Space"
         case 50: return "`"
+        // The arrows were missing, which meant the move-to-desktop bindings — which default to
+        // them — rendered as "Key 123" in their own recorder.
+        case 123: return "←"; case 124: return "→"; case 125: return "↓"; case 126: return "↑"
+        case 36: return "↩"; case 53: return "⎋"; case 51: return "⌫"
+        case 29: return "0"; case 18: return "1"; case 19: return "2"; case 20: return "3"
+        case 21: return "4"; case 23: return "5"; case 22: return "6"; case 26: return "7"
+        case 28: return "8"; case 25: return "9"
+        case 24: return "="; case 27: return "-"; case 43: return ","; case 47: return "."
+        case 44: return "/"; case 42: return "\\"; case 41: return ";"; case 39: return "'"
+        case 33: return "["; case 30: return "]"
         case 0: return "A"; case 1: return "S"; case 2: return "D"; case 3: return "F"
         case 4: return "H"; case 5: return "G"; case 6: return "Z"; case 7: return "X"
         case 8: return "C"; case 9: return "V"; case 11: return "B"; case 12: return "Q"
@@ -353,10 +363,11 @@ final class BehaviorStore: ObservableObject {
 
     /// Keys belonging to the *other* stores, which export/import/reset also cover. Listed by name
     /// because those stores still reach `UserDefaults` directly.
-    private static let otherStoreKeys = [
-        "iconSize", "iconSpacing", "titleSpacing",
-        "excludedBundleIDs", "favoriteBundleIDs", "switcherShortcuts",
-    ]
+    private static let otherStoreKeys =
+        [
+            "iconSize", "iconSpacing", "titleSpacing",
+            "excludedBundleIDs", "favoriteBundleIDs", "switcherShortcuts",
+        ] + WindowTilingStore.defaultsKeys
 
     /// The keys export/import/reset operate on.
     static var ownedDefaultsKeys: [String] { ownedKeys.map(\.name) + otherStoreKeys }

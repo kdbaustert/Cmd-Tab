@@ -94,7 +94,7 @@ the keys *labelled* 0–9 on ANSI-style layouts.
 
 ## Settings
 
-**Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of six tabs, each with
+**Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of seven tabs, each with
 its own gradient icon badge, and a search field above them. Typing in the search field replaces the
 tab list with matching settings, named by the tab and section they live in; picking one switches to
 that tab, scrolls to the section and outlines it for a moment.
@@ -122,6 +122,55 @@ Start at login lives in the system's Login Items, not our defaults.
 | Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
 | Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
 | Window actions | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
+
+### Windows
+
+Global hotkeys that snap the **focused** window — they fire with nothing open and act on whatever
+you are looking at, which is why they are not on the Shortcuts tab with the in-switcher action keys.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Enable window tiling | The master switch. **Off by default**: each binding is a real global hotkey, so while tiling is on Cmd-Tab takes those combinations away from whatever app is in front. Nothing is claimed until you ask for it. | Off |
+| Cycle widths | Press the same half twice to step the window through ½ → ⅔ → ⅓ of the screen on that side. The cycle resets when you tile a different window or pick a different arrangement. | On |
+| Halves | Left, right, top, bottom. | ⌃⌘ ← → ↑ ↓ |
+| Corners | Top-left, top-right, bottom-left, bottom-right — each a quarter of the usable area. | ⌃⌘ U I J K |
+| Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
+| Center | Keeps the window's size and centres it; a window bigger than the screen is clamped to it. | ⌃⌘C |
+| Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. | ⌃⌘Z |
+
+Every binding is user-defined: click a shortcut and press a new combination, **⌫** clears it, **⎋**
+cancels. A cleared arrangement hands its chord back to whatever app wants it and stays cleared —
+persisted as an empty pair, so it is told apart from "this install predates the binding", which is
+what takes the default. The recorders are live whether or not tiling is switched on, since setting
+the keys up before enabling the feature is the natural order to do it in.
+
+A chord needs at least one of ⌘/⌥/⌃ — a bare key would fire on every keystroke in every app.
+Assigning one chord to two arrangements is allowed rather than refused (you may be mid-way through
+swapping a pair around), but the row says which of the two will actually fire and both turn amber.
+A chord one of the **switcher triggers** already claims *is* refused, because there is no workflow
+where binding it is a step towards anything: the tap matches both triggers before tiling, so the
+binding could only ever open the switcher. Rows also re-check this on every render, since changing
+the switcher shortcut later can strand a tiling chord that was fine when it was set. Unlike the
+trigger, a tiling chord is never checked for shadowing in-switcher *actions*: it is matched only
+when nothing is open, holds nothing for the duration, and so cannot strand anything.
+
+Tiling goes inert while Cmd-Tab itself is frontmost. Otherwise the tap would consume every bound
+chord before the shortcut recorder could see it — no already-assigned combination could be
+re-recorded, and the keypress would snap the settings window instead of binding. Both key edges are
+swallowed, so nothing downstream sees a key-up with no matching press.
+
+Restore points are keyed by the window element itself (`CFEqual`), never by pid: two windows of one
+app must not share a slot, or restoring the second would move it to a frame the first once had. The
+table evicts oldest-first at 128 entries rather than clearing, so tiling one more window than the cap
+cannot silently strand every window you are still working with.
+
+Geometry is computed in Accessibility's top-left-origin space against each screen's `visibleFrame`,
+and the target screen is the one the window most **overlaps** rather than merely touches — a window
+straddling two displays tiles on the one it is actually being used on. Frames are applied as
+position → size → position: some apps clamp a move against their current size and others clamp a
+resize against the screen edge from their old origin, and setting the origin twice around the resize
+is what makes both land. Key repeat is swallowed but ignored, so holding ⌃⌘← does not strobe the
+window through every width.
 
 ### Behavior
 
@@ -396,6 +445,8 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SettingsAppearance.swift` | The Appearance tab — layout, theme, panel and the metric sliders |
 | `SettingsApps.swift` | The Apps tab — the app list with its favourite and exclude controls |
 | `SettingsAbout.swift` | The About tab — version, permission status, source link |
+| `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
+| `WindowTiling.swift` | Tiling geometry, the binding store, and the Accessibility frame writer |
 | `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
 
 ## Design notes

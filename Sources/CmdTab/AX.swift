@@ -112,6 +112,34 @@ enum AX {
         AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
     }
 
+    static func setSize(_ window: AXUIElement, _ size: CGSize) {
+        var size = size
+        guard let value = AXValueCreate(.cgSize, &size) else { return }
+        AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+    }
+
+    /// The app's frontmost *real* window — the one a window-management action should act on.
+    ///
+    /// Two things this cannot be a bare `kAXFocusedWindow` read. First, focus lands on palettes,
+    /// inspectors and sheets as readily as on documents, and snapping a Find panel to half the
+    /// screen is never what the user meant; `isSwitchableWindow` is the same filter the switcher's
+    /// own window list uses. Second, `kAXFocusedWindow` comes back empty for some apps
+    /// (Electron/Catalyst), which is why `SwitchTarget.resolveWindow` walks the same three
+    /// attributes — focused, then main, then the window list.
+    static func frontWindow(ofApplication pid: pid_t) -> AXUIElement? {
+        let app = application(pid)
+        let candidates = [
+            copyElement(app, kAXFocusedWindowAttribute as String),
+            copyElement(app, kAXMainWindowAttribute as String),
+        ].compactMap { $0 }
+        if let real = candidates.first(where: isSwitchableWindow) { return real }
+        if let window = windows(of: app).first(where: isSwitchableWindow) { return window }
+        // Nothing passed the filter. Fall back to whatever focus reported rather than doing
+        // nothing at all: an app whose only window reports an unexpected subrole is still a window
+        // the user is looking at, and refusing to move it is the worse failure.
+        return candidates.first ?? windows(of: app).first(where: isWindow)
+    }
+
     private static func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
