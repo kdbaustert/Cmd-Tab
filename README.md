@@ -112,6 +112,8 @@ tooltip.
 | Menu-bar glyph | Which artwork the menu-bar item shows. The menu shows each glyph rather than only its name. | Command |
 | Settings file | Export or import every preference, favourites and exclusions included, as JSON. | — |
 | Reset to defaults | Clears every Cmd-Tab preference. | — |
+| Keep settings in a config file | Mirrors every preference to `~/.config/cmdtab/config.json` (honouring `XDG_CONFIG_HOME`). Two-way and live: edits to the file apply without a relaunch, changes made in Settings are written back. The file is written **in place** rather than atomically, so a symlink into a dotfiles repo survives every save — an atomic write replaces the inode and would quietly break it. On launch the file wins over local defaults, which is what makes a fresh checkout come up configured. Unticking leaves the file on disk: it may be tracked, and deleting a tracked file because a checkbox changed is not ours to do. | Off |
+| Restore macOS ⌘-Tab | Hands the system switcher back without quitting. The takeover is otherwise undone only by a clean quit, which is no help in the case that matters — the trigger is bound to something unreachable and ⌘-Tab does nothing. Cmd-Tab keeps its own trigger, so both respond until it is restarted. | — |
 
 Start at login lives in the system's Login Items, not our defaults.
 
@@ -121,6 +123,7 @@ Start at login lives in the system's Login Items, not our defaults.
 | --- | --- | --- |
 | Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
 | Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
+| Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, or minimized windows. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. | None |
 | Window actions | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
 
 ### Windows
@@ -137,6 +140,8 @@ you are looking at, which is why they are not on the Shortcuts tab with the in-s
 | Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
 | Center | Keeps the window's size and centres it; a window bigger than the screen is clamped to it. | ⌃⌘C |
 | Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. | ⌃⌘Z |
+| Hide all windows | Hide every app to clear the screen to the desktop. | Unbound |
+| Show all windows | Bring back exactly what Hide all hid — apps you hid yourself stay hidden, since undoing a decision this feature never made would be wrong. | Unbound |
 
 Every binding is user-defined: click a shortcut and press a new combination, **⌫** clears it, **⎋**
 cancels. A cleared arrangement hands its chord back to whatever app wants it and stays cleared —
@@ -255,6 +260,11 @@ is dropped. Captures are debounced per hovered tile, run concurrently, and reuse
 window list so a cursor sweeping across tiles does not re-enumerate the system each time.
 
 ### Apps
+
+**Direct activation** gives an app its own chord: pressing it jumps straight there, launching the
+app if it isn't running. For the handful of apps you reach for all day the switcher is pure
+overhead. Entries are added unbound — picking the app and picking the combination are two
+decisions, and guessing a free chord on your behalf is how you shadow something of yours.
 
 One list of every running app, with two controls per row. They are opposite answers to the same
 question — should this app be in the switcher — so they share a row rather than two panes listing
@@ -447,6 +457,9 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SettingsAbout.swift` | The About tab — version, permission status, source link |
 | `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
 | `WindowTiling.swift` | Tiling geometry, the binding store, and the Accessibility frame writer |
+| `GlobalActions.swift` | Direct-activation and hide/show-all chords, and what they do |
+| `ScopedTriggers.swift` | Extra triggers that open a narrowed window list |
+| `ConfigFile.swift` | The `~/.config` mirror: file watching, write-back, live apply |
 | `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
 
 ## Design notes

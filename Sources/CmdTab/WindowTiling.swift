@@ -168,7 +168,7 @@ struct WindowTilingBindings: Equatable {
         guard isEnabled else { return nil }
         let held = flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift])
         return WindowArrangement.allCases.first {
-            guard let hotkey = bindings[$0] else { return false }
+            guard let hotkey = bindings[$0], hotkey.isUsableGlobally else { return false }
             let want = hotkey.modifiers.intersection(
                 [.maskCommand, .maskAlternate, .maskControl, .maskShift])
             return hotkey.keyCode == code && want == held

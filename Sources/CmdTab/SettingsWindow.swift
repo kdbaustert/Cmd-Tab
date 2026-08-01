@@ -66,11 +66,15 @@ enum SettingsAnchor {
     static let startup = "general.startup"
     static let menuBar = "general.menuBar"
     static let backup = "general.backup"
+    static let recovery = "general.recovery"
+    static let configFile = "general.configFile"
 
     static let trigger = "shortcuts.trigger"
     static let panelKeys = "shortcuts.panelKeys"
+    static let scoped = "shortcuts.scoped"
 
     static let tiling = "windows.tiling"
+    static let allWindows = "windows.allWindows"
 
     static let session = "behavior.session"
     static let contents = "behavior.contents"
@@ -84,6 +88,7 @@ enum SettingsAnchor {
     static let markers = "appearance.markers"
 
     static let appRules = "apps.rules"
+    static let directActivation = "apps.directActivation"
 
     static let permissions = "about.permissions"
     static let build = "about.build"
@@ -122,10 +127,23 @@ enum SettingsIndex {
         item("reset", .general, SettingsAnchor.backup, "Backup", "Reset to defaults",
              ["reset", "defaults", "wipe", "clear", "start over"]),
 
+        item("configFile", .general, SettingsAnchor.configFile, "Configuration file",
+             "Keep settings in a config file",
+             ["config", "config file", "dotfiles", "json", "xdg", "sync", "symlink", "~/.config"]),
+
+        item("restoreNative", .general, SettingsAnchor.recovery, "Recovery",
+             "Restore macOS \u{2318}-Tab",
+             ["restore", "recover", "native", "system switcher", "command tab", "cmd tab", "stuck",
+              "broken", "give back"]),
+
         item("hotkey", .shortcuts, SettingsAnchor.trigger, "Trigger", "Switcher shortcut",
              ["hotkey", "shortcut", "cmd tab", "command tab", "trigger", "key"]),
         item("sameApp", .shortcuts, SettingsAnchor.trigger, "Trigger", "Cycle app windows",
              ["window cycle", "same app", "backtick", "cmd `", "windows"]),
+        item("scoped", .shortcuts, SettingsAnchor.scoped, "Scoped shortcuts",
+             "Scoped shortcuts",
+             ["scope", "scoped", "this app", "this display", "minimized", "all windows",
+              "filtered", "subset", "extra trigger"]),
         item("panelKeys", .shortcuts, SettingsAnchor.panelKeys, "In-switcher keys",
              "Window action keys",
              ["quit", "close", "hide", "minimize", "zoom", "rebind", "action", "keys"]),
@@ -134,6 +152,14 @@ enum SettingsIndex {
              ["tile", "tiling", "snap", "halves", "half", "corner", "quarter", "maximize",
               "fullscreen", "center", "centre", "arrange", "window management", "restore",
               "left half", "right half", "cycle widths", "thirds"]),
+        item("allWindows", .windows, SettingsAnchor.allWindows, "All windows",
+             "Hide all windows",
+             ["hide all", "show all", "desktop", "clear screen", "show desktop", "unhide"]),
+        item("directActivation", .apps, SettingsAnchor.directActivation, "Direct activation",
+             "Jump straight to an app",
+             ["direct", "activate", "jump", "hotkey", "per app", "shortcut", "focus app",
+              "launch"]),
+
         item("showDelay", .behavior, SettingsAnchor.session, "Session", "Show delay",
              ["delay", "wait", "flash", "quick tap", "reveal"]),
         item("sticky", .behavior, SettingsAnchor.session, "Session", "Stay open",
@@ -378,6 +404,7 @@ struct SettingsRootView: View {
 struct GeneralSettings: View {
     @ObservedObject var loginItem: LoginItemStore
     @ObservedObject var behavior: BehaviorStore
+    @ObservedObject private var config = ConfigFile.shared
 
     var body: some View {
         SettingsPage(title: "General", subtitle: "How Cmd-Tab itself starts and presents itself.") {
@@ -432,8 +459,67 @@ struct GeneralSettings: View {
                     Button("Reset…", action: resetSettings)
                 }
             }
+
+            SettingsSection(
+                title: "Configuration file", anchor: SettingsAnchor.configFile,
+                footer: "Written in place rather than replaced, so a symlink into a dotfiles repo "
+                    + "survives every save. On launch the file wins over local settings — that is "
+                    + "what makes a fresh checkout come up configured."
+            ) {
+                SettingsToggle(
+                    title: "Keep settings in a config file",
+                    subtitle: "Mirrors every preference to \(ConfigFile.displayPath). Edits to the "
+                        + "file apply live; changes made here are written back.",
+                    isOn: Binding(
+                        get: { config.isEnabled },
+                        set: { config.setEnabled($0) }))
+                SettingsRow(title: "Show the file", subtitle: ConfigFile.displayPath) {
+                    Button("Reveal in Finder", action: config.revealInFinder)
+                        .disabled(!config.isEnabled)
+                }
+            }
+
+            SettingsSection(
+                title: "Recovery", anchor: SettingsAnchor.recovery,
+                footer: "The takeover lives in the window server's memory, never in "
+                    + "`com.apple.symbolichotkeys`, so logging out restores ⌘-Tab too."
+            ) {
+                SettingsRow(
+                    title: "Restore macOS ⌘-Tab",
+                    subtitle: nativeSwitcherSubtitle
+                ) {
+                    Button("Restore", action: restoreNativeSwitcher)
+                        .disabled(!SystemSwitcher.isNativeDisabled)
+                }
+            }
         }
         .onAppear { loginItem.refresh() }
+    }
+
+    /// Reflects the live state rather than a stored preference — this is a recovery control, and
+    /// what someone needs from it is whether the system switcher is off *right now*.
+    private var nativeSwitcherSubtitle: String {
+        SystemSwitcher.isNativeDisabled
+            ? "Cmd-Tab has the system switcher disabled. Hand ⌘-Tab back to macOS without quitting."
+            : "The system switcher is already enabled."
+    }
+
+    /// Hands ⌘-Tab back to macOS while Cmd-Tab keeps running.
+    ///
+    /// The takeover is otherwise undone only by a clean quit, which is no help at all in the case
+    /// that matters: the app is misbehaving, or its trigger is bound to something you cannot reach,
+    /// and ⌘-Tab does nothing. Cmd-Tab keeps its own trigger — this releases the *system's* one, so
+    /// both answer until the app is restarted.
+    private func restoreNativeSwitcher() {
+        SystemSwitcher.restoreNativeIfNeeded()
+        let alert = NSAlert()
+        alert.messageText = "macOS ⌘-Tab restored"
+        alert.informativeText =
+            "The system switcher answers ⌘-Tab again. Cmd-Tab is still running and still bound to "
+            + "its own trigger, so both will respond until you restart it.\n\n"
+            + "To keep the system switcher for good, quit Cmd-Tab or turn off Start at login."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func resetSettings() {
@@ -452,6 +538,29 @@ struct GeneralSettings: View {
 struct ShortcutSettings: View {
     @ObservedObject var behavior: BehaviorStore
     @ObservedObject private var shortcuts = SwitcherShortcutsStore.shared
+    @ObservedObject private var scoped = ScopedTriggersStore.shared
+
+    /// Adding a scoped trigger *is* choosing its scope, so the button is the menu — there is no
+    /// sensible default scope to add first and then correct.
+    private var addScopedMenu: some View {
+        Menu("Add Shortcut…") {
+            ForEach(SwitcherScope.allCases) { scope in
+                Button(scope.title) { scoped.add(scope: scope) }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private func scopedSubtitle(for trigger: ScopedTrigger) -> String? {
+        guard let hotkey = scoped.hotkey(for: trigger.id) else {
+            return "No shortcut yet — click Not set and press a combination."
+        }
+        if let claimer = WindowTilingBindings.triggerClaiming(hotkey, in: behavior) {
+            return "\(hotkey.displayString) opens \(claimer) — this will never fire."
+        }
+        return trigger.scope.detail
+    }
 
     var body: some View {
         SettingsPage(title: "Shortcuts", subtitle: "What opens the switcher, and what the keys do "
@@ -475,6 +584,52 @@ struct ShortcutSettings: View {
                             .controlSize(.small)
                         HotkeyRecorder(hotkey: $behavior.sameAppHotkey)
                             .disabled(!behavior.sameAppCycle)
+                    }
+                }
+            }
+
+            SettingsSection(
+                title: "Scoped shortcuts", anchor: SettingsAnchor.scoped,
+                footer: "Each opens the switcher on part of the window list instead of all of it. "
+                    + "Held and released like the main trigger, and never sticky — a scoped cycle "
+                    + "is a quick jump, not a panel to browse."
+            ) {
+                if scoped.scoped.triggers.isEmpty {
+                    SettingsWideRow {
+                        HStack {
+                            Text("None yet.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            addScopedMenu
+                        }
+                    }
+                } else {
+                    ForEach(scoped.scoped.triggers) { trigger in
+                        SettingsRow(
+                            title: trigger.scope.title,
+                            subtitle: scopedSubtitle(for: trigger),
+                            controlWidth: 210
+                        ) {
+                            HStack(spacing: 6) {
+                                ScopedShortcutRecorder(trigger: trigger, store: scoped)
+                                Button {
+                                    scoped.remove(id: trigger.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove this trigger")
+                            }
+                        }
+                    }
+                    SettingsWideRow {
+                        HStack {
+                            Spacer()
+                            addScopedMenu
+                        }
                     }
                 }
             }

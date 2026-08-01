@@ -240,6 +240,30 @@ final class TargetProvider {
         }
     }
 
+    /// Every switchable app's windows, for a scoped trigger.
+    ///
+    /// Uncached for the same reason `frontAppWindowTargets` is: this is the per-window Accessibility
+    /// walk, and keeping a second list warm would mean paying it on every refresh for a feature most
+    /// sessions never use. Hops off the caller's turn first — the caller is the event-tap callback.
+    func allWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return handler([]) }
+            let apps = self.switchableApps()
+            let sortOrder = self.sortOrder
+            let order = self.mru
+            let windowMRU = self.windowMRU
+            let screenFrames = Self.screenCGFrames()
+
+            self.axQueue.async {
+                let targets = Self.windowTargets(
+                    apps, order: order, sortOrder: sortOrder,
+                    windowMRU: windowMRU, screenFrames: screenFrames)
+                let badged = Self.withSpaceBadges(targets)
+                DispatchQueue.main.async { handler(badged) }
+            }
+        }
+    }
+
     private func collectFrontAppWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
             let app = switchableApps().first(where: { $0.pid == pid })

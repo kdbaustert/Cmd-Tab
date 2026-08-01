@@ -39,6 +39,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.tiling = bindings
         }
 
+        let globals = GlobalActionsStore.shared
+        applyGlobalActions(globals)
+        globals.onChange = { [weak self] in
+            self?.applyGlobalActions(globals)
+        }
+
+        let scoped = ScopedTriggersStore.shared
+        controller.scopedTriggers = scoped.scoped
+        scoped.onChange = { [weak self] triggers in
+            self?.controller.scopedTriggers = triggers
+        }
+
         let appearance = AppearanceStore.shared
         controller.metrics = appearance.metrics
         appearance.onChange = { [weak self] metrics in
@@ -50,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         behavior.onChange = { [weak self] in
             self?.applyBehavior(behavior)
         }
+
+        // After the stores are wired: enabling this reads the file straight into them, and the
+        // observer it installs must not fire against half-built state.
+        ConfigFile.shared.start()
 
         installSignalHandlers()
 
@@ -109,6 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.stickyMode = behavior.stickyMode
         controller.panelScreens = behavior.panelScreens
         updateStatusItem(behavior)
+    }
+
+    private func applyGlobalActions(_ store: GlobalActionsStore) {
+        controller.activations = store.activations
+        controller.allWindows = store.allWindows
     }
 
     private func startController() {

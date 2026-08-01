@@ -9,6 +9,7 @@ import SwiftUI
 /// would put two quite different kinds of binding under one heading.
 struct WindowSettings: View {
     @ObservedObject var store: WindowTilingStore
+    @ObservedObject private var globals = GlobalActionsStore.shared
 
     /// The order the rows read in: the four halves, then the four corners, then the three that are
     /// not a fraction of the screen at all.
@@ -63,6 +64,32 @@ struct WindowSettings: View {
                             TilingShortcutRecorder(arrangement: arrangement, store: store)
                         }
                     }
+                }
+            }
+
+            SettingsSection(
+                title: "All windows", anchor: SettingsAnchor.allWindows,
+                footer: "Unbound by default: these act system-wide and have no natural home key, so "
+                    + "the combination is yours to pick rather than ours to claim."
+            ) {
+                SettingsRow(
+                    title: "Hide all windows",
+                    subtitle: "Hide every app to clear the screen to the desktop.",
+                    controlWidth: 168
+                ) {
+                    GlobalShortcutRecorder(
+                        id: "allWindows.hide", hotkey: globals.allWindows.hideAll,
+                        assign: globals.setHideAll, store: globals)
+                }
+                SettingsRow(
+                    title: "Show all windows",
+                    subtitle: "Bring back exactly what Hide all hid — apps you hid yourself stay "
+                        + "hidden.",
+                    controlWidth: 168
+                ) {
+                    GlobalShortcutRecorder(
+                        id: "allWindows.show", hotkey: globals.allWindows.showAll,
+                        assign: globals.setShowAll, store: globals)
                 }
             }
 

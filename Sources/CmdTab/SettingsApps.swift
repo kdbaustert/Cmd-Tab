@@ -103,6 +103,7 @@ struct AppsSettings: View {
     @ObservedObject var store: ExclusionStore
     @ObservedObject var favorites: FavoritesStore
     @StateObject private var apps = AppListModel()
+    @ObservedObject private var globals = GlobalActionsStore.shared
     @State private var query = ""
 
     private var filtered: [AppEntry] {
@@ -117,6 +118,55 @@ struct AppsSettings: View {
             subtitle: "Star an app to keep it in the switcher even when it isn't running; picking "
                 + "it launches it. Excluded apps never appear."
         ) {
+            SettingsSection(
+                title: "Direct activation", anchor: SettingsAnchor.directActivation,
+                footer: "For the handful of apps you reach for all day, the switcher is overhead. "
+                    + "These jump straight there, launching the app if it isn't running."
+            ) {
+                if globals.activations.entries.isEmpty {
+                    SettingsWideRow {
+                        HStack {
+                            Text("No apps assigned.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Add App…", action: addDirectActivation)
+                        }
+                    }
+                } else {
+                    ForEach(globals.activations.entries) { entry in
+                        SettingsRow(
+                            title: name(for: entry.bundleID),
+                            subtitle: activationSubtitle(for: entry),
+                            controlWidth: 210
+                        ) {
+                            HStack(spacing: 6) {
+                                GlobalShortcutRecorder(
+                                    id: entry.bundleID,
+                                    hotkey: globals.hotkey(for: entry.bundleID),
+                                    assign: { globals.setHotkey($0, for: entry.bundleID) },
+                                    store: globals)
+                                Button {
+                                    globals.remove(bundleID: entry.bundleID)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove this app")
+                            }
+                        }
+                    }
+                    SettingsWideRow {
+                        HStack {
+                            Spacer()
+                            Button("Add App…", action: addDirectActivation)
+                        }
+                    }
+                }
+            }
+
             SettingsSection(title: "App rules", anchor: SettingsAnchor.appRules, footer: summary) {
                 SettingsWideRow {
                     HStack(spacing: 8) {
@@ -210,6 +260,43 @@ struct AppsSettings: View {
 
     private func setExcluded(_ on: Bool, for id: String) {
         store.setExcluded(on, for: id)
+    }
+
+    // MARK: - Direct activation
+
+    /// A displayable name for a bundle identifier, whether or not the app is running.
+    ///
+    /// Falls through to the raw identifier rather than hiding the row: an app that has since been
+    /// uninstalled still needs to be removable, which it cannot be if it does not appear.
+    private func name(for bundleID: String) -> String {
+        if let entry = apps.entries.first(where: { $0.id == bundleID }) { return entry.name }
+        return FavoritesStore.appInfo(for: bundleID)?.name ?? bundleID
+    }
+
+    private func activationSubtitle(for entry: DirectActivation) -> String? {
+        guard globals.hotkey(for: entry.bundleID) != nil else {
+            return "No shortcut yet — click Not set and press a combination."
+        }
+        let clashes = globals.activations.conflicts(with: entry.bundleID)
+        guard !clashes.isEmpty else { return nil }
+        return "Same shortcut as \(clashes.map(name(for:)).joined(separator: ", "))."
+    }
+
+    /// Reuses the same open panel the rules list uses, minus the favourite/exclude choice — there is
+    /// only one thing adding an app means here.
+    private func addDirectActivation() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.message = "Choose apps to give their own shortcut"
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            guard let id = Bundle(url: url)?.bundleIdentifier else { continue }
+            globals.add(bundleID: id)
+        }
     }
 
     private func clearAll() {

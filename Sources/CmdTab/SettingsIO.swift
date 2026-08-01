@@ -7,6 +7,40 @@ import AppKit
 enum SettingsIO {
     private static var keys: [String] { BehaviorStore.ownedDefaultsKeys }
 
+    /// Every owned preference that has actually been set, as a plist-safe dictionary.
+    ///
+    /// Shared with `ConfigFile`, which writes the same payload to disk continuously rather than on
+    /// demand — the two must agree on what "your settings" means, or a config file would carry a
+    /// different set from an exported one.
+    static func currentPayload() -> [String: Any] {
+        let defaults = UserDefaults.standard
+        var dict: [String: Any] = [:]
+        for key in keys where defaults.object(forKey: key) != nil {
+            dict[key] = defaults.object(forKey: key)
+        }
+        return dict
+    }
+
+    /// Writes an incoming payload into `UserDefaults`, ignoring anything not ours, and republishes
+    /// every store. Keys absent from `payload` are left alone rather than reset: a hand-edited
+    /// config that mentions three settings means "change these three".
+    static func apply(_ payload: [String: Any]) {
+        let defaults = UserDefaults.standard
+        let allowed = Set(keys)
+        for (key, value) in payload where allowed.contains(key) {
+            defaults.set(value, forKey: key)
+        }
+        reloadStores()
+    }
+
+    /// Serialised the one way, so a byte comparison between what we wrote and what is on disk is
+    /// meaningful. Sorted keys also keep the file diff-friendly, which is the point of putting it
+    /// in a dotfiles repo.
+    static func encode(_ payload: [String: Any]) -> Data? {
+        try? JSONSerialization.data(
+            withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    }
+
     static func export() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -14,13 +48,7 @@ enum SettingsIO {
         panel.message = "Export Cmd-Tab settings"
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let defaults = UserDefaults.standard
-        var dict: [String: Any] = [:]
-        for key in keys where defaults.object(forKey: key) != nil {
-            dict[key] = defaults.object(forKey: key)
-        }
-        guard let data = try? JSONSerialization.data(
-            withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]) else { return }
+        guard let data = encode(currentPayload()) else { return }
         try? data.write(to: url)
     }
 
@@ -33,13 +61,7 @@ enum SettingsIO {
               let data = try? Data(contentsOf: url),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
-
-        let defaults = UserDefaults.standard
-        let allowed = Set(keys)
-        for (key, value) in dict where allowed.contains(key) {
-            defaults.set(value, forKey: key)
-        }
-        reloadStores()
+        apply(dict)
     }
 
     static func reset() {
@@ -48,12 +70,14 @@ enum SettingsIO {
     }
 
     /// Re-reads UserDefaults into every live store so the UI and the running switcher update at once.
-    private static func reloadStores() {
+    static func reloadStores() {
         BehaviorStore.shared.reload()
         AppearanceStore.shared.reload()
         ExclusionStore.shared.reload()
         FavoritesStore.shared.reload()
         SwitcherShortcutsStore.shared.reload()
         WindowTilingStore.shared.reload()
+        GlobalActionsStore.shared.reload()
+        ScopedTriggersStore.shared.reload()
     }
 }

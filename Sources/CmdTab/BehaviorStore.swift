@@ -197,6 +197,17 @@ struct Hotkey: Equatable {
         modifiers.intersection([.maskCommand, .maskAlternate, .maskControl])
     }
 
+    /// Whether this is a combination a *global* binding may fire on.
+    ///
+    /// Every recorder already refuses a bare key, but a binding can also arrive from a hand-edited
+    /// `config.json` or an imported settings file, and a global chord with no modifier would swallow
+    /// that key everywhere on the machine — you would lose the letter "e" in every app with no
+    /// indication why. The matchers check this rather than trusting the input, which is also what
+    /// makes the "added but not yet bound" sentinel (`keyCode == -1`) inert.
+    var isUsableGlobally: Bool {
+        keyCode >= 0 && !heldModifiers.isEmpty
+    }
+
     var displayString: String {
         var parts = ""
         if modifiers.contains(.maskControl) { parts += "⌃" }
@@ -367,7 +378,7 @@ final class BehaviorStore: ObservableObject {
         [
             "iconSize", "iconSpacing", "titleSpacing",
             "excludedBundleIDs", "favoriteBundleIDs", "switcherShortcuts",
-        ] + WindowTilingStore.defaultsKeys
+        ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys
 
     /// The keys export/import/reset operate on.
     static var ownedDefaultsKeys: [String] { ownedKeys.map(\.name) + otherStoreKeys }

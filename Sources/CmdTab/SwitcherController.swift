@@ -124,6 +124,12 @@ final class SwitcherController {
     /// The window-tiling bindings, as a snapshot the tap callback can read without touching a store.
     /// Pushed by `AppDelegate` whenever they change.
     var tiling: WindowTilingBindings = .defaults
+    /// Per-app jump chords, same arrangement.
+    var activations = DirectActivations()
+    /// The hide-all / show-all chords.
+    var allWindows = AllWindowsShortcuts()
+    /// Extra triggers that open a narrowed window list.
+    var scopedTriggers = ScopedTriggers()
 
     /// Applications or individual windows. Rebuilds the list, since it changes what a target *is*.
     var mode: SwitcherMode {
@@ -466,6 +472,24 @@ final class SwitcherController {
             return true
         }
 
+        // Direct activation and the all-windows chords, on both edges for the same reason tiling is.
+        // Matched after the triggers so a chord bound to both still opens the switcher, and before
+        // tiling only because they are cheaper to test.
+        if !NSApp.isActive {
+            if let bundleID = activations.bundleID(code: code, flags: flags) {
+                if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    GlobalActions.activate(bundleID: bundleID)
+                }
+                return true
+            }
+            if let action = allWindows.action(code: code, flags: flags) {
+                if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    GlobalActions.perform(action)
+                }
+                return true
+            }
+        }
+
         // Window tiling is matched on both edges, before the keyUp gate below.
         //
         // Swallowing only the keydown left an unpaired key-up on the way to the frontmost app, and
@@ -492,6 +516,11 @@ final class SwitcherController {
         if let sameApp = sameAppHotkey, code == sameApp.keyCode,
             modifiersMatch(flags, sameApp.heldModifiers) {
             return openSameApp(backwards: backwards)
+        }
+        // Scoped triggers last among the openers, for the same reason: a chord shared with either
+        // built-in trigger keeps its built-in meaning.
+        if let match = scopedTriggers.scope(code: code, flags: flags) {
+            return openScoped(match.scope, held: match.held, backwards: backwards)
         }
         return false
     }
@@ -756,6 +785,84 @@ final class SwitcherController {
             DispatchQueue.main.async { target.focus() }
         }
         return true
+    }
+
+    /// Opens a scoped session: the window list narrowed to one app, one display, or the minimized
+    /// ones.
+    ///
+    /// Shares the same-app cycle's shape — the list arrives asynchronously, so the chord is always
+    /// swallowed and the same session token, deadline and watchdog guard the late callback. `.frontApp`
+    /// routes through the existing front-app fetch rather than filtering the whole list: that walk
+    /// touches one app instead of every running one, which is the difference between a few
+    /// Accessibility round-trips and a few hundred.
+    private func openScoped(_ scope: SwitcherScope, held: CGEventFlags, backwards: Bool) -> Bool {
+        guard !pendingSameApp, !isVisible, !armed else { return true }
+        let token = beginSession()
+        activeHeld = held
+        // Not inherited from the main trigger's setting: this chord is not the one the user asked to
+        // stay open, the same reasoning `openSameApp` uses.
+        isSticky = false
+        pendingSameApp = true
+        pendingSameAppReleased = false
+        startWatchdog()
+
+        let deadline = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingSameApp, token == self.sessionToken else { return }
+            Log.tap.notice("scoped window fetch timed out; abandoning")
+            self.beginSession()
+            self.stopWatchdog()
+        }
+        sameAppDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + sameAppTimeout, execute: deadline)
+
+        let receive: ([SwitchTarget]) -> Void = { [weak self] targets in
+            guard let self, self.pendingSameApp, token == self.sessionToken else { return }
+            self.sameAppDeadline?.cancel()
+            self.sameAppDeadline = nil
+            self.pendingSameApp = false
+
+            let filtered = Self.filter(targets, to: scope)
+            guard !filtered.isEmpty else {
+                self.pendingSameAppReleased = false
+                self.stopWatchdog()
+                return
+            }
+            guard self.pendingSameAppReleased else {
+                self.showWith(targets: filtered, backwards: backwards, mode: .windows)
+                return
+            }
+            // Tapped and released before the list landed: switch without ever drawing.
+            self.pendingSameAppReleased = false
+            self.stopWatchdog()
+            let index = backwards ? filtered.count - 1 : min(1, filtered.count - 1)
+            let target = filtered[index]
+            DispatchQueue.main.async { target.focus() }
+        }
+
+        if scope == .frontApp {
+            provider.frontAppWindowTargets(then: receive)
+        } else {
+            provider.allWindowTargets(then: receive)
+        }
+        return true
+    }
+
+    /// Narrows a window list to a scope. `.frontApp` and `.allWindows` are already exactly what was
+    /// fetched, so only the two filtering scopes do anything here.
+    private static func filter(_ targets: [SwitchTarget], to scope: SwitcherScope) -> [SwitchTarget] {
+        switch scope {
+        case .frontApp, .allWindows:
+            return targets
+        case .minimized:
+            return targets.filter(\.isMinimized)
+        case .currentDisplay:
+            // `displayIndex` is only populated when there is more than one display to tell apart, so
+            // with one screen every window trivially qualifies — which is the right answer anyway.
+            guard NSScreen.screens.count > 1,
+                let index = NSScreen.screens.firstIndex(of: .underCursor)
+            else { return targets }
+            return targets.filter { $0.displayIndex == index }
+        }
     }
 
     /// Invalidates anything still in flight from a previous session and returns the new token.
