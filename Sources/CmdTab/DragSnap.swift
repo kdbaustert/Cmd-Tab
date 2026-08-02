@@ -299,8 +299,15 @@ final class SnapAppearance {
     /// paints the destination a colour the window itself will not be.
     var landing: NSColor { .black }
 
-    /// Rectangle's `footprintAlpha` default, applied to the whole overlay rather than to the fill,
-    /// so the border fades with it exactly as theirs does.
+    /// Rectangle's `footprintAlpha` default — but applied to the **fill only**, where Rectangle
+    /// puts it on the whole footprint window.
+    ///
+    /// The one deliberate departure from copying them. Alpha on the window fades the border with
+    /// the fill, and on a dark backdrop that leaves a black block at 30% (indistinguishable from
+    /// what is behind it) edged by a grey hairline at 30% (measured at #38383A — visible, but only
+    /// just). The destination is the thing the user is deciding on, so its edge is drawn at full
+    /// strength and only the fill is washed: same colours, same weight, same radius as Rectangle,
+    /// with the one line you actually navigate by left legible.
     static let blockAlpha: CGFloat = 0.3
     /// Rectangle's `footprintBorderWidth` default.
     static let borderWidth: CGFloat = 2
@@ -371,8 +378,11 @@ final class SnapPreview {
     /// the first frame of a gesture drawn the old way.
     private func restyle(_ panel: NSPanel) {
         guard let layer = panel.contentView?.layer else { return }
-        panel.alphaValue = SnapAppearance.blockAlpha
-        layer.backgroundColor = SnapAppearance.shared.landing.cgColor
+        // Opaque panel, translucent fill — see `SnapAppearance.blockAlpha` for why the alpha is
+        // here and not on the window.
+        panel.alphaValue = 1
+        layer.backgroundColor = SnapAppearance.shared.landing
+            .withAlphaComponent(SnapAppearance.blockAlpha).cgColor
         layer.borderColor = SnapAppearance.shared.outline.cgColor
         layer.borderWidth = SnapAppearance.borderWidth
         layer.cornerRadius = SnapAppearance.blockCornerRadius
