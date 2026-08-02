@@ -94,6 +94,18 @@ final class PanelGroup {
     /// The frame of the panel the cursor is on.
     var anchorFrame: NSRect { anchor?.frame ?? frame }
 
+    /// One clause per panel: where it is, how opaque it is, and whether the window server has it on
+    /// screen. Logged on every show rather than kept for a debug build, because "the switcher did
+    /// not appear" is reported against a release copy and the show path is otherwise silent about
+    /// the three ways it can fail — a degenerate frame, an opacity of zero, and a window that never
+    /// made it on screen all look identical from the outside.
+    var diagnostics: String {
+        guard !panels.isEmpty else { return "no panels" }
+        return panels.map { panel in
+            "\(NSStringFromRect(panel.frame)) alpha=\(panel.alphaValue) onscreen=\(panel.isVisible)"
+        }.joined(separator: " | ")
+    }
+
     var effectiveAppearance: NSAppearance? { anchor?.effectiveAppearance }
 
     /// The highlighted tile's rect on whichever panel the cursor is over.
@@ -123,10 +135,12 @@ final class PanelGroup {
         // against a panel that has since moved.
         let panel = panels.first { $0.frame.contains(centre) } ?? anchor ?? panels.first
         let screen =
-            NSScreen.screens.first { NSMouseInRect(centre, $0.frame, false) } ?? .underCursor
+            NSScreen.screens.first { NSMouseInRect(centre, $0.frame, false) } ?? NSScreen.underCursor
         return PreviewPlacement(
             panelFrame: panel?.frame ?? frame,
-            visibleFrame: screen.visibleFrame,
+            // No screen at all (every display asleep) leaves the strip nothing to bound itself
+            // against; the tile's own rect is the closest thing to a sane fallback.
+            visibleFrame: screen?.visibleFrame ?? rect,
             appearance: panel?.effectiveAppearance)
     }
 

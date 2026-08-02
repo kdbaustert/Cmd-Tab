@@ -3,9 +3,14 @@ import SwiftUI
 
 extension NSScreen {
     /// The screen under the cursor, falling back to the main screen then the first attached one.
-    static var underCursor: NSScreen {
+    ///
+    /// Optional because `NSScreen.screens` really can be empty — a sleeping display, a closed lid
+    /// with nothing external attached, the moment a display is being reconfigured. Subscripting it
+    /// for a fallback traps, and this sits on the panel's show path, so that trap would take the
+    /// whole app down mid-⌘-Tab.
+    static var underCursor: NSScreen? {
         let mouse = NSEvent.mouseLocation
-        return screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? main ?? screens[0]
+        return screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? main ?? screens.first
     }
 }
 
@@ -97,17 +102,34 @@ final class SwitcherPanel: NSPanel {
     func show() {
         // Invalidate any in-flight fade-out completion so a quick re-show is not ordered back out.
         hideToken &+= 1
+        let token = hideToken
         layout()
-        if fade {
-            alphaValue = 0
-            orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.12
-                animator().alphaValue = 1
+        // Whatever the last hide left running has to go before the opacity is reset, or it carries
+        // on driving `alphaValue` back down underneath the fade-in below.
+        settleAlphaAnimation()
+        alphaValue = fade ? 0 : 1
+        orderFrontRegardless()
+        guard fade else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            animator().alphaValue = 1
+        }
+        // The fade is decoration; being on screen is not, and this is the one place the two were
+        // tied together. A fade-out ends at `alphaValue == 0` and that is the window's resting
+        // state between sessions, so anything that keeps the fade-in above from running to
+        // completion — AppKit suspends animations for an occluded app, and a display that sleeps
+        // mid-animation can strand one indefinitely — ordered the panel in fully transparent.
+        // Every symptom of that is a panel that "doesn't appear": the state machine is healthy,
+        // the session opens and commits, the show path logs normally, and nothing recovers it
+        // short of relaunching. Settle the opacity by hand rather than trusting the animation.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeGrace) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.hideToken == token, self.alphaValue < 1 else { return }
+                Log.general.error(
+                    "panel fade-in stalled at alpha \(self.alphaValue, privacy: .public); forcing it visible")
+                self.settleAlphaAnimation()
+                self.alphaValue = 1
             }
-        } else {
-            alphaValue = 1
-            orderFrontRegardless()
         }
     }
 
@@ -115,21 +137,44 @@ final class SwitcherPanel: NSPanel {
         // A fade-out has to keep the window up until the animation finishes, so order out in the
         // completion; the instant path just drops it. The token guards against a re-show landing
         // mid-fade — without it the stale completion would order the fresh panel back out.
-        if fade && alphaValue > 0 {
-            hideToken &+= 1
-            let token = hideToken
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.10
-                animator().alphaValue = 0
-            } completionHandler: { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, self.hideToken == token else { return }
-                    self.orderOut(nil)
-                }
-            }
-        } else {
+        guard fade, alphaValue > 0 else {
             orderOut(nil)
+            return
         }
+        hideToken &+= 1
+        let token = hideToken
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.10
+            animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated { self?.finishHide(token) }
+        }
+        // The mirror of the settle in `show()`, and for the same reason: a completion handler that
+        // never arrives must not be the only thing that takes the panel down.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeGrace) { [weak self] in
+            MainActor.assumeIsolated { self?.finishHide(token) }
+        }
+    }
+
+    /// How long to let a fade run before taking the outcome into our own hands. Comfortably past
+    /// both durations, so it only ever fires for an animation that is not going to arrive.
+    private static let fadeGrace: TimeInterval = 0.3
+
+    /// Orders the panel out for the fade that `token` belongs to. Safe to call twice — the second
+    /// call is the deadline catching up with a completion that already ran.
+    private func finishHide(_ token: Int) {
+        guard hideToken == token, isVisible else { return }
+        orderOut(nil)
+    }
+
+    /// Drops any running opacity animation, leaving `alphaValue` wherever it had reached. Assigning
+    /// the property directly does not do this: the animation keeps its own schedule and goes on
+    /// writing over the assignment until it finishes.
+    private func settleAlphaAnimation() {
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        animator().alphaValue = alphaValue
+        NSAnimationContext.endGrouping()
     }
 
     /// The highlighted tile's screen rect, for positioning a keyboard-driven preview against it.
@@ -161,7 +206,12 @@ final class SwitcherPanel: NSPanel {
 
     /// Rebuilds the content at the size the current target list needs, then recenters.
     func layout() {
-        let screen = targetScreen()
+        // No screen to lay out against — every display asleep, or one being reconfigured. Keeping
+        // the previous geometry is the only sane answer; the next show recomputes it.
+        guard let screen = targetScreen() else {
+            Log.general.error("panel layout: no screen available; keeping the current geometry")
+            return
+        }
         let columns = Self.columns(for: model, on: screen, cap: maxColumns)
         // Deliberately does NOT clear `tileFrames`. `onPreferenceChange` only fires when the reported
         // value actually changes, so wiping the cache here does not provoke a fresh report — it just
@@ -173,7 +223,15 @@ final class SwitcherPanel: NSPanel {
         let view = SwitcherView(model: model, columns: columns) { [weak self] frames in
             guard let self else { return }
             self.tileFrames = frames
-            self.onGeometryChange?()
+            // The cache is assigned inline — readers want the new frames immediately — but the
+            // notification is not. Everything downstream of it lays out views of its own (the
+            // preview strip has its own hosting view) and reads panel geometry, and doing that
+            // from inside the SwiftUI update that is still reporting this preference is what
+            // makes SwiftUI log "Bound preference TileFrameKey tried to update multiple times
+            // per frame" and then *drop* the update. A dropped report is the failure this cache
+            // was written to avoid: stale frames mean no hover highlight, clicks hit-tested
+            // against the previous list, and previews placed off a rect that has since moved.
+            DispatchQueue.main.async { [weak self] in self?.onGeometryChange?() }
         }
 
         if let host {
@@ -188,7 +246,27 @@ final class SwitcherPanel: NSPanel {
 
         guard let host else { return }
         host.layoutSubtreeIfNeeded()
-        let size = host.fittingSize
+        var size = host.fittingSize
+
+        // A zero fitting size is not a small panel, it is an invisible one: `setContentSize` would
+        // make a 0×0 window, centred on the right screen, ordered in, and showing nothing — which
+        // reads to the user as the panel never opening, while every log line on the show path looks
+        // normal. Measure once more from a fresh hosting view (the reused one is the thing that can
+        // be wedged), and if that is empty too, keep the last size we knew was good.
+        if size.width < 1 || size.height < 1 {
+            Log.general.error("panel measured empty; rebuilding the hosting view")
+            let rebuilt = NSHostingView(rootView: view)
+            self.host = rebuilt
+            contentView = rebuilt
+            rebuilt.layoutSubtreeIfNeeded()
+            size = rebuilt.fittingSize
+        }
+        guard size.width >= 1, size.height >= 1 else {
+            Log.general.error("panel still measured empty; keeping the previous content size")
+            setFrameOrigin(origin(for: frame.size, on: screen))
+            return
+        }
+
         setContentSize(size)
         setFrameOrigin(origin(for: size, on: screen))
     }
@@ -213,7 +291,7 @@ final class SwitcherPanel: NSPanel {
         }
     }
 
-    private func targetScreen() -> NSScreen {
+    private func targetScreen() -> NSScreen? {
         // A pinned screen wins outright — the panel exists *because* that display was chosen.
         if let pinnedScreen { return pinnedScreen }
         // "Active screen" follows the frontmost app's screen (NSScreen.main); the others follow

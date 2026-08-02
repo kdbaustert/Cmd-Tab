@@ -916,7 +916,8 @@ final class SwitcherController {
             // `displayIndex` is only populated when there is more than one display to tell apart, so
             // with one screen every window trivially qualifies — which is the right answer anyway.
             guard NSScreen.screens.count > 1,
-                let index = NSScreen.screens.firstIndex(of: .underCursor)
+                let cursorScreen = NSScreen.underCursor,
+                let index = NSScreen.screens.firstIndex(of: cursorScreen)
             else { return targets }
             return targets.filter { $0.displayIndex == index }
         }
@@ -980,7 +981,15 @@ final class SwitcherController {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
             self.panels.show()
-            Log.general.notice("panel shown: frame=\(NSStringFromRect(self.panels.frame))")
+            // `.public` deliberately: interpolation redacts by default, and this line reading
+            // `frame=<private>` is exactly why a log full of apparently healthy shows could not
+            // tell a panel that drew from one that came up 0×0 or fully transparent. There is
+            // nothing personal in a rectangle.
+            Log.general.notice(
+                """
+                panel shown: \(self.panels.diagnostics, privacy: .public) \
+                targets=\(self.model.targets.count, privacy: .public)
+                """)
 
             // The cache can be a moment stale; fold in a fresh list without disturbing the highlight.
             self.provider.refresh { [weak self] fresh in
