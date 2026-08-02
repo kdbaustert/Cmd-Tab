@@ -16,8 +16,23 @@ enum DockBadges {
     /// Keyed on bundle id rather than the item's title because the title is the display name, which
     /// is localised and collides across apps.
     ///
+    /// The last walk and when it happened, so a burst of refreshes shares one read of the Dock.
+    ///
+    /// Confined to `TargetProvider`'s serial Accessibility queue, which is the only caller — the
+    /// same arrangement `MouseWindowDrag.draggedWindow` relies on, and what keeps this safe without
+    /// a lock.
+    private nonisolated(unsafe) static var cached: (badges: [String: String], at: Date)?
+
+    /// How long a walk may be reused. Badges are a decoration that changes when mail arrives, so
+    /// seconds of staleness cost nothing — where the walk itself is two or three Accessibility
+    /// round-trips per Dock item, and `TargetProvider.refresh()` runs on every app activation,
+    /// launch, quit, hide and unhide. A ⌘-Tab commit activates an app, so the switcher was paying
+    /// a full Dock enumeration for its own switch, every time.
+    private static let ttl: TimeInterval = 3
+
     /// Accessibility IPC to another process — belongs on a background queue, never the event tap.
     static func current() -> [String: String] {
+        if let cached, Date().timeIntervalSince(cached.at) < ttl { return cached.badges }
         guard
             let dock = NSWorkspace.shared.runningApplications
                 .first(where: { $0.bundleIdentifier == "com.apple.dock" })
@@ -36,6 +51,7 @@ enum DockBadges {
                 badges[id] = label
             }
         }
+        cached = (badges, Date())
         return badges
     }
 

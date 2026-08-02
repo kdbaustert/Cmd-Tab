@@ -39,7 +39,20 @@ enum SystemSwitcher {
         let tab = setEnabled(commandTab, enabled)
         let shiftTab = setEnabled(commandShiftTab, enabled)
         let ok = tab == 0 && shiftTab == 0
-        if ok { isNativeDisabled = !enabled }
+        // The bookkeeping is asymmetric on purpose, because the cost of being wrong is asymmetric.
+        //
+        // Taking over: *either* key changing hands means the system switcher has been altered and
+        // there is something to undo. Recording only the clean case meant a partial takeover — one
+        // key accepted, the other refused — left `isNativeDisabled` false, so the restore on quit
+        // was skipped and the user was left with a ⌘-Tab that did nothing until they logged out.
+        //
+        // Handing back: only a complete restore counts, so a partial one leaves the flag set and
+        // the next teardown path tries again rather than assuming the job is done.
+        if enabled {
+            if ok { isNativeDisabled = false }
+        } else if tab == 0 || shiftTab == 0 {
+            isNativeDisabled = true
+        }
         return ok
     }
 
