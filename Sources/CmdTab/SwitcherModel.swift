@@ -35,8 +35,10 @@ final class SwitcherModel: ObservableObject {
     @Published var highlightColor: Color = .accentColor
     /// Show the ⌘-number badge on the first ten tiles.
     @Published var showNumbers: Bool = true
-    /// Show the display and Space badges on window tiles.
-    @Published var showBadges: Bool = true
+    /// Show the display badge on window tiles.
+    @Published var showDisplayBadges: Bool = true
+    /// Show the Space (Desktop) badge on window tiles.
+    @Published var showSpaceBadges: Bool = true
     /// The frosted material behind the tiles.
     @Published var material: PanelMaterial = .hud
     /// Blur radius override for the glass, or nil to use the material's built-in blur.

@@ -401,9 +401,15 @@ final class TargetProvider {
             // An app with no bundle identifier can't be excluded — there is nothing stable to
             // key the exclusion on — so it always stays in the list.
             if let bundleID = app.bundleIdentifier, excluded.contains(bundleID) { return nil }
+            let name = app.localizedName ?? "Unknown"
+            // The per-app name override is applied here rather than at each tile, so everything
+            // downstream — both tile builders, the caption, and the fuzzy match, which scores the
+            // app name as well as the title — sees the name the user chose and nothing has to
+            // remember to ask twice.
+            let renamed = app.bundleIdentifier.map { appRules[$0]?.label(or: name) ?? name } ?? name
             return AppInfo(
                 pid: app.processIdentifier,
-                name: app.localizedName ?? "Unknown",
+                name: renamed,
                 bundleID: app.bundleIdentifier,
                 icon: app.icon,
                 isHidden: app.isHidden)

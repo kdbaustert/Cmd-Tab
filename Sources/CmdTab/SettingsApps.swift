@@ -195,27 +195,9 @@ struct AppsSettings: View {
                         SettingsRow(
                             title: name(for: bundleID),
                             subtitle: overrideSubtitle(for: bundleID),
-                            controlWidth: 250
+                            controlWidth: 300
                         ) {
-                            HStack(spacing: 10) {
-                                Toggle(
-                                    "Windows",
-                                    isOn: Binding(
-                                        get: { rules.rule(for: bundleID).expandWindows },
-                                        set: { rules.setExpandWindows($0, for: bundleID) }))
-                                    .toggleStyle(.checkbox)
-                                    .help(
-                                        "Always list this app's windows individually, even in "
-                                        + "application mode.")
-                                Toggle(
-                                    "No tiling",
-                                    isOn: Binding(
-                                        get: { rules.rule(for: bundleID).neverTile },
-                                        set: { rules.setNeverTile($0, for: bundleID) }))
-                                    .toggleStyle(.checkbox)
-                                    .help("Never let a tiling shortcut move or resize its windows.")
-                            }
-                            .font(.system(size: 11))
+                            AppOverrideControls(bundleID: bundleID, rules: rules)
                         }
                     }
                     SettingsWideRow {
@@ -352,8 +334,13 @@ struct AppsSettings: View {
         var parts: [String] = []
         if rule.expandWindows { parts.append("listed window-by-window") }
         if rule.neverTile { parts.append("never tiled") }
-        // Untick both and the row deletes itself on the next change, so say so rather than leaving
-        // a row that looks like it still does something.
+        if rule.hideWhenFrontmost { parts.append("hidden when already front") }
+        if !rule.displayName.isEmpty { parts.append("shown as “\(rule.displayName)”") }
+        if let arrangement = rule.launchArrangement {
+            parts.append("opens \(arrangement.title.lowercased())")
+        }
+        // Clear them all and the row deletes itself on the next change, so say so rather than
+        // leaving a row that looks like it still does something.
         return parts.isEmpty ? "No overrides left — this row will disappear." : parts.joined(separator: ", ")
     }
 
@@ -505,5 +492,81 @@ private struct AppRow: View {
                 .frame(height: SettingsChrome.hairline)
                 .padding(.leading, 44)
         }
+    }
+}
+
+/// The controls for one app's overrides: three switches on the first line, the name override and
+/// the launch arrangement on the second.
+///
+/// A view of its own rather than an inline stack. Five controls, each with a `Binding` built from
+/// two closures over the same store, is enough for the type-checker to give up on the enclosing
+/// `body` — and it fails as a timeout, so the build gets slower long before it breaks.
+private struct AppOverrideControls: View {
+    let bundleID: String
+    @ObservedObject var rules: AppRulesStore
+
+    private var expandWindows: Binding<Bool> {
+        Binding(
+            get: { rules.rule(for: bundleID).expandWindows },
+            set: { rules.setExpandWindows($0, for: bundleID) })
+    }
+
+    private var neverTile: Binding<Bool> {
+        Binding(
+            get: { rules.rule(for: bundleID).neverTile },
+            set: { rules.setNeverTile($0, for: bundleID) })
+    }
+
+    private var hideWhenFrontmost: Binding<Bool> {
+        Binding(
+            get: { rules.rule(for: bundleID).hideWhenFrontmost },
+            set: { rules.setHideWhenFrontmost($0, for: bundleID) })
+    }
+
+    private var displayName: Binding<String> {
+        Binding(
+            get: { rules.rule(for: bundleID).displayName },
+            set: { rules.setDisplayName($0, for: bundleID) })
+    }
+
+    private var launchArrangement: Binding<WindowArrangement?> {
+        Binding(
+            get: { rules.rule(for: bundleID).launchArrangement },
+            set: { rules.setLaunchArrangement($0, for: bundleID) })
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 10) {
+                Toggle("Windows", isOn: expandWindows)
+                    .help(
+                        "Always list this app's windows individually, even in application mode.")
+                Toggle("No tiling", isOn: neverTile)
+                    .help("Never let a tiling shortcut move or resize its windows.")
+                Toggle("Hide if front", isOn: hideWhenFrontmost)
+                    .help(
+                        "Switching to this app while it is already frontmost hides it instead, so "
+                        + "one chord toggles it away and back.")
+            }
+            .toggleStyle(.checkbox)
+            HStack(spacing: 6) {
+                TextField("Name", text: displayName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 120)
+                    .help(
+                        "Shown on this app's tiles in place of its own name. Empty uses the app's.")
+                Picker("", selection: launchArrangement) {
+                    Text("Opens anywhere").tag(WindowArrangement?.none)
+                    Divider()
+                    ForEach(WindowArrangement.launchable) { arrangement in
+                        Text(arrangement.title).tag(WindowArrangement?.some(arrangement))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 160)
+                .help("Snap this app's first window here as it opens.")
+            }
+        }
+        .font(.system(size: 11))
     }
 }

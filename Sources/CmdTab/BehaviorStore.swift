@@ -330,7 +330,12 @@ extension Defaults.Keys {
     static let blurOverride = Key<Bool>("blurOverride", default: true)
     static let blurRadius = Key<Double>("blurRadius", default: 40)
     static let showNumbers = Key<Bool>("showNumbers", default: true)
-    static let showBadges = Key<Bool>("showBadges", default: true)
+    /// The display and Space markers, separately. They were one `showBadges` switch until the two
+    /// turned out to answer different questions — a single-display machine with several Desktops
+    /// wants the Space marker and never sees a display one, and the reverse holds for a two-monitor
+    /// machine with one Desktop. `Migration.run` seeds both from the retired key.
+    static let showDisplayBadges = Key<Bool>("showDisplayBadges", default: true)
+    static let showSpaceBadges = Key<Bool>("showSpaceBadges", default: true)
     static let notificationBadges = Key<Bool>("notificationBadges", default: true)
     static let tileCorner = Key<Double>("tileCorner", default: 12)
     static let titleFontSize = Key<Double>("titleFontSize", default: 10)
@@ -370,7 +375,7 @@ final class BehaviorStore: ObservableObject {
         .hotkeyKeyCode, .hotkeyModifiers, .sameAppKeyCode, .sameAppModifiers,
         .stickyMode, .sameAppCycle, .hideEmptyApps, .showDelay, .maxColumns,
         .blurOverride, .blurRadius,
-        .showNumbers, .showBadges, .notificationBadges,
+        .showNumbers, .showDisplayBadges, .showSpaceBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
         .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview, .launchFromSearch,
     ]
@@ -382,6 +387,7 @@ final class BehaviorStore: ObservableObject {
             "iconSize", "iconSpacing", "titleSpacing",
             "excludedBundleIDs", "favoriteBundleIDs",
         ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
+        + SwitcherShortcutsStore.defaultsKeys + WindowLayoutsStore.defaultsKeys
 
     /// The keys export/import/reset operate on.
     static var ownedDefaultsKeys: [String] { ownedKeys.map(\.name) + otherStoreKeys }
@@ -462,11 +468,14 @@ final class BehaviorStore: ObservableObject {
     @Published var showNumbers: Bool = Defaults[.showNumbers] {
         didSet { persist(showNumbers, oldValue, to: .showNumbers) }
     }
-    /// The display and Space badges on window tiles. Defaults on, and they only ever appear when
-    /// there is more than one display or Space to tell apart, so the setting is for turning them
-    /// off rather than on.
-    @Published var showBadges: Bool = Defaults[.showBadges] {
-        didSet { persist(showBadges, oldValue, to: .showBadges) }
+    /// The display badge on window tiles. Defaults on, and it only ever appears when there is more
+    /// than one display to tell apart, so the setting is for turning it off rather than on.
+    @Published var showDisplayBadges: Bool = Defaults[.showDisplayBadges] {
+        didSet { persist(showDisplayBadges, oldValue, to: .showDisplayBadges) }
+    }
+    /// The Space (Desktop) badge, same arrangement.
+    @Published var showSpaceBadges: Bool = Defaults[.showSpaceBadges] {
+        didSet { persist(showSpaceBadges, oldValue, to: .showSpaceBadges) }
     }
     /// Show each app's Dock notification badge (unread counts) on its tile.
     @Published var notificationBadges: Bool = Defaults[.notificationBadges] {
@@ -542,7 +551,8 @@ final class BehaviorStore: ObservableObject {
         blurOverride = Defaults[.blurOverride]
         blurRadius = Defaults[.blurRadius]
         showNumbers = Defaults[.showNumbers]
-        showBadges = Defaults[.showBadges]
+        showDisplayBadges = Defaults[.showDisplayBadges]
+        showSpaceBadges = Defaults[.showSpaceBadges]
         notificationBadges = Defaults[.notificationBadges]
         tileCorner = Defaults[.tileCorner]
         titleFontSize = Defaults[.titleFontSize]
@@ -629,14 +639,14 @@ final class BehaviorStore: ObservableObject {
     /// - `panelOpacity`: the panel translucency slider. The material already decides how much shows
     ///   through, and a second control fighting it mostly produced washed-out panels; `Theme` lost
     ///   its matching field with it.
-    /// - `switcherShortcuts`: the rebindable in-switcher window actions (quit, close, minimize and
-    ///   the rest), removed along with the actions themselves.
+    /// - `showBadges`: one switch over both the display and the Space marker. Split into
+    ///   `showDisplayBadges` and `showSpaceBadges`, which `Migration.run` seeds from it.
     /// - `windowSnapHighlightColorHex`: a colour for the snap outline and landing block. Those are
     ///   fixed now — light grey on black, matching Rectangle's footprint — and only the anchor dot
     ///   is configurable.
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
-        "alwaysShowTitles", "panelOpacity", "switcherShortcuts", "windowSnapHighlightColorHex",
+        "alwaysShowTitles", "panelOpacity", "windowSnapHighlightColorHex", "showBadges",
     ]
 
     /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,

@@ -151,10 +151,15 @@ struct AppearanceSettings: View {
                         + "Accessibility, so it is best-effort.",
                     isOn: $behavior.notificationBadges)
                 SettingsToggle(
-                    title: "Display & Space badges",
-                    subtitle: "Which display and Desktop a window is on. Only ever appear when you "
-                        + "have more than one of either.",
-                    isOn: $behavior.showBadges)
+                    title: "Display badges",
+                    subtitle: "Which display a window is on. Only ever appears when more than one "
+                        + "is connected.",
+                    isOn: $behavior.showDisplayBadges)
+                SettingsToggle(
+                    title: "Space badges",
+                    subtitle: "Which Desktop a window is on. Only ever appears when you have more "
+                        + "than one.",
+                    isOn: $behavior.showSpaceBadges)
                 SettingsToggle(
                     title: "Fade in and out", isOn: $behavior.fade)
             }

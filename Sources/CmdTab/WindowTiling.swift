@@ -101,6 +101,14 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// Everything gated on the tiling switch.
     static let tilingArrangements: [WindowArrangement] = allCases.filter { !$0.isMove }
 
+    /// The arrangements a window can be given the moment it opens (`AppRule.launchArrangement`).
+    ///
+    /// The display moves are excluded because they are relative — "one display along from where it
+    /// is" is not a placement for a window that has only just appeared. `.restore` goes too: its
+    /// whole definition is the frame the window had before it was first tiled, and a window on its
+    /// first frame has no such history, so it would silently do nothing.
+    static let launchable: [WindowArrangement] = tilingArrangements.filter { $0 != .restore }
+
     /// Whether a gap applies. Only the arrangements that *tile* — the ones whose frame is a
     /// fraction of the screen — take one. `.center` keeps the window's own size and `.restore` puts
     /// back a frame the user chose themselves, so insetting either would be Cmd-Tab second-guessing
@@ -739,16 +747,45 @@ enum WindowTiler {
     /// `TargetProvider.screenCGFrames` does the same flip for *full* frames; tiling wants the
     /// usable area, or a maximized window would sit under the menu bar.
     @MainActor
-    static func visibleAreas() -> [CGRect] {
+    static func visibleAreas() -> [CGRect] { visibleDisplays().map(\.area) }
+
+    /// A display's usable area together with an identity that survives unplugging it.
+    ///
+    /// The UUID comes from the display hardware, so the same monitor is the same id across a
+    /// reconnect, a reboot and a resolution change — which is what lets a saved layout say "this
+    /// window was on *that* monitor" rather than "this window was at x=2400", a statement that stops
+    /// being true the moment the desk changes.
+    struct DisplayArea: Equatable {
+        /// nil when the UUID can't be read. Such a display still takes part in tiling, which only
+        /// needs the rectangle; only layouts need the identity.
+        let id: String?
+        let area: CGRect
+    }
+
+    static func visibleDisplays() -> [DisplayArea] {
         let primaryHeight =
             (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
         return NSScreen.screens.map { screen in
             let visible = screen.visibleFrame
-            return CGRect(
-                x: visible.origin.x,
-                y: primaryHeight - visible.origin.y - visible.height,
-                width: visible.width, height: visible.height)
+            return DisplayArea(
+                id: displayUUID(of: screen),
+                // Cocoa's bottom-left origin flipped into Accessibility's top-left one, against the
+                // *primary* display's height — the origin both coordinate spaces share.
+                area: CGRect(
+                    x: visible.origin.x,
+                    y: primaryHeight - visible.origin.y - visible.height,
+                    width: visible.width, height: visible.height))
         }
+    }
+
+    private static func displayUUID(of screen: NSScreen) -> String? {
+        guard
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                as? NSNumber,
+            let uuid = CGDisplayCreateUUIDFromDisplayID(CGDirectDisplayID(number.uint32Value))?
+                .takeRetainedValue()
+        else { return nil }
+        return CFUUIDCreateString(nil, uuid) as String
     }
 }
 

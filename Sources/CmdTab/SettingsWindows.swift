@@ -10,6 +10,8 @@ import SwiftUI
 struct WindowSettings: View {
     @ObservedObject var store: WindowTilingStore
     @ObservedObject private var globals = GlobalActionsStore.shared
+    @ObservedObject private var layouts = WindowLayoutsStore.shared
+    @State private var newLayoutName = ""
 
     /// The order the rows read in: the four halves, then the four corners, then the three that are
     /// not a fraction of the screen at all.
@@ -23,6 +25,51 @@ struct WindowSettings: View {
     /// The send-it-elsewhere group. Its own card rather than a fifth entry in `groups` because it
     /// is the one the tiling switch does not govern, and the footer has to say so.
     private static let moveGroup = ("Displays", [WindowArrangement.previousDisplay, .nextDisplay])
+
+    private func saveLayout() {
+        let name = newLayoutName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        layouts.saveCurrent(named: name)
+        newLayoutName = ""
+    }
+
+    /// What the layout holds, what the last restore managed, and anything that would stop its chord
+    /// firing.
+    private func layoutSubtitle(for layout: WindowLayout) -> String? {
+        let apps = Set(layout.windows.map(\.bundleID)).count
+        let windows = layout.windows.count
+        var summary =
+            "\(windows) window\(windows == 1 ? "" : "s") across "
+            + "\(apps) app\(apps == 1 ? "" : "s")."
+        // A restore that placed only some of them should say so here rather than leaving the user
+        // to notice that three windows did not move.
+        if let last = layouts.lastResult, last.id == layout.id {
+            var missed: [String] = []
+            if last.result.missingApps > 0 {
+                missed.append("\(last.result.missingApps) app not running")
+            }
+            if last.result.unmatched > 0 {
+                missed.append("\(last.result.unmatched) window not found")
+            }
+            summary +=
+                missed.isEmpty
+                ? " Last restore placed all \(last.result.placed)."
+                : " Last restore placed \(last.result.placed) — \(missed.joined(separator: ", "))."
+        }
+        guard let hotkey = layout.hotkey else {
+            return summary + " No shortcut yet — click Not set and press a combination."
+        }
+        // Openers are matched before anything else, so a chord one of them claims can only ever
+        // open the switcher. Same check the tiling rows make, for the same reason.
+        if let claimer = WindowTilingBindings.triggerClaiming(hotkey, in: BehaviorStore.shared) {
+            return summary + " \(hotkey.displayString) opens \(claimer) — this will never fire."
+        }
+        let clashes = layouts.conflicts(with: hotkey, excluding: layout.id)
+        if !clashes.isEmpty {
+            return summary + " Shares \(hotkey.displayString) with \(clashes.joined(separator: ", "))."
+        }
+        return summary
+    }
 
     private var isEnabled: Binding<Bool> {
         Binding(get: { store.isEnabled }, set: { store.isEnabled = $0 })
@@ -181,6 +228,60 @@ struct WindowSettings: View {
                     GlobalShortcutRecorder(
                         id: "allWindows.show", hotkey: globals.allWindows.showAll,
                         assign: globals.setShowAll, store: globals)
+                }
+            }
+
+            SettingsSection(
+                title: "Saved layouts", anchor: SettingsAnchor.layouts,
+                footer: "Save where every window sits, and put them all back with one chord. Each "
+                    + "frame is stored as a fraction of the display it was on, so a layout survives "
+                    + "a resolution change, a different monitor, and undocking — a window whose "
+                    + "display is missing lands in the same relative place on the primary one. "
+                    + "Windows are matched back by app, title, position and order together; an app "
+                    + "that isn't running, or a window nothing resembles, is left alone rather than "
+                    + "guessed at."
+            ) {
+                if layouts.layouts.isEmpty {
+                    SettingsWideRow {
+                        Text("No layouts saved.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    ForEach(layouts.layouts) { layout in
+                        SettingsRow(
+                            title: layout.name,
+                            subtitle: layoutSubtitle(for: layout),
+                            controlWidth: 300
+                        ) {
+                            HStack(spacing: 6) {
+                                LayoutShortcutRecorder(layout: layout, store: layouts)
+                                Button("Restore") { layouts.restore(id: layout.id) }
+                                Menu {
+                                    Button("Re-save from current windows") {
+                                        layouts.update(id: layout.id)
+                                    }
+                                    Button("Delete", role: .destructive) {
+                                        layouts.remove(id: layout.id)
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                }
+                                .menuStyle(.borderlessButton)
+                                .frame(width: 24)
+                            }
+                        }
+                    }
+                }
+                SettingsWideRow {
+                    HStack(spacing: 8) {
+                        TextField("New layout name", text: $newLayoutName)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit(saveLayout)
+                        Button("Save Current Windows", action: saveLayout)
+                            .disabled(
+                                newLayoutName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
                 }
             }
 

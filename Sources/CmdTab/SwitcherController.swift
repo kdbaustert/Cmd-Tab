@@ -128,6 +128,7 @@ final class SwitcherController {
             dragSnap.gap = tiling.gap
             mouseWindowDrag.gap = tiling.gap
             targetHighlight.gap = tiling.gap
+            launchArrangements.gap = tiling.gap
             guard tiling.dragSnap != oldValue.dragSnap else { return }
             dragSnap.isEnabled = tiling.dragSnap
         }
@@ -148,19 +149,35 @@ final class SwitcherController {
     var activations = DirectActivations()
     /// The hide-all / show-all chords.
     var allWindows = AllWindowsShortcuts()
+    /// Chords that restore a saved window layout.
+    var layouts = LayoutShortcuts()
     /// Extra triggers that open a narrowed window list.
     var scopedTriggers = ScopedTriggers()
 
-    /// Per-app overrides. Rebuilds the list, since `expandWindows` changes what the targets are.
+    /// User-configurable key bindings for the in-switcher window actions.
+    var shortcuts: SwitcherShortcuts = .defaults {
+        didSet { warnAboutShadowedActions() }
+    }
+    /// Whether those bindings are live at all. Off leaves every ⌥-key to type-to-filter.
+    var actionsEnabled = false
+    /// Confirm before quit / force-quit.
+    var confirmsDestructiveActions = true
+
+    /// Per-app overrides. Rebuilds the list, since `expandWindows` and `displayName` both change
+    /// what the targets are.
     var appRules: [String: AppRule] = [:] {
         didSet {
             guard appRules != oldValue else { return }
             provider.appRules = appRules
             dragSnap.appRules = appRules
             mouseWindowDrag.appRules = appRules
+            launchArrangements.appRules = appRules
             provider.refresh()
         }
     }
+
+    /// Snaps an app's first window as it opens, for the apps that ask for it.
+    private let launchArrangements = LaunchArrangementWatcher()
 
     /// Applications or individual windows. Rebuilds the list, since it changes what a target *is*.
     var mode: SwitcherMode {
@@ -245,9 +262,14 @@ final class SwitcherController {
         set { model.showNumbers = newValue }
     }
 
-    var showBadges: Bool {
-        get { model.showBadges }
-        set { model.showBadges = newValue }
+    var showDisplayBadges: Bool {
+        get { model.showDisplayBadges }
+        set { model.showDisplayBadges = newValue }
+    }
+
+    var showSpaceBadges: Bool {
+        get { model.showSpaceBadges }
+        set { model.showSpaceBadges = newValue }
     }
 
     /// Dock notification badges. Changing it re-reads the Dock, so a toggle takes effect at once.
@@ -332,9 +354,27 @@ final class SwitcherController {
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
     var hotkey: Hotkey = .commandTab {
         didSet {
+            warnAboutShadowedActions()
             guard hotkey != oldValue, isRunning else { return }
             SystemSwitcher.setNativeEnabled(!hotkey.isCommandTab)
         }
+    }
+
+    /// Logs a trigger/action modifier collision.
+    ///
+    /// Settings refuses to *create* this combination, but a config written before that check existed,
+    /// imported from another machine, or hand-edited in the defaults plist can still arrive here —
+    /// and the symptom (actions dead, their keys typing into the filter) gives no hint of the cause.
+    private func warnAboutShadowedActions() {
+        guard actionsEnabled else { return }
+        let shadowed = shortcuts.actionsShadowed(by: hotkey)
+        guard !shadowed.isEmpty else { return }
+        Log.tap.error(
+            """
+            trigger \(self.hotkey.displayString, privacy: .public) claims a modifier \
+            \(shadowed.count, privacy: .public) action(s) need as an extra; they cannot fire: \
+            \(shadowed.map(\.title).joined(separator: ", "), privacy: .public)
+            """)
     }
 
     var isRunning: Bool { tap?.isRunning ?? false }
@@ -535,6 +575,16 @@ final class SwitcherController {
             if acts { GlobalActions.perform(action) }
             return true
         }
+        // Before tiling, so a chord shared with an arrangement restores the layout: a layout is the
+        // more specific instruction, and the user had to record it against a named thing to have it
+        // at all. The Windows pane warns about the clash either way.
+        if let id = layouts.layoutID(code: code, flags: flags) {
+            if acts {
+                Log.tap.notice("layout: restoring \(id, privacy: .public)")
+                DispatchQueue.main.async { WindowLayoutsStore.shared.restore(id: id) }
+            }
+            return true
+        }
         if let arrangement = tiling.arrangement(code: code, flags: flags) {
             if acts {
                 Log.tap.notice("tiling: \(arrangement.rawValue, privacy: .public) matched")
@@ -626,6 +676,24 @@ final class SwitcherController {
         // itself uses ⌥/⌃ (e.g. ⌘⌥-Tab) doesn't make every key look modified and swallow the query.
         let extra = flags.intersection([.maskAlternate, .maskShift, .maskControl])
             .subtracting(activeHeld)
+        // Configurable window actions, ahead of the navigation switch below so a bound ⌥←/→ reaches
+        // its binding rather than being eaten as a plain arrow. An arrow carrying no extra modifier
+        // never gets this far, since `extra` is empty for it.
+        if actionsEnabled, !extra.isEmpty {
+            if let action = shortcuts.action(code: code, extra: extra) {
+                Log.tap.notice(
+                    "action \(action.rawValue, privacy: .public) (key \(code, privacy: .public))")
+                perform(action)
+                return true
+            }
+            // Only when ⌥/⌃ is involved. Shift alone means a typed capital going to type-to-filter,
+            // which is once per keystroke — far too hot for the tap callback, where the file's own
+            // header insists the work stays trivial.
+            if !extra.intersection([.maskAlternate, .maskControl]).isEmpty {
+                Log.tap.notice(
+                    "no action for key \(code, privacy: .public) extra \(extra.rawValue, privacy: .public)")
+            }
+        }
         // Navigation and editing keys.
         switch code {
         case Key.escape:
@@ -1014,12 +1082,40 @@ final class SwitcherController {
     private func commit() {
         guard isVisible else { return }
         let target = model.selected
+        let rules = appRules
         hide()
         // Off the tap callback — activating an app is an AX / NSWorkspace round-trip against a
         // process that may not answer promptly.
         DispatchQueue.main.async {
-            target?.focus()
+            guard let target else { return }
+            if Self.hidesInsteadOfSwitching(to: target, rules: rules) {
+                Log.tap.notice("commit: pid \(target.pid, privacy: .public) is already front — hiding")
+                target.hideApp()
+                return
+            }
+            target.focus()
         }
+    }
+
+    /// Whether committing to `target` should hide it rather than switch to it.
+    ///
+    /// Only when it is *already* frontmost, and only for an app the user has asked this of. Cycling
+    /// back to where you started and releasing is otherwise a no-op — the one commit that cannot
+    /// mean "bring this forward", since it is already there.
+    ///
+    /// A launch tile is excluded outright: its app is by definition not running, so it cannot be
+    /// frontmost, and its -1 pid would match any other launch tile's.
+    ///
+    /// Main-thread only — `NSWorkspace` and `NSRunningApplication` both want it.
+    private static func hidesInsteadOfSwitching(
+        to target: SwitchTarget, rules: [String: AppRule]
+    ) -> Bool {
+        guard !target.isLaunchable,
+            let front = NSWorkspace.shared.frontmostApplication,
+            front.processIdentifier == target.pid,
+            let bundleID = front.bundleIdentifier
+        else { return false }
+        return rules[bundleID]?.hideWhenFrontmost == true
     }
 
     /// Modifier released. In the tap window this is a quick-switch to the previous target with no
@@ -1210,6 +1306,138 @@ final class SwitcherController {
             cancel()
         } else {
             scheduleLayout()
+        }
+    }
+
+    // MARK: - In-switcher window actions
+
+    /// Dispatches a bound window action to its handler. A not-running favourite (launch tile) has no
+    /// window or process to act on — and every such tile shares the -1 pid sentinel, so letting an
+    /// action through would hit *all* of them (or, for hide-others, hide the entire session).
+    private func perform(_ action: SwitcherAction) {
+        guard model.selected?.isLaunchable == false else { return }
+        // Off the tap callback: every one of these reaches Accessibility or NSWorkspace, and
+        // `hideOthers` walks the whole running-application list. See the type's doc comment.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            guard !self.confirmsDestructiveActions || !action.isDestructive else {
+                self.confirmThenExecute(action)
+                return
+            }
+            self.execute(action)
+        }
+    }
+
+    /// Asks before quitting. The panel is torn down first: it sits above every other window at a
+    /// level an `NSAlert` cannot clear, so the sheet would otherwise open *behind* the switcher with
+    /// the keyboard still swallowed by the tap — an app that appears wedged.
+    ///
+    /// The target is captured before the dismissal, since dismissing clears the selection.
+    private func confirmThenExecute(_ action: SwitcherAction) {
+        guard let target = model.selected else { return }
+        let name = target.appName
+        cancel()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText =
+            action == .forceQuit ? "Force-quit \(name)?" : "Quit \(name)?"
+        alert.informativeText =
+            action == .forceQuit
+            ? "\(name) will be terminated immediately. Unsaved changes in every one of its windows "
+                + "are lost."
+            : "Every window \(name) has open will close. Unsaved changes may be lost."
+        alert.addButton(withTitle: action == .forceQuit ? "Force Quit" : "Quit")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // The panel is already down, so this acts on the captured target rather than the selection.
+        if action == .forceQuit { target.forceQuitApp() } else { target.quitApp() }
+        Log.tap.notice(
+            "execute \(action.rawValue, privacy: .public) on pid \(target.pid, privacy: .public) (confirmed)")
+    }
+
+    private func execute(_ action: SwitcherAction) {
+        // pid, not title: titles carry document names, mail subjects and URLs, and `.public` would
+        // persist them in the unified log for anything that can run `log show` to read.
+        Log.tap.notice(
+            "execute \(action.rawValue, privacy: .public) on pid \(self.model.selected?.pid ?? -1, privacy: .public)")
+        switch action {
+        case .quit: quitSelected()
+        case .forceQuit: forceQuitSelected()
+        case .close: closeSelectedWindow()
+        case .hide: hideSelected()
+        case .hideOthers: hideOthers()
+        case .minimize: minimizeSelected()
+        case .zoom: zoomSelected()
+        case .moveDisplayPrev: moveSelectedWindow(acrossDisplays: -1)
+        case .moveDisplayNext: moveSelectedWindow(acrossDisplays: 1)
+        }
+    }
+
+    private func quitSelected() {
+        guard let target = model.selected else { return }
+        target.quitApp()
+        model.remove { $0.pid == target.pid }
+        finishListMutation()
+    }
+
+    /// Force-terminates the selected app.
+    private func forceQuitSelected() {
+        guard let target = model.selected else { return }
+        target.forceQuitApp()
+        model.remove { $0.pid == target.pid }
+        finishListMutation()
+    }
+
+    /// Closes the highlighted window (window mode) or the frontmost window of the highlighted app
+    /// (app mode), then drops it from the list without dismissing the switcher.
+    ///
+    /// Optimistic like `quitSelected`, and deliberately without a refresh: the close is an async AX
+    /// call on another queue, so refreshing here can enumerate the window before it is gone and fold
+    /// it straight back in.
+    private func closeSelectedWindow() {
+        guard let target = model.selected else { return }
+        target.closeWindow()
+        // Window mode: drop just that tile. App mode: the app stays (it may have other windows).
+        guard case .window = target.kind else { return }
+        model.remove { $0.id == target.id }
+        finishListMutation()
+    }
+
+    /// Hides the highlighted app and takes it (and any of its windows) out of the list.
+    private func hideSelected() {
+        guard let target = model.selected else { return }
+        target.hideApp()
+        model.remove { $0.pid == target.pid }
+        finishListMutation()
+    }
+
+    /// Minimizes the selected window (or the app's front window). The tile stays — a minimized window
+    /// is still switchable — so the panel just relays out.
+    private func minimizeSelected() {
+        model.selected?.minimizeWindow()
+        scheduleLayout()
+    }
+
+    /// Zooms (maximize / restore) the selected window.
+    private func zoomSelected() {
+        model.selected?.zoomWindow()
+    }
+
+    /// Moves the selected window to the next/previous display, wrapping around.
+    private func moveSelectedWindow(acrossDisplays delta: Int) {
+        model.selected?.moveWindow(
+            acrossDisplays: delta, screenFramesCG: TargetProvider.screenCGFrames())
+    }
+
+    /// Hides every other regular app, leaving the selected one (and Cmd-Tab) alone.
+    private func hideOthers() {
+        guard let keep = model.selected?.pid else { return }
+        let mine = ProcessInfo.processInfo.processIdentifier
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular
+            && app.processIdentifier != keep && app.processIdentifier != mine {
+            app.hide()
         }
     }
 

@@ -204,7 +204,8 @@ struct SwitcherView: View {
                     corner: model.tileCorner,
                     titleFont: model.titleFont(size: model.titleFontSize),
                     number: number(for: index),
-                    showsBadges: model.showBadges)
+                    showsDisplayBadges: model.showDisplayBadges,
+                    showsSpaceBadges: model.showSpaceBadges)
                     .reportingFrame(at: index)
             }
         }
@@ -240,7 +241,8 @@ struct SwitcherView: View {
                             titleFont: model.titleFont(size: model.titleFontSize + 2),
                             subtitleFont: model.titleFont(size: model.titleFontSize),
                             number: number(for: index),
-                            showsBadges: model.showBadges)
+                            showsDisplayBadges: model.showDisplayBadges,
+                            showsSpaceBadges: model.showSpaceBadges)
                             .reportingFrame(at: index)
                     }
                 }
@@ -330,12 +332,14 @@ private struct TargetTile: View {
     /// no key to jump to it.
     let number: Int?
     /// Whether the display and Space badges may be drawn at all.
-    let showsBadges: Bool
+    let showsDisplayBadges: Bool
+    let showsSpaceBadges: Bool
 
     var body: some View {
         VStack(spacing: titleSpacing) {
             TargetIcon(
-                target: target, iconSize: iconSize, number: number, showsBadges: showsBadges)
+                target: target, iconSize: iconSize, number: number,
+                showsDisplayBadges: showsDisplayBadges, showsSpaceBadges: showsSpaceBadges)
             if showsTitle {
                 Text(target.title)
                     .font(titleFont)
@@ -379,11 +383,14 @@ private struct TargetRow: View {
     let titleFont: Font
     let subtitleFont: Font
     let number: Int?
-    let showsBadges: Bool
+    let showsDisplayBadges: Bool
+    let showsSpaceBadges: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            TargetIcon(target: target, iconSize: iconSize, number: nil, showsBadges: false)
+            TargetIcon(
+                target: target, iconSize: iconSize, number: nil,
+                showsDisplayBadges: false, showsSpaceBadges: false)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(target.title)
@@ -402,10 +409,10 @@ private struct TargetRow: View {
             // them off the row: every row is the same width, so there is no growing out of it.
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if showsBadges, let display = target.displayIndex {
+            if showsDisplayBadges, let display = target.displayIndex {
                 DisplayBadge(number: display + 1)  // 1-based for humans
             }
-            if showsBadges, let space = target.spaceIndex {
+            if showsSpaceBadges, let space = target.spaceIndex {
                 SpaceBadge(number: space + 1)
             }
             if let number {
@@ -458,7 +465,8 @@ private struct TargetIcon: View {
     let target: SwitchTarget
     let iconSize: CGFloat
     let number: Int?
-    let showsBadges: Bool
+    let showsDisplayBadges: Bool
+    let showsSpaceBadges: Bool
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -502,10 +510,10 @@ private struct TargetIcon: View {
             // Stacked rather than side by side: a window can carry both, and the tile is too narrow
             // to put them in a row without crowding the icon.
             VStack(alignment: .trailing, spacing: 1) {
-                if showsBadges, let display = target.displayIndex {
+                if showsDisplayBadges, let display = target.displayIndex {
                     DisplayBadge(number: display + 1)  // 1-based for humans
                 }
-                if showsBadges, let space = target.spaceIndex {
+                if showsSpaceBadges, let space = target.spaceIndex {
                     SpaceBadge(number: space + 1)
                 }
             }

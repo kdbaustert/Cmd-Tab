@@ -77,6 +77,7 @@ enum SettingsAnchor {
     static let configFile = "general.configFile"
 
     static let trigger = "shortcuts.trigger"
+    static let windowActions = "shortcuts.windowActions"
     static let panelKeys = "shortcuts.panelKeys"
     static let scoped = "shortcuts.scoped"
     static let overview = "shortcuts.overview"
@@ -84,6 +85,7 @@ enum SettingsAnchor {
     static let tiling = "windows.tiling"
     static let mouseDrag = "windows.mouseDrag"
     static let allWindows = "windows.allWindows"
+    static let layouts = "windows.layouts"
 
     static let session = "behavior.session"
     static let contents = "behavior.contents"
@@ -157,6 +159,10 @@ enum SettingsIndex {
              "Scoped shortcuts",
              ["scope", "scoped", "this app", "this display", "minimized", "all windows",
               "filtered", "subset", "extra trigger"]),
+        item("windowActions", .shortcuts, SettingsAnchor.windowActions, "Window actions",
+             "Window actions",
+             ["quit", "force quit", "close", "hide", "hide others", "minimize", "zoom",
+              "kill", "terminate", "close window", "action", "in-switcher action"]),
         item("panelKeys", .shortcuts, SettingsAnchor.panelKeys, "In-switcher keys",
              "In-switcher keys",
              ["keys", "panel", "filter", "search", "escape", "return", "digits", "navigate"]),
@@ -171,6 +177,9 @@ enum SettingsIndex {
              ["mouse", "drag", "modifier", "move window", "resize", "rectangle", "alt drag",
               "grab", "pointer", "trackpad", "point", "hold", "dot", "anchor", "highlight",
               "color", "colour", "dot color", "accent"]),
+        item("layouts", .windows, SettingsAnchor.layouts, "Saved layouts", "Saved layouts",
+             ["layout", "layouts", "workspace", "arrangement", "snapshot", "save windows",
+              "restore windows", "session", "desk"]),
         item("allWindows", .windows, SettingsAnchor.allWindows, "All windows",
              "Hide all windows",
              ["hide all", "show all", "desktop", "clear screen", "show desktop", "unhide"]),
@@ -237,8 +246,11 @@ enum SettingsIndex {
              "Notification badges",
              ["badge", "unread", "dock", "count", "notification"]),
         item("displayBadges", .appearance, SettingsAnchor.markers, "Markers",
-             "Display & Space badges",
-             ["badge", "display", "space", "desktop", "monitor"]),
+             "Display badges",
+             ["badge", "display", "monitor", "screen"]),
+        item("spaceBadges", .appearance, SettingsAnchor.markers, "Markers",
+             "Space badges",
+             ["badge", "space", "desktop", "mission control"]),
         item("fade", .appearance, SettingsAnchor.markers, "Markers", "Fade in and out",
              ["fade", "animation", "transition"]),
 
@@ -564,6 +576,7 @@ struct GeneralSettings: View {
 struct ShortcutSettings: View {
     @ObservedObject var behavior: BehaviorStore
     @ObservedObject private var scoped = ScopedTriggersStore.shared
+    @ObservedObject private var actions = SwitcherShortcutsStore.shared
 
     /// The keys the panel handles itself, listed in the order someone meets them.
     private static let panelKeys: [(title: String, keys: String)] = [
@@ -664,6 +677,15 @@ struct ShortcutSettings: View {
         return "\(winner.label) (\(winner.kind.title)) wins. Never fires: \(losers)."
     }
 
+    /// A shadowed action says so in place of its description: its binding is recorded and looks
+    /// fine, and the only visible symptom is the key typing into the filter instead.
+    private func actionSubtitle(for action: SwitcherAction) -> String? {
+        if actions.shortcuts.actionsShadowed(by: behavior.hotkey).contains(action) {
+            return "\(behavior.hotkey.displayString) already holds that modifier — this cannot fire."
+        }
+        return action.detail
+    }
+
     private func scopedSubtitle(for trigger: ScopedTrigger) -> String? {
         guard let hotkey = scoped.hotkey(for: trigger.id) else {
             return "No shortcut yet — click Not set and press a combination."
@@ -743,6 +765,41 @@ struct ShortcutSettings: View {
                         HStack {
                             Spacer()
                             addScopedMenu
+                        }
+                    }
+                }
+            }
+
+            SettingsSection(
+                title: "Window actions", anchor: SettingsAnchor.windowActions,
+                footer: "Act on the highlighted tile without leaving the switcher. Each is a key "
+                    + "plus ⌥ or ⌃ held on top of the trigger — an extra modifier is required, "
+                    + "since a bare letter is type-to-filter input."
+            ) {
+                SettingsToggle(
+                    title: "Enable window actions",
+                    subtitle: "Off leaves every ⌥-key to the filter. Off by default: quitting an "
+                        + "app is not something to discover by mistyping a search.",
+                    isOn: $actions.isEnabled)
+                if actions.isEnabled {
+                    SettingsToggle(
+                        title: "Confirm before quitting",
+                        subtitle: "Ask first for Quit and Force-quit. One key separates ⌥W (close "
+                            + "a window) from ⌥Q (quit the app), and only one of them can be undone.",
+                        isOn: $actions.confirmsDestructive)
+                    ForEach(SwitcherAction.allCases) { action in
+                        SettingsRow(
+                            title: action.title,
+                            subtitle: actionSubtitle(for: action),
+                            controlWidth: 130
+                        ) {
+                            ActionShortcutRecorder(action: action, store: actions)
+                        }
+                    }
+                    SettingsWideRow {
+                        HStack {
+                            Spacer()
+                            Button("Reset to Defaults") { actions.resetToDefaults() }
                         }
                     }
                 }
