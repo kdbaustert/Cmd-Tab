@@ -28,6 +28,7 @@ enum Migration {
             moved.append(key)
         }
         guard !moved.isEmpty else { return }
-        Log.general.notice("migrated from Overtab: \(moved.joined(separator: ", "))")
+        Log.general.notice(
+            "migrated from Overtab: \(moved.joined(separator: ", "), privacy: .public)")
     }
 }

@@ -78,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installSignalHandlers()
 
         Log.general.notice(
-            "launched: pid=\(ProcessInfo.processInfo.processIdentifier) trusted=\(Permissions.isTrusted) path=\(Bundle.main.bundlePath)")
+            "launched: pid=\(ProcessInfo.processInfo.processIdentifier) trusted=\(Permissions.isTrusted) path=\(Bundle.main.bundlePath, privacy: .public)")
 
         if Permissions.isTrusted {
             startController()

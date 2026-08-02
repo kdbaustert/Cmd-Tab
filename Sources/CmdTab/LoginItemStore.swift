@@ -34,7 +34,8 @@ final class LoginItemStore: ObservableObject {
                 }
             }
         } catch {
-            Log.general.error("login item toggle failed: \(error.localizedDescription)")
+            Log.general.error(
+                "login item toggle failed: \(error.localizedDescription, privacy: .public)")
         }
         startAtLogin = SMAppService.mainApp.status == .enabled
     }
