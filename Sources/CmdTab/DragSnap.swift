@@ -1,3 +1,4 @@
+import SwiftUI
 import AppKit
 
 /// Snap-on-drag: throw a window at a screen edge and it tiles there.
@@ -8,10 +9,15 @@ import AppKit
 /// Two things make this harder than it looks, and both shape the design:
 ///
 /// 1. **Knowing a window is being dragged at all.** There is no notification for it. A global
-///    monitor sees mouse events but not what they are doing, so a drag is inferred: the press must
-///    land inside another app's window near its top edge (the titlebar strip), and the cursor must
-///    then travel far enough to rule out a click. Dragging a selection inside a document, a slider,
-///    or anything else that starts away from a titlebar never arms.
+///    monitor sees mouse events but not what they are doing, so a drag is inferred — and the proof
+///    is the window itself: the press may land *anywhere* in another app's window, but nothing arms
+///    until the cursor has travelled far enough to rule out a click **and the window has actually
+///    moved**. Selecting text in a document, dragging a slider, or panning a map moves the cursor
+///    without moving the window, so none of them ever arm.
+///
+///    This replaced a titlebar-strip test, which was cheap but wrong in both directions: it refused
+///    the many apps whose windows drag from a toolbar or an empty stretch of background, and it
+///    still armed on a press that landed in the strip and then dragged something else.
 /// 2. **Not stealing the mouse.** The monitors are passive — `addGlobalMonitorForEvents` observes
 ///    and cannot consume — so the drag itself behaves exactly as it always did, and the snap happens
 ///    after the window is dropped. Nothing is ever intercepted from another app.
@@ -23,8 +29,10 @@ final class DragSnap {
     private nonisolated static let cornerThreshold: CGFloat = 90
     /// How far the cursor must move before a press counts as a drag rather than a click.
     private static let dragThreshold: CGFloat = 12
-    /// How far below a window's top edge still counts as its titlebar.
-    private static let titlebarDepth: CGFloat = 28
+    /// The centre zone's side, as a fraction of the screen. Deliberately small: a window dropped
+    /// anywhere near the middle of the screen is the ordinary case, and only a drop the user has
+    /// clearly aimed at the centre should take over the whole display.
+    private nonisolated static let centerFraction: CGFloat = 0.125
 
     /// Whether snapping is armed at all. Off means no monitors are installed.
     var isEnabled = false {
@@ -37,13 +45,22 @@ final class DragSnap {
     /// Per-app overrides, so an app the user has marked "never tile" is left alone here too.
     var appRules: [String: AppRule] = [:]
 
-    private var monitors: [Any] = []
-    private let preview = DragSnapPreview()
+    /// The tiling gap, so the preview shows where the window will actually land rather than the
+    /// zone it was dropped in. A preview that ignored the gap would be wrong by up to a gap on
+    /// every edge — and the preview is the only thing the user sees before letting go.
+    var gap: CGFloat = 0
 
-    /// Where the press landed, and whether it looked like a titlebar. Nil between drags.
+    private var monitors: [Any] = []
+    private let preview = SnapPreview.shared
+
+    /// Where the press landed. Nil between drags.
     private var pressOrigin: CGPoint?
     private var isDragging = false
     private var draggedPID: pid_t?
+    /// The window under the press, and where it was: the pair that turns "the mouse moved" into
+    /// "this window is being dragged".
+    private var draggedWindowID: CGWindowID?
+    private var initialBounds: CGRect?
     private var currentZone: WindowArrangement?
 
     // MARK: - Monitors
@@ -75,12 +92,13 @@ final class DragSnap {
 
     private func mouseDown(at point: CGPoint, event: NSEvent) {
         reset()
-        // Only a press that looks like it landed on a titlebar may become a snap drag. Without this
-        // every drag inside every document — selecting text, moving a shape, panning a map — would
-        // arm the preview the moment it neared a screen edge.
-        guard let pid = Self.titlebarWindowPID(at: point) else { return }
+        // Anywhere in the window. What stops a text selection arming the preview is not where the
+        // press landed but whether the window moves — see `mouseDragged`.
+        guard let target = Self.windowUnderCursor(at: point) else { return }
         pressOrigin = point
-        draggedPID = pid
+        draggedPID = target.pid
+        draggedWindowID = target.id
+        initialBounds = target.bounds
     }
 
     private func mouseDragged(to point: CGPoint) {
@@ -88,6 +106,12 @@ final class DragSnap {
         if !isDragging {
             let travelled = hypot(point.x - origin.x, point.y - origin.y)
             guard travelled >= Self.dragThreshold else { return }
+            // The window has to have moved, and moved without resizing. Checked every event until
+            // it has: an app may take a moment to start following the cursor, and giving up after
+            // the first event would miss every window that does.
+            guard let windowID = draggedWindowID, let initial = initialBounds,
+                let current = Self.bounds(of: windowID), Self.isMove(from: initial, to: current)
+            else { return }
             // An app the user has told us never to tile drags exactly as it always did.
             if let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
                 appRules[id]?.neverTile == true {
@@ -101,7 +125,7 @@ final class DragSnap {
         currentZone = zone
         if let zone, let area = Self.visibleArea(containing: point),
             let frame = zone.frame(in: area, current: area, fraction: 0.5) {
-            preview.show(frame)
+            preview.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
         } else {
             preview.hide()
         }
@@ -112,9 +136,10 @@ final class DragSnap {
         guard isDragging, let zone = currentZone, let pid = draggedPID else { return }
         // Dropped in a zone: tile the window that was dragged. Posted rather than run here for the
         // same reason the keyboard path posts — this is an Accessibility write.
+        let gap = self.gap
         DispatchQueue.main.async {
             WindowTiler.apply(
-                zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false)
+                zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap)
         }
     }
 
@@ -122,6 +147,8 @@ final class DragSnap {
         pressOrigin = nil
         isDragging = false
         draggedPID = nil
+        draggedWindowID = nil
+        initialBounds = nil
         currentZone = nil
         preview.hide()
     }
@@ -155,6 +182,13 @@ final class DragSnap {
         // Cocoa's screen space is bottom-up, so "top" is the maximum y.
         let nearTop = frame.maxY - point.y <= edge
         let nearBottom = point.y - frame.minY <= edge
+
+        // The centre of the screen takes the whole screen. Tested before the edge bail-out but
+        // after the edges are measured, so an edge always wins — the box is nowhere near one.
+        let box = CGSize(width: frame.width * centerFraction, height: frame.height * centerFraction)
+        if abs(point.x - frame.midX) <= box.width / 2, abs(point.y - frame.midY) <= box.height / 2 {
+            return .maximize
+        }
         guard nearLeft || nearRight || nearTop || nearBottom else { return nil }
 
         let inLeft = point.x - frame.minX <= cornerThreshold
@@ -184,12 +218,15 @@ final class DragSnap {
         return index < areas.count ? areas[index] : nil
     }
 
-    /// The pid of the window under `point` when the point is in its titlebar strip.
+    /// The frontmost ordinary window under `point`, with the id and bounds needed to tell later
+    /// whether it has moved.
     ///
     /// Read from `CGWindowListCopyWindowInfo` rather than Accessibility: this runs on every mouse
     /// press on the machine, and the window list is a single cheap call where an AX walk would be
     /// IPC to whichever app was clicked.
-    private static func titlebarWindowPID(at point: CGPoint) -> pid_t? {
+    private static func windowUnderCursor(at point: CGPoint)
+        -> (pid: pid_t, id: CGWindowID, bounds: CGRect)?
+    {
         guard
             let info = CGWindowListCopyWindowInfo(
                 [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
@@ -203,29 +240,90 @@ final class DragSnap {
             guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
                 let pid = window[kCGWindowOwnerPID as String] as? pid_t,
                 pid != ProcessInfo.processInfo.processIdentifier,
-                let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
-                let x = bounds["X"], let y = bounds["Y"],
-                let width = bounds["Width"], let height = bounds["Height"]
+                let id = window[kCGWindowNumber as String] as? CGWindowID,
+                let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary)
             else { continue }
-            let rect = CGRect(x: x, y: y, width: width, height: height)
-            guard rect.contains(flipped) else { continue }
             // Front-most match wins — the list is in z-order — so a window behind another cannot
             // claim a press that landed on the one on top.
-            let titlebar = CGRect(x: x, y: y, width: width, height: min(titlebarDepth, height))
-            return titlebar.contains(flipped) ? pid : nil
+            guard bounds.contains(flipped) else { continue }
+            return (pid, id, bounds)
         }
         return nil
+    }
+
+    /// One window's current bounds, by id. A single-window query rather than a whole-list copy,
+    /// because this runs on every drag event until the window is seen to move.
+    private static func bounds(of id: CGWindowID) -> CGRect? {
+        guard
+            let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
+            let raw = info.first?[kCGWindowBounds as String] as? [String: CGFloat]
+        else { return nil }
+        return CGRect(dictionaryRepresentation: raw as CFDictionary)
+    }
+
+    /// Whether a window has been *moved* between two observations.
+    ///
+    /// The origin has to have changed and the size has to be unchanged. Both halves matter: without
+    /// the first, any window under the cursor would arm the moment the mouse twitched; without the
+    /// second, dragging a window's resize corner — which also shifts the origin, on two of the four
+    /// corners — would offer to snap the window the user is deliberately sizing by hand.
+    nonisolated static func isMove(from initial: CGRect, to current: CGRect) -> Bool {
+        current.origin != initial.origin && current.size == initial.size
+    }
+}
+
+/// The colours the snap overlays are drawn in, in one place so they cannot drift.
+///
+/// Read at show time rather than baked in when a panel is built: the panels are made once and
+/// reused for the life of the app, so anything read at creation would be stale after a colour
+/// change — or after the user changes their system accent, which `highlight` follows.
+@MainActor
+final class SnapAppearance {
+    static let shared = SnapAppearance()
+
+    /// The outline around the window a gesture is targeting: **light grey**, the colour Rectangle
+    /// draws its own snap footprint's border in (`FootprintWindow.boxView.borderColor = .lightGray`).
+    ///
+    /// Neutral on purpose, and not the accent: a grey border sits over a window's own content
+    /// without tinting it, and it stays distinct from `landing` below — one marks *which* window,
+    /// the other *where it goes*, and telling those apart at a glance is the whole job of the two
+    /// overlays.
+    var outline: NSColor { .lightGray }
+
+    /// The block showing where the window will land. The system accent, so the destination reads as
+    /// a selection in the way everything else on the Mac does.
+    var landing: NSColor { .controlAccentColor }
+
+    /// The anchor dot. Full strength, never the alpha the larger overlays use — it is 14pt across,
+    /// and a wash at 22% would be invisible.
+    private(set) var dot: NSColor = .controlAccentColor
+
+    /// macOS's own accent, which is what the dot was before it was configurable.
+    static var defaultDot: Color { Color(nsColor: .controlAccentColor) }
+
+    func apply(dot: Color) {
+        self.dot = NSColor(dot)
     }
 }
 
 /// The translucent rectangle showing where a dropped window will land.
+///
+/// Shared by both gestures that can snap — the titlebar drag above and the modifier-drag in
+/// `MouseWindowDrag` — through `shared`. One panel, because only one drag can be in flight: two
+/// owners meant two overlays, and whichever hid last left the other on screen.
 @MainActor
-private final class DragSnapPreview {
+final class SnapPreview {
+    static let shared = SnapPreview()
+
     private var panel: NSPanel?
+
+    private init() {}
 
     func show(_ areaFrame: CGRect) {
         let panel = self.panel ?? make()
         self.panel = panel
+        restyle(panel)
         // Back from Accessibility's top-left space into Cocoa's bottom-up screen space.
         guard let primary = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)
         else { return }
@@ -238,6 +336,14 @@ private final class DragSnapPreview {
 
     func hide() {
         panel?.orderOut(nil)
+    }
+
+    /// Repainted on every show, so a changed accent never leaves a stale overlay behind.
+    private func restyle(_ panel: NSPanel) {
+        guard let layer = panel.contentView?.layer else { return }
+        let color = SnapAppearance.shared.landing
+        layer.backgroundColor = color.withAlphaComponent(0.22).cgColor
+        layer.borderColor = color.withAlphaComponent(0.85).cgColor
     }
 
     private func make() -> NSPanel {
@@ -254,8 +360,9 @@ private final class DragSnapPreview {
 
         let view = NSView()
         view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-        view.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.85).cgColor
+        let color = SnapAppearance.shared.landing
+        view.layer?.backgroundColor = color.withAlphaComponent(0.22).cgColor
+        view.layer?.borderColor = color.withAlphaComponent(0.85).cgColor
         view.layer?.borderWidth = 2
         view.layer?.cornerRadius = 10
         view.layer?.cornerCurve = .continuous

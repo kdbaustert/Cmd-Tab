@@ -1,3 +1,4 @@
+import SwiftUI
 import AppKit
 import ApplicationServices
 import CoreGraphics
@@ -5,9 +6,8 @@ import CoreGraphics
 // Window tiling: global hotkeys that snap the focused window to a half, a corner, the whole screen
 // or the centre, whether or not the switcher is open.
 //
-// Deliberately separate from `SwitcherAction`, which acts on the *selected tile* while the panel is
-// up and is matched against the modifiers held on top of the trigger. These are ordinary global
-// chords matched when nothing is open, and they act on whatever window the user is looking at.
+// Ordinary global chords, matched when nothing is open: they act on whatever window the user is
+// looking at, not on anything the switcher has selected.
 
 /// One arrangement the focused window can be snapped to.
 enum WindowArrangement: String, CaseIterable, Identifiable {
@@ -81,6 +81,37 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Whether this sends the window to another display rather than resizing it where it is.
+    ///
+    /// A family of one, kept as a family: moving a window to another **Desktop** belongs here too
+    /// and cannot be built. macOS only lets a Space-managing connection move another app's window
+    /// between Spaces, so every SkyLight route (`CGS`/`SLSMoveWindowsToManagedSpace`, and the
+    /// remove-then-add pair) is accepted and silently ignored from an ordinary process. The tools
+    /// that manage it inject into Dock, which needs SIP partially disabled.
+    ///
+    /// The moves are *not* gated on the tiling switch: they take nothing away from the window's own
+    /// layout, so "I don't want Cmd-Tab resizing my windows" is not a reason to lose them.
+    /// Everything else is tiling proper, off until asked for. See
+    /// `WindowTilingBindings.arrangement(code:flags:)`, which is where that split is enforced.
+    var isMove: Bool { displayStep != nil }
+
+    /// The moves, in the order the Windows tab lists them.
+    static let moves: [WindowArrangement] = allCases.filter(\.isMove)
+
+    /// Everything gated on the tiling switch.
+    static let tilingArrangements: [WindowArrangement] = allCases.filter { !$0.isMove }
+
+    /// Whether a gap applies. Only the arrangements that *tile* — the ones whose frame is a
+    /// fraction of the screen — take one. `.center` keeps the window's own size and `.restore` puts
+    /// back a frame the user chose themselves, so insetting either would be Cmd-Tab second-guessing
+    /// a size it did not pick; the moves change no geometry at all.
+    var takesGap: Bool {
+        switch self {
+        case .center, .restore, .previousDisplay, .nextDisplay: return false
+        default: return true
+        }
+    }
+
     /// Whether repeated presses step the window through ½ → ⅔ → ⅓ of the screen. Only the four
     /// half-screen arrangements cycle: a corner is already a quarter, a third is already a third,
     /// and there is no second size for "maximize" to mean.
@@ -150,6 +181,40 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     }
 }
 
+/// Insets a tiled frame so windows do not touch the screen edges or each other.
+///
+/// One number does both jobs, the way every window manager that has gaps does it: the full gap at
+/// a screen edge, half of it at a seam — so two windows sharing a seam end up exactly one gap
+/// apart, the same distance as each is from the outside. Which edges are which is read off the
+/// frame itself rather than tracked per arrangement: an edge sitting on the usable area's boundary
+/// is an outside edge, anything else meets another tile.
+enum TilingGap {
+    /// The widest gap the settings slider offers. Past this a half is more gap than window on a
+    /// laptop display.
+    static let maximum: CGFloat = 60
+
+    /// A point of slack when deciding whether an edge is on the boundary. The thirds are computed
+    /// by division and land a hair off the exact edge — `area.maxX - area.width / 3` is not bitwise
+    /// `area.minX + 2 * area.width / 3` — and without the slack a right third would take an inner
+    /// gap on the side that is actually against the screen.
+    private static let epsilon: CGFloat = 1
+
+    static func inset(_ frame: CGRect, in area: CGRect, gap: CGFloat) -> CGRect {
+        guard gap > 0 else { return frame }
+        let left = frame.minX - area.minX <= epsilon ? gap : gap / 2
+        let right = area.maxX - frame.maxX <= epsilon ? gap : gap / 2
+        let top = frame.minY - area.minY <= epsilon ? gap : gap / 2
+        let bottom = area.maxY - frame.maxY <= epsilon ? gap : gap / 2
+
+        let width = frame.width - left - right
+        let height = frame.height - top - bottom
+        // A gap wider than the tile would invert the frame. Nothing here can produce a window
+        // narrower than a quarter of its tile, however the slider is set.
+        guard width > frame.width / 4, height > frame.height / 4 else { return frame }
+        return CGRect(x: frame.minX + left, y: frame.minY + top, width: width, height: height)
+    }
+}
+
 /// The bindings, matched against a keypress by the controller. A value type so the tap thread reads
 /// a snapshot rather than reaching into the store.
 ///
@@ -161,6 +226,9 @@ struct WindowTilingBindings: Equatable {
     /// Drag a window to a screen edge to tile it there. Independent of `isEnabled`: someone may want
     /// the mouse gesture and no global chords at all, or the reverse.
     var dragSnap: Bool = false
+    /// Points of space left around a tiled window: the whole gap against a screen edge, half of it
+    /// where two tiles meet. 0 keeps windows flush, which is what tiling has always done.
+    var gap: CGFloat = 0
     var bindings: [WindowArrangement: Hotkey]
 
     static let defaults = WindowTilingBindings(
@@ -205,10 +273,16 @@ struct WindowTilingBindings: Equatable {
     /// Iterates in declared case order so two arrangements bound to the same chord always resolve
     /// the same way rather than depending on dictionary ordering. Exact modifier match, so ⌃⌘←
     /// stays distinct from ⌃⌥⌘←.
+    ///
+    /// With tiling switched off the geometry arrangements are skipped but the **moves** still
+    /// match. The switch is about Cmd-Tab resizing windows; sending one to the next display or
+    /// Desktop changes no layout, and gating it behind a checkbox captioned about tiling made a
+    /// bound chord do nothing with no visible cause. The cost is that these four chords are claimed
+    /// system-wide as soon as they are bound, tiling on or off — which is what the pane says.
     func arrangement(code: Int, flags: CGEventFlags) -> WindowArrangement? {
-        guard isEnabled else { return nil }
         let held = flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-        return WindowArrangement.allCases.first {
+        let candidates = isEnabled ? WindowArrangement.allCases : WindowArrangement.moves
+        return candidates.first {
             guard let hotkey = bindings[$0], hotkey.isUsableGlobally else { return false }
             let want = hotkey.modifiers.intersection(
                 [.maskCommand, .maskAlternate, .maskControl, .maskShift])
@@ -219,10 +293,9 @@ struct WindowTilingBindings: Equatable {
 
 /// Persists the tiling bindings and the two switches that go with them.
 ///
-/// Plain `UserDefaults` rather than a `Defaults` key, matching `SwitcherShortcutsStore` — the
-/// bindings are a dictionary of pairs, which is the one shape the typed-key table has never
-/// carried. The three key names are listed in `BehaviorStore.otherStoreKeys` so export, import and
-/// reset cover them.
+/// Plain `UserDefaults` rather than a `Defaults` key: the bindings are a dictionary of pairs, which
+/// is the one shape the typed-key table has never carried. The key names are listed in
+/// `WindowTilingStore.defaultsKeys` so export, import and reset cover them.
 @MainActor
 final class WindowTilingStore: ObservableObject {
     static let shared = WindowTilingStore()
@@ -232,10 +305,19 @@ final class WindowTilingStore: ObservableObject {
         static let cycleWidths = "windowTilingCycleWidths"
         static let shortcuts = "windowTilingShortcuts"
         static let dragSnap = "windowTilingDragSnap"
+        static let gap = "windowTilingGap"
+        static let dotHex = "windowSnapDotColorHex"
+        static let mouseDrag = "windowMouseDragEnabled"
+        static let mouseMove = "windowMouseDragMoveModifiers"
+        static let mouseResize = "windowMouseDragResizeModifiers"
     }
 
     /// Every key this store owns, for export/import/reset.
-    static let defaultsKeys = [Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap]
+    static let defaultsKeys = [
+        Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap, Key.gap,
+        Key.dotHex,
+        Key.mouseDrag, Key.mouseMove, Key.mouseResize,
+    ]
 
     @Published private(set) var tiling: WindowTilingBindings = .defaults
 
@@ -245,12 +327,73 @@ final class WindowTilingStore: ObservableObject {
     /// Eleven views each holding a local monitor meant clicking a second recorder without pressing a
     /// key left the first still listening; both then received the next keyDown and whichever handler
     /// ran first consumed it, so the combination landed on the wrong arrangement or on none at all.
-    /// One owner, one monitor, no race — the same shape `SwitcherShortcutsStore` uses, and for the
-    /// same reason.
+    /// One owner, one monitor, no race.
     @Published private(set) var recordingArrangement: WindowArrangement?
     private var recordingMonitor: Any?
 
     var onChange: ((WindowTilingBindings) -> Void)?
+    /// Separate from `onChange` because the two go to different taps — the key tap takes the
+    /// bindings, the mouse tap takes these — and pushing one through the other's channel would
+    /// rebuild a tap on every unrelated edit.
+    var onMouseDragChange: ((MouseDragSettings) -> Void)?
+
+    /// Modifier-drag to move or resize. Its own value rather than a field on
+    /// `WindowTilingBindings`: the bindings struct is the snapshot the *key* tap reads on every
+    /// keystroke, and this is only ever read by the mouse tap.
+    @Published private(set) var mouseDrag = MouseDragSettings()
+
+    var mouseDragEnabled: Bool {
+        get { mouseDrag.isEnabled }
+        set {
+            guard newValue != mouseDrag.isEnabled else { return }
+            mouseDrag.isEnabled = newValue
+            persist()
+        }
+    }
+
+    func setMouseChord(_ chord: ModifierChord, for action: MouseDragAction) {
+        guard mouseDrag.chord(for: action) != chord else { return }
+        mouseDrag.set(chord, for: action)
+        persist()
+    }
+
+    func mouseChord(for action: MouseDragAction) -> ModifierChord {
+        mouseDrag.chord(for: action)
+    }
+
+    /// The colour of the anchor dot the hold-and-point gesture starts from. Kept here rather than
+    /// in `AppearanceStore`, which is about the switcher panel: this is a Windows-tab setting that
+    /// only exists while a snap gesture is in flight.
+    ///
+    /// The dot alone. The outline and the destination block stay on the system accent — they are
+    /// large, translucent, and read as the system's own highlighting; the dot is 14pt of solid
+    /// colour and the one mark here worth making yours.
+    @Published var dotColor: Color = SnapAppearance.defaultDot {
+        didSet {
+            guard dotColor != oldValue else { return }
+            // Nil for a pattern or catalog colour the macOS panel can hand back; the stored value
+            // is left as it was rather than overwritten with a substitute.
+            if let hex = dotColor.hexString {
+                UserDefaults.standard.set(hex, forKey: Key.dotHex)
+            }
+            SnapAppearance.shared.apply(dot: dotColor)
+        }
+    }
+
+    private static func loadDotColor() -> Color {
+        UserDefaults.standard.string(forKey: Key.dotHex).flatMap(Color.init(hex:))
+            ?? SnapAppearance.defaultDot
+    }
+
+    var gap: CGFloat {
+        get { tiling.gap }
+        set {
+            let clamped = min(max(newValue, 0), TilingGap.maximum)
+            guard clamped != tiling.gap else { return }
+            tiling.gap = clamped
+            persist()
+        }
+    }
 
     var isEnabled: Bool {
         get { tiling.isEnabled }
@@ -279,7 +422,13 @@ final class WindowTilingStore: ObservableObject {
         }
     }
 
-    private init() { tiling = Self.load() }
+    private init() {
+        tiling = Self.load()
+        mouseDrag = Self.loadMouseDrag()
+        let dot = Self.loadDotColor()
+        dotColor = dot
+        SnapAppearance.shared.apply(dot: dot)
+    }
 
     /// The chord bound to `arrangement`, or nil when the user has cleared it.
     func hotkey(for arrangement: WindowArrangement) -> Hotkey? {
@@ -367,7 +516,31 @@ final class WindowTilingStore: ObservableObject {
 
     func reload() {
         tiling = Self.load()
+        mouseDrag = Self.loadMouseDrag()
+        let dot = Self.loadDotColor()
+        dotColor = dot
+        SnapAppearance.shared.apply(dot: dot)
         onChange?(tiling)
+        onMouseDragChange?(mouseDrag)
+    }
+
+    /// Stored as the two chords' raw modifier bits plus a switch.
+    ///
+    /// An absent key takes the default; a stored chord with no usable modifier in it — a
+    /// hand-edited config, or a recording that somehow got through — is dropped back to the default
+    /// rather than kept, since binding the gesture to "no modifier" would make every drag on the
+    /// machine a window drag.
+    private static func loadMouseDrag() -> MouseDragSettings {
+        let defaults = UserDefaults.standard
+        var result = MouseDragSettings()
+        result.isEnabled = defaults.bool(forKey: Key.mouseDrag)
+        for (key, action) in [(Key.mouseMove, MouseDragAction.move), (Key.mouseResize, .resize)] {
+            guard let raw = defaults.object(forKey: key) as? Int else { continue }
+            let chord = ModifierChord(rawValue: UInt64(bitPattern: Int64(raw)))
+            guard chord.isUsable else { continue }
+            result.set(chord, for: action)
+        }
+        return result
     }
 
     /// Stored as `{ arrangementRawValue: [keyCode, modifierRaw] }`, which is plist-safe.
@@ -386,6 +559,9 @@ final class WindowTilingStore: ObservableObject {
             defaults.object(forKey: Key.cycleWidths) != nil
             ? defaults.bool(forKey: Key.cycleWidths) : true
         result.dragSnap = defaults.bool(forKey: Key.dragSnap)
+        // Absent means never set, which is 0 — `double(forKey:)` already reports 0 for a missing
+        // key, so the two cases need no telling apart here.
+        result.gap = min(max(CGFloat(defaults.double(forKey: Key.gap)), 0), TilingGap.maximum)
         if let raw = defaults.dictionary(forKey: Key.shortcuts) {
             for arrangement in WindowArrangement.allCases {
                 guard let pair = raw[arrangement.rawValue] as? [Int] else { continue }
@@ -402,9 +578,14 @@ final class WindowTilingStore: ObservableObject {
 
     private func persist() {
         let defaults = UserDefaults.standard
+        defaults.set(mouseDrag.isEnabled, forKey: Key.mouseDrag)
+        defaults.set(Int(bitPattern: UInt(mouseDrag.move.rawValue)), forKey: Key.mouseMove)
+        defaults.set(Int(bitPattern: UInt(mouseDrag.resize.rawValue)), forKey: Key.mouseResize)
+        onMouseDragChange?(mouseDrag)
         defaults.set(tiling.isEnabled, forKey: Key.enabled)
         defaults.set(tiling.cycleWidths, forKey: Key.cycleWidths)
         defaults.set(tiling.dragSnap, forKey: Key.dragSnap)
+        defaults.set(Double(tiling.gap), forKey: Key.gap)
         // Every arrangement is written, so a cleared one is recorded as cleared rather than simply
         // missing — see `load()`.
         var raw: [String: [Int]] = [:]
@@ -460,7 +641,8 @@ enum WindowTiler {
     private static let restoreLimit = 128
 
     static func apply(
-        _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool
+        _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
+        gap: CGFloat = 0
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
@@ -517,7 +699,10 @@ enum WindowTiler {
                     for: arrangement, key: key, cycleWidths: cycleWidths)
                 guard let frame = arrangement.frame(
                     in: area, current: current, fraction: fraction) else { return }
-                target = frame
+                // Applied last, to the finished tile: the gap is about where a window ends up, not
+                // about how the arrangement divides the screen, so the fraction maths above stays
+                // exactly as it is at any gap.
+                target = arrangement.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame
             }
 
             // Position, size, position. Some apps clamp a move against their *current* size (so the

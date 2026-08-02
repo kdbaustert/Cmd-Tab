@@ -1,16 +1,21 @@
 import CoreGraphics
 import Foundation
 
-/// Moves a window to an adjacent Space. There is no public API for this, so it goes through private
-/// SkyLight symbols resolved with `dlsym` — the same approach (and framework) as `SystemSwitcher`'s
-/// ⌘-Tab takeover. If any symbol is missing on a future macOS, the move is a graceful no-op rather
-/// than a crash. Inherently best-effort and fragile across OS versions.
+/// Reads which Space a window is on, and switches a display to a Space. There is no public API for
+/// either, so both go through private SkyLight symbols resolved with `dlsym` — the same approach
+/// (and framework) as `SystemSwitcher`'s ⌘-Tab takeover. A missing symbol on a future macOS is a
+/// graceful no-op rather than a crash. Inherently best-effort and fragile across OS versions.
+///
+/// Deliberately read-and-reveal only. *Moving* a window to another Space is not here because it
+/// cannot be done from an ordinary process on macOS 26: `CGSMoveWindowsToManagedSpace`,
+/// `SLSMoveWindowsToManagedSpace` and the remove-then-add pair all resolve, are all accepted, and
+/// all silently do nothing for a window this process does not own. The tools that manage it inject
+/// into Dock, which requires SIP to be partially disabled.
 enum SpaceMover {
     private typealias MainConnectionFn = @convention(c) () -> Int32
     private typealias CopyManagedFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
     private typealias CopySpacesForWindowsFn =
         @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
-    private typealias MoveWindowsFn = @convention(c) (Int32, CFArray, UInt64) -> Void
     private typealias SetCurrentSpaceFn = @convention(c) (Int32, CFString, UInt64) -> Void
 
     private static let handle = dlopen(
@@ -25,64 +30,11 @@ enum SpaceMover {
     private static let copyManaged = symbol("CGSCopyManagedDisplaySpaces", CopyManagedFn.self)
     private static let copySpacesForWindows =
         symbol("CGSCopySpacesForWindows", CopySpacesForWindowsFn.self)
-    private static let moveWindows = symbol("CGSMoveWindowsToManagedSpace", MoveWindowsFn.self)
     private static let setCurrentSpace =
         symbol("CGSManagedDisplaySetCurrentSpace", SetCurrentSpaceFn.self)
 
     static var isAvailable: Bool {
         mainConnection != nil && copyManaged != nil && copySpacesForWindows != nil
-            && moveWindows != nil
-    }
-
-    /// Moves `window` `delta` user-Spaces along, on whichever display it currently lives, clamped to
-    /// the ends (no wrap). No-op if the symbols are unavailable or the Space layout can't be read.
-    static func move(window: CGWindowID, bySpaces delta: Int) {
-        guard delta != 0,
-            let mainConnection, let copyManaged, let copySpacesForWindows, let moveWindows
-        else {
-            Log.general.error("space move: private SkyLight symbols unavailable")
-            return
-        }
-        let cid = mainConnection()
-        let windowArray = [NSNumber(value: window)] as CFArray
-
-        // The window's current Space (mask 0x7 = all Space types).
-        guard let spacesRaw = copySpacesForWindows(cid, 0x7, windowArray)?.takeRetainedValue(),
-            let currentSpace = (spacesRaw as? [NSNumber])?.first?.uint64Value
-        else {
-            Log.general.error("space move: could not read window \(window, privacy: .public)'s Space")
-            return
-        }
-
-        // Walk the displays to the one holding this Space, and take its ordered user Spaces.
-        guard let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]] else {
-            Log.general.error("space move: could not read the display/Space layout")
-            return
-        }
-        for display in displays {
-            guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
-            let ids =
-                spaces
-                .filter { ($0["type"] as? Int) == 0 }  // standard Spaces only, not fullscreen tiles
-                .compactMap(spaceID(from:))
-            guard let index = ids.firstIndex(of: currentSpace) else { continue }
-            let target = index + delta
-            guard ids.indices.contains(target) else {
-                Log.general.notice(
-                    "space move: at the end (space \(index, privacy: .public) of \(ids.count, privacy: .public))")
-                return
-            }
-            Log.general.notice(
-                "space move: window \(window, privacy: .public) \(index, privacy: .public) -> \(target, privacy: .public)")
-            moveWindows(cid, windowArray, ids[target])
-            return
-        }
-        // Fell through every display without matching. The usual cause is a fullscreen or tiled
-        // window: its Space is not `type == 0`, so the filter above drops it and no display claims
-        // it. Logged because the caller has already reported success by this point, and silence here
-        // is indistinguishable from the action never running.
-        Log.general.notice(
-            "space move: window \(window, privacy: .public) is on no standard Space (fullscreen?)")
     }
 
     /// Where a window lives and what is currently in front on that window's display.

@@ -18,8 +18,11 @@ struct WindowSettings: View {
         ("Thirds", [.leftThird, .centerThird, .rightThird]),
         ("Corners", [.topLeft, .topRight, .bottomLeft, .bottomRight]),
         ("Whole window", [.maximize, .center, .restore]),
-        ("Displays", [.previousDisplay, .nextDisplay]),
     ]
+
+    /// The send-it-elsewhere group. Its own card rather than a fifth entry in `groups` because it
+    /// is the one the tiling switch does not govern, and the footer has to say so.
+    private static let moveGroup = ("Displays", [WindowArrangement.previousDisplay, .nextDisplay])
 
     private var isEnabled: Binding<Bool> {
         Binding(get: { store.isEnabled }, set: { store.isEnabled = $0 })
@@ -33,6 +36,16 @@ struct WindowSettings: View {
         Binding(get: { store.dragSnap }, set: { store.dragSnap = $0 })
     }
 
+    private var gap: Binding<Double> {
+        Binding(get: { Double(store.gap) }, set: { store.gap = CGFloat($0) })
+    }
+
+    private var mouseDragEnabled: Binding<Bool> {
+        Binding(get: { store.mouseDrag.isEnabled }, set: { store.mouseDragEnabled = $0 })
+    }
+
+
+
     var body: some View {
         SettingsPage(
             title: "Windows",
@@ -43,22 +56,70 @@ struct WindowSettings: View {
                 title: "Window tiling", anchor: SettingsAnchor.tiling,
                 footer: "Off by default. Each binding is a real global hotkey — while tiling is on, "
                     + "Cmd-Tab takes those combinations from whatever app is in front, so nothing "
-                    + "is claimed until you ask for it."
+                    + "is claimed until you ask for it. Displays at the bottom is the exception: "
+                    + "moving a window is not resizing it, so it stays live either way."
             ) {
                 SettingsToggle(
                     title: "Enable window tiling",
-                    subtitle: "Defaults sit on ⌃⌘, which macOS leaves almost entirely free.",
+                    subtitle: "Sizes and positions only — the Displays moves do not wait on this. "
+                        + "Defaults sit on ⌃⌘, which macOS leaves almost entirely free.",
                     isOn: isEnabled)
                 SettingsToggle(
                     title: "Snap by dragging",
                     subtitle: "Drag a window's title bar to a screen edge or corner to tile it "
                         + "there. Independent of the shortcuts below — you can have either, or both.",
                     isOn: dragSnap)
+                SettingsSlider(
+                    title: "Gaps",
+                    subtitle: "Space left around a tiled window: the full gap against a screen "
+                        + "edge, half of it where two windows meet — so neighbours sit exactly one "
+                        + "gap apart. 0 keeps them flush.",
+                    value: gap,
+                    range: 0...Double(TilingGap.maximum),
+                    step: 2,
+                    format: { $0 == 0 ? "Off" : "\(Int($0)) pt" })
                 SettingsToggle(
                     title: "Cycle widths",
                     subtitle: "Press the same half twice to step the window through ½ → ⅔ → ⅓ of "
                         + "the screen on that side.",
                     isOn: cycleWidths)
+            }
+
+            SettingsSection(
+                title: "Mouse", anchor: SettingsAnchor.mouseDrag,
+                footer: "While the modifier is held, the drag is Cmd-Tab's and the app underneath "
+                    + "never sees it — so a move across a document does not select text on the way. "
+                    + "Independent of the tiling switch above, and of Snap by dragging."
+            ) {
+                SettingsToggle(
+                    title: "Move and resize with the mouse",
+                    subtitle: "Hold a modifier and drag anywhere in a window — no aiming at the "
+                        + "titlebar or a 4pt edge. A resize takes the corner of the quarter you "
+                        + "press in; the opposite corner stays put. Drag to a screen edge or "
+                        + "corner and the snap zone lights up: let go there and the window tiles "
+                        + "to it, gaps included.",
+                    isOn: mouseDragEnabled)
+                ForEach(MouseDragAction.allCases) { action in
+                    SettingsRow(
+                        title: action.title,
+                        subtitle: chordSubtitle(for: action),
+                        controlWidth: 168
+                    ) {
+                        ModifierChordRecorder(action: action, store: store)
+                    }
+                }
+                SettingsRow(
+                    title: "Dot",
+                    subtitle: "The anchor the hold-and-point gesture measures its direction from. "
+                        + "The outline and the landing block follow your system accent colour.",
+                    controlWidth: 168
+                ) {
+                    HStack(spacing: 8) {
+                        ColorPicker("", selection: $store.dotColor, supportsOpacity: false)
+                            .labelsHidden()
+                        Button("Reset") { store.dotColor = SnapAppearance.defaultDot }
+                    }
+                }
             }
 
             // Deliberately *not* disabled while tiling is off. Setting the keys up before switching
@@ -74,6 +135,24 @@ struct WindowSettings: View {
                         ) {
                             TilingShortcutRecorder(arrangement: arrangement, store: store)
                         }
+                    }
+                }
+            }
+
+            // The one card that does not answer to the switch above.
+            SettingsSection(
+                title: Self.moveGroup.0, anchor: anchor(for: Self.moveGroup.0),
+                footer: "Keeps the window's size and its relative position on the new display. "
+                    + "Live whether or not tiling is on: a move changes no layout, so the switch "
+                    + "above does not govern it, and a bound chord is claimed system-wide."
+            ) {
+                ForEach(Self.moveGroup.1) { arrangement in
+                    SettingsRow(
+                        title: arrangement.title,
+                        subtitle: subtitle(for: arrangement),
+                        controlWidth: 168
+                    ) {
+                        TilingShortcutRecorder(arrangement: arrangement, store: store)
                     }
                 }
             }
@@ -134,10 +213,26 @@ struct WindowSettings: View {
         switch arrangement {
         case .center: return "Keeps the window's size and centres it."
         case .restore: return "Back to where the window was before you first tiled it."
-        case .previousDisplay, .nextDisplay:
-            return "Keeps the window's size and its relative position on the new display."
+        // The display moves say it once in their card footer instead, rather than twice over in
+        // two rows that mean the same thing in opposite directions.
         default: return nil
         }
+    }
+
+    /// What each modifier row says under it — its job, or the reason it cannot do it.
+    private func chordSubtitle(for action: MouseDragAction) -> String? {
+        let chord = store.mouseChord(for: action)
+        if !chord.isUsable {
+            return "Needs ⌃, ⌥ or ⌘ — click and hold a combination."
+        }
+        // Both bound the same way is allowed rather than refused (swapping the two needs a
+        // colliding step), but only one of them can ever fire, and the row says which.
+        if action == .resize, store.mouseChord(for: .move) == chord {
+            return "Same modifiers as Move — only Move will fire."
+        }
+        return action == .move
+            ? "Drag anywhere in the window to move it."
+            : "Drag to resize from the corner of the quarter you press in."
     }
 
     /// Groups share the tiling anchor's prefix, so a search hit on "tile left" lands on the tiling
@@ -159,6 +254,7 @@ struct WindowSettings: View {
 struct TilingShortcutRecorder: View {
     let arrangement: WindowArrangement
     @ObservedObject var store: WindowTilingStore
+    var width: CGFloat = 128
 
     private var hotkey: Hotkey? { store.hotkey(for: arrangement) }
     private var isRecording: Bool { store.recordingArrangement == arrangement }
@@ -168,7 +264,7 @@ struct TilingShortcutRecorder: View {
             Button(label) {
                 isRecording ? store.stopRecording() : start()
             }
-            .frame(width: 128)
+            .frame(width: width)
             // A binding that cannot fire is still shown — flagged rather than hidden, with the row
             // subtitle saying why.
             .foregroundStyle(isBroken ? Color.orange : Color.primary)
@@ -221,5 +317,94 @@ struct TilingShortcutRecorder: View {
             alert.runModal()
             return false
         }
+    }
+}
+
+/// Records a modifier combination for one mouse gesture.
+///
+/// No key is involved, so this cannot reuse `HotkeyRecorder`: what is captured is the set of
+/// modifiers *held*, and the natural end of that gesture is letting them go. It watches
+/// `flagsChanged`, remembers the largest set seen while armed, and commits on release — so pressing
+/// ⌃ then adding ⌥ records ⌃⌥ rather than the ⌃ it saw first.
+struct ModifierChordRecorder: View {
+    let action: MouseDragAction
+    @ObservedObject var store: WindowTilingStore
+
+    @State private var recording = false
+    @State private var held: CGEventFlags = []
+    @State private var monitor: Any?
+
+    private var chord: ModifierChord { store.mouseChord(for: action) }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(label) { recording ? stop() : start() }
+                .frame(width: 128)
+                .foregroundStyle(chord.isUsable ? Color.primary : Color.orange)
+
+            Button {
+                store.setMouseChord(action.defaultChord, for: action)
+            } label: {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Back to \(action.defaultChord.displayString)")
+            .opacity(chord == action.defaultChord ? 0 : 1)
+            .disabled(chord == action.defaultChord)
+        }
+        .onDisappear(perform: stop)
+    }
+
+    private var label: String {
+        if recording {
+            // Live feedback while the keys are down: without it the button reads "Hold keys…"
+            // through the whole gesture and there is no way to tell what has registered.
+            return held.isEmpty ? "Hold modifiers…" : ModifierChord(held).displayString
+        }
+        return chord.displayString
+    }
+
+    private func start() {
+        recording = true
+        held = []
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
+            if event.type == .keyDown {
+                // ⎋ aborts. Any other key is swallowed rather than typed: this row takes modifiers,
+                // and a stray letter should not land in whatever is behind the settings window.
+                if event.keyCode == 53 { stop() }
+                return nil
+            }
+            let flags = Self.cgFlags(from: event.modifierFlags)
+            if flags.isEmpty {
+                // Everything released — the end of the gesture. Commit what was held at its widest.
+                let candidate = ModifierChord(held)
+                stop()
+                if candidate.isUsable {
+                    DispatchQueue.main.async { store.setMouseChord(candidate, for: action) }
+                }
+                return nil
+            }
+            // Widest set wins, so releasing ⌘ a moment before ⌃ still records ⌃⌘.
+            if flags.rawValue.nonzeroBitCount >= held.rawValue.nonzeroBitCount { held = flags }
+            return nil
+        }
+    }
+
+    private func stop() {
+        recording = false
+        held = []
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private static func cgFlags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
+        var out: CGEventFlags = []
+        if flags.contains(.command) { out.insert(.maskCommand) }
+        if flags.contains(.option) { out.insert(.maskAlternate) }
+        if flags.contains(.control) { out.insert(.maskControl) }
+        if flags.contains(.shift) { out.insert(.maskShift) }
+        return out
     }
 }

@@ -82,6 +82,7 @@ enum SettingsAnchor {
     static let overview = "shortcuts.overview"
 
     static let tiling = "windows.tiling"
+    static let mouseDrag = "windows.mouseDrag"
     static let allWindows = "windows.allWindows"
 
     static let session = "behavior.session"
@@ -157,13 +158,19 @@ enum SettingsIndex {
              ["scope", "scoped", "this app", "this display", "minimized", "all windows",
               "filtered", "subset", "extra trigger"]),
         item("panelKeys", .shortcuts, SettingsAnchor.panelKeys, "In-switcher keys",
-             "Window action keys",
-             ["quit", "close", "hide", "minimize", "zoom", "rebind", "action", "keys"]),
+             "In-switcher keys",
+             ["keys", "panel", "filter", "search", "escape", "return", "digits", "navigate"]),
 
         item("tiling", .windows, SettingsAnchor.tiling, "Window tiling", "Window tiling",
              ["tile", "tiling", "snap", "halves", "half", "corner", "quarter", "maximize",
               "fullscreen", "center", "centre", "arrange", "window management", "restore",
-              "left half", "right half", "cycle widths", "thirds"]),
+              "left half", "right half", "cycle widths", "thirds", "display", "monitor",
+              "screen", "gap", "gaps", "padding", "margin", "spacing", "inset", "border"]),
+        item("mouseDrag", .windows, SettingsAnchor.mouseDrag, "Mouse",
+             "Move and resize with the mouse",
+             ["mouse", "drag", "modifier", "move window", "resize", "rectangle", "alt drag",
+              "grab", "pointer", "trackpad", "point", "hold", "dot", "anchor", "highlight",
+              "color", "colour", "dot color", "accent"]),
         item("allWindows", .windows, SettingsAnchor.allWindows, "All windows",
              "Hide all windows",
              ["hide all", "show all", "desktop", "clear screen", "show desktop", "unhide"]),
@@ -556,8 +563,17 @@ struct GeneralSettings: View {
 
 struct ShortcutSettings: View {
     @ObservedObject var behavior: BehaviorStore
-    @ObservedObject private var shortcuts = SwitcherShortcutsStore.shared
     @ObservedObject private var scoped = ScopedTriggersStore.shared
+
+    /// The keys the panel handles itself, listed in the order someone meets them.
+    private static let panelKeys: [(title: String, keys: String)] = [
+        ("Move the selection", "Tab / ⇧Tab, ← / →"),
+        ("Switch to the selection", "Return"),
+        ("Jump straight to a tile", "1–9, 0"),
+        ("Filter the list", "type"),
+        ("Delete a filter character", "⌫"),
+        ("Close without switching", "⎋"),
+    ]
 
     /// Adding a scoped trigger *is* choosing its scope, so the button is the menu — there is no
     /// sensible default scope to add first and then correct.
@@ -732,34 +748,20 @@ struct ShortcutSettings: View {
                 }
             }
 
+            // A reference card rather than a set of recorders: what is left in the panel is
+            // navigation and typing, neither of which is rebindable.
             SettingsSection(
                 title: "In-switcher keys", anchor: SettingsAnchor.panelKeys,
-                footer: "While the switcher is open: type to filter, 1–9/0 jump, scroll or hover to "
-                    + "move the selection, or click a tile."
+                footer: "Pressed while the panel is up — on top of the held trigger, or on their "
+                    + "own once it is released in Stay open. Scrolling or hovering over a tile "
+                    + "moves the selection too, and a click switches straight to it."
             ) {
-                SettingsWideRow(
-                    title: "Window actions",
-                    subtitle: "⌘ (the trigger) is held throughout, so each of these also needs ⌥ "
-                        + "or ⌃ to stay clear of type-to-filter."
-                ) {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.flexible(), spacing: 18, alignment: .leading),
-                            GridItem(.flexible(), spacing: 18, alignment: .leading),
-                        ],
-                        alignment: .leading, spacing: 7
-                    ) {
-                        ForEach(SwitcherAction.allCases) { action in
-                            HStack(spacing: 8) {
-                                Text(action.title).font(.system(size: 12)).lineLimit(1)
-                                Spacer(minLength: 4)
-                                ActionShortcutRecorder(action: action, store: shortcuts)
-                            }
-                        }
+                ForEach(Self.panelKeys, id: \.title) { entry in
+                    SettingsRow(title: entry.title, controlWidth: 120) {
+                        Text(entry.keys)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
                     }
-                }
-                SettingsRow(title: "Restore default keys") {
-                    Button("Reset", action: shortcuts.resetToDefaults)
                 }
             }
         }

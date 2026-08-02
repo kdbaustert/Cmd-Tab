@@ -125,11 +125,25 @@ final class SwitcherController {
     /// Pushed by `AppDelegate` whenever they change.
     var tiling: WindowTilingBindings = .defaults {
         didSet {
+            dragSnap.gap = tiling.gap
+            mouseWindowDrag.gap = tiling.gap
+            targetHighlight.gap = tiling.gap
             guard tiling.dragSnap != oldValue.dragSnap else { return }
             dragSnap.isEnabled = tiling.dragSnap
         }
     }
     private let dragSnap = DragSnap()
+
+    /// Hold-a-modifier-and-drag to move or resize. Pushed by `AppDelegate`, like the bindings.
+    var mouseDrag: MouseDragSettings = .init() {
+        didSet {
+            mouseWindowDrag.settings = mouseDrag
+            targetHighlight.settings = mouseDrag
+        }
+    }
+    private let mouseWindowDrag = MouseWindowDrag()
+    /// Outlines the window the chord would grab, before anything is pressed.
+    private let targetHighlight = ModifierTargetHighlight()
     /// Per-app jump chords, same arrangement.
     var activations = DirectActivations()
     /// The hide-all / show-all chords.
@@ -143,6 +157,7 @@ final class SwitcherController {
             guard appRules != oldValue else { return }
             provider.appRules = appRules
             dragSnap.appRules = appRules
+            mouseWindowDrag.appRules = appRules
             provider.refresh()
         }
     }
@@ -313,35 +328,13 @@ final class SwitcherController {
     /// themselves.
     var sameAppHotkey: Hotkey?
 
-    /// User-configurable key bindings for the in-switcher window actions.
-    var shortcuts: SwitcherShortcuts = .defaults {
-        didSet { warnAboutShadowedActions() }
-    }
-
     /// The combination that opens the switcher. Changing it re-syncs the system ⌘-Tab: the native
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
     var hotkey: Hotkey = .commandTab {
         didSet {
-            warnAboutShadowedActions()
             guard hotkey != oldValue, isRunning else { return }
             SystemSwitcher.setNativeEnabled(!hotkey.isCommandTab)
         }
-    }
-
-    /// Logs a trigger/action modifier collision.
-    ///
-    /// Settings refuses to *create* this combination, but a config written before that check existed,
-    /// imported from another machine, or hand-edited in the defaults plist can still arrive here —
-    /// and the symptom (actions dead, their keys typing into the filter) gives no hint of the cause.
-    private func warnAboutShadowedActions() {
-        let shadowed = shortcuts.actionsShadowed(by: hotkey)
-        guard !shadowed.isEmpty else { return }
-        Log.tap.error(
-            """
-            trigger \(self.hotkey.displayString, privacy: .public) claims a modifier \
-            \(shadowed.count, privacy: .public) action(s) need as an extra; they cannot fire: \
-            \(shadowed.map(\.title).joined(separator: ", "), privacy: .public)
-            """)
     }
 
     var isRunning: Bool { tap?.isRunning ?? false }
@@ -521,7 +514,15 @@ final class SwitcherController {
         // monitor could see it — so no assigned combination could ever be re-recorded. The two
         // built-in triggers above are deliberately *not* guarded, since they are recorded by a
         // different control and opening the switcher from the settings window is long-standing.
-        guard !NSApp.isActive else { return false }
+        guard !NSApp.isActive else {
+            // The commonest "my shortcut does nothing": the settings window has focus, so every
+            // global chord below is deliberately inert. Logged once per press, and only for a
+            // chord that would otherwise have fired, so this is not a line per keystroke.
+            if type == .keyDown, tiling.arrangement(code: code, flags: flags) != nil {
+                Log.tap.notice("tiling: inert — Cmd-Tab is frontmost (settings window focused)")
+            }
+            return false
+        }
         // Only a fresh keydown acts. Key repeat is swallowed but ignored — cycling ½ → ⅔ → ⅓ under
         // autorepeat would strobe a window through every width in a fraction of a second — and the
         // keyup only ever has to be consumed, not acted on.
@@ -535,8 +536,21 @@ final class SwitcherController {
             return true
         }
         if let arrangement = tiling.arrangement(code: code, flags: flags) {
-            if acts { applyTiling(arrangement) }
+            if acts {
+                Log.tap.notice("tiling: \(arrangement.rawValue, privacy: .public) matched")
+                applyTiling(arrangement)
+            }
             return true
+        }
+        // Nothing claimed it. Logged only when a real modifier was held, which keeps this off the
+        // per-keystroke path while still catching "I pressed the chord and nothing happened".
+        if type == .keyDown, tiling.isEnabled,
+            !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty {
+            Log.tap.debug(
+                """
+                tiling: no binding for key \(code, privacy: .public) \
+                flags \(flags.rawValue, privacy: .public)
+                """)
         }
         return false
     }
@@ -546,6 +560,7 @@ final class SwitcherController {
     /// call — the part that can block — happens on `WindowTiler`'s queue.
     private func applyTiling(_ arrangement: WindowArrangement) {
         let cycleWidths = tiling.cycleWidths
+        let gap = tiling.gap
         // Posted, not inline. `frontmostApplication` and the screen walk are both NSWorkspace/AppKit
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
@@ -554,13 +569,21 @@ final class SwitcherController {
             guard let front = NSWorkspace.shared.frontmostApplication,
                 let pid = Optional(front.processIdentifier),
                 pid != ProcessInfo.processInfo.processIdentifier
-            else { return }
+            else {
+                Log.tap.notice("tiling: no frontmost app to act on")
+                return
+            }
             // An app the user has told us never to tile. Checked here rather than in `WindowTiler`
             // so the tiler stays a pure geometry writer with no opinion about settings.
-            if let id = front.bundleIdentifier, rules[id]?.neverTile == true { return }
+            if let id = front.bundleIdentifier, rules[id]?.neverTile == true {
+                Log.tap.notice("tiling: \(id, privacy: .public) is set to never tile")
+                return
+            }
+            Log.tap.notice(
+                "tiling: applying to pid \(pid, privacy: .public), gap \(gap, privacy: .public)")
             WindowTiler.apply(
                 arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
-                cycleWidths: cycleWidths)
+                cycleWidths: cycleWidths, gap: gap)
         }
     }
 
@@ -598,27 +621,11 @@ final class SwitcherController {
             return true
         }
 
-        // Configurable window actions. Each is bound to a key plus *extra* modifiers on top of the
-        // held trigger; ⌥/⌃ keep the action keys clear of the type-to-filter query. Subtract the
-        // trigger's own modifiers so a trigger that itself uses ⌥/⌃ (e.g. ⌘⌥-Tab) doesn't make every
-        // key look like an action and swallow the query.
+        // The modifiers held on top of the trigger. ⌥/⌃ mean the key is not meant as text, so it
+        // never reaches type-to-filter. The trigger's own modifiers are subtracted so a trigger that
+        // itself uses ⌥/⌃ (e.g. ⌘⌥-Tab) doesn't make every key look modified and swallow the query.
         let extra = flags.intersection([.maskAlternate, .maskShift, .maskControl])
             .subtracting(activeHeld)
-        if !extra.isEmpty {
-            if let action = shortcuts.action(code: code, extra: extra) {
-                Log.tap.notice(
-                    "action \(action.rawValue, privacy: .public) (key \(code, privacy: .public))")
-                perform(action)
-                return true
-            }
-            // Only when ⌥/⌃ is involved. Shift alone means a typed capital going to type-to-filter,
-            // which is once per keystroke — far too hot for the tap callback, where the file's own
-            // header insists the work stays trivial.
-            if !extra.intersection([.maskAlternate, .maskControl]).isEmpty {
-                Log.tap.notice(
-                    "no action for key \(code, privacy: .public) extra \(extra.rawValue, privacy: .public)")
-            }
-        }
         // Navigation and editing keys.
         switch code {
         case Key.escape:
@@ -1183,113 +1190,13 @@ final class SwitcherController {
         commit()
     }
 
-    private func quitSelected() {
-        guard let target = model.selected else { return }
-        target.quitApp()
-        model.remove { $0.pid == target.pid }
-        finishListMutation()
-    }
-
-    /// Closes the highlighted window (window mode) or the frontmost window of the highlighted app
-    /// (app mode), then drops it from the list without dismissing the switcher.
-    ///
-    /// Optimistic like `quitSelected`, and deliberately without a refresh: the close is an async AX
-    /// call on another queue, so refreshing here can enumerate the window before it is gone and fold
-    /// it straight back in.
-    private func closeSelectedWindow() {
-        guard let target = model.selected else { return }
-        target.closeWindow()
-        // Window mode: drop just that tile. App mode: the app stays (it may have other windows).
-        guard case .window = target.kind else { return }
-        model.remove { $0.id == target.id }
-        finishListMutation()
-    }
-
-    /// Hides the highlighted app and takes it (and any of its windows) out of the list.
-    private func hideSelected() {
-        guard let target = model.selected else { return }
-        target.hideApp()
-        model.remove { $0.pid == target.pid }
-        finishListMutation()
-    }
-
-    /// Shared tail for the in-switcher actions: dismiss only when nothing is left at all (a query
-    /// matching nothing keeps the panel up), otherwise relayout.
+    /// Dismiss only when nothing is left at all (a query matching nothing keeps the panel up),
+    /// otherwise relayout.
     private func finishListMutation() {
         if !model.hasAnyTarget {
             cancel()
         } else {
             scheduleLayout()
-        }
-    }
-
-    /// Dispatches a bound window action to its handler. A not-running favourite (launch tile) has no
-    /// window or process to act on — and every such tile shares the -1 pid sentinel, so letting an
-    /// action through would hit *all* of them (or, for hide-others, hide the entire session).
-    private func perform(_ action: SwitcherAction) {
-        guard model.selected?.isLaunchable == false else { return }
-        // Off the tap callback: every one of these reaches Accessibility or NSWorkspace, and
-        // `hideOthers` walks the whole running-application list. See the type's doc comment.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.execute(action)
-        }
-    }
-
-    private func execute(_ action: SwitcherAction) {
-        // pid, not title: titles carry document names, mail subjects and URLs, and `.public` would
-        // persist them in the unified log for anything that can run `log show` to read.
-        Log.tap.notice(
-            "execute \(action.rawValue, privacy: .public) on pid \(self.model.selected?.pid ?? -1, privacy: .public)")
-        switch action {
-        case .quit: quitSelected()
-        case .forceQuit: forceQuitSelected()
-        case .close: closeSelectedWindow()
-        case .hide: hideSelected()
-        case .hideOthers: hideOthers()
-        case .minimize: minimizeSelected()
-        case .zoom: zoomSelected()
-        case .moveDesktopPrev: model.selected?.moveToSpace(-1)
-        case .moveDesktopNext: model.selected?.moveToSpace(1)
-        case .moveDisplayPrev: moveSelectedWindow(acrossDisplays: -1)
-        case .moveDisplayNext: moveSelectedWindow(acrossDisplays: 1)
-        }
-    }
-
-    /// Force-terminates the selected app.
-    private func forceQuitSelected() {
-        guard let target = model.selected else { return }
-        target.forceQuitApp()
-        model.remove { $0.pid == target.pid }
-        finishListMutation()
-    }
-
-    /// Minimizes the selected window (or the app's front window). The tile stays — a minimized window
-    /// is still switchable — so the panel just relays out.
-    private func minimizeSelected() {
-        model.selected?.minimizeWindow()
-        scheduleLayout()
-    }
-
-    /// Zooms (maximize / restore) the selected window.
-    private func zoomSelected() {
-        model.selected?.zoomWindow()
-    }
-
-    /// Moves the selected window to the next/previous display, wrapping around.
-    private func moveSelectedWindow(acrossDisplays delta: Int) {
-        model.selected?.moveWindow(
-            acrossDisplays: delta, screenFramesCG: TargetProvider.screenCGFrames())
-    }
-
-    /// Hides every other regular app, leaving the selected one (and Cmd-Tab) alone.
-    private func hideOthers() {
-        guard let keep = model.selected?.pid else { return }
-        let mine = ProcessInfo.processInfo.processIdentifier
-        for app in NSWorkspace.shared.runningApplications
-        where app.activationPolicy == .regular
-            && app.processIdentifier != keep && app.processIdentifier != mine {
-            app.hide()
         }
     }
 

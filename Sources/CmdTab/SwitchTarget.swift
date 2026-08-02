@@ -448,26 +448,6 @@ extension SwitchTarget {
         }
     }
 
-    /// Moves the window to the next/previous Space via private SkyLight (there is no public API). In
-    /// window mode the target's id carries the `CGWindowID`; in app mode we resolve the app's front
-    /// switchable window. Runs off the main thread — the Accessibility lookup can block.
-    func moveToSpace(_ delta: Int) {
-        let kind = self.kind
-        let pid = self.pid
-        let parsedWindowID = windowID
-        Self.focusQueue.async {
-            if case .launch = kind { return }
-            // All three routes resolve *this* window rather than guessing at the app's frontmost
-            // one — see `windowID(of:parsed:pid:)` for why it takes three.
-            let element = Self.resolveWindow(kind)
-            guard let id = Self.windowID(of: element, parsed: parsedWindowID, pid: pid) else {
-                Log.general.error("space move: no window id for pid \(pid, privacy: .public)")
-                return
-            }
-            SpaceMover.move(window: id, bySpaces: delta)
-        }
-    }
-
     /// Moves the window to the next/previous display, keeping its position relative to the display it
     /// leaves. `screenFramesCG` are the displays' visible frames in Quartz (top-left) coordinates,
     /// resolved on the main thread by the caller since `NSScreen` is main-thread-only.

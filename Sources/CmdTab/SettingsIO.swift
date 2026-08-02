@@ -75,7 +75,6 @@ enum SettingsIO {
         AppearanceStore.shared.reload()
         ExclusionStore.shared.reload()
         FavoritesStore.shared.reload()
-        SwitcherShortcutsStore.shared.reload()
         WindowTilingStore.shared.reload()
         GlobalActionsStore.shared.reload()
         ScopedTriggersStore.shared.reload()

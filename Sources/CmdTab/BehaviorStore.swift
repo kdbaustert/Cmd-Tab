@@ -380,7 +380,7 @@ final class BehaviorStore: ObservableObject {
     private static let otherStoreKeys =
         [
             "iconSize", "iconSpacing", "titleSpacing",
-            "excludedBundleIDs", "favoriteBundleIDs", "switcherShortcuts",
+            "excludedBundleIDs", "favoriteBundleIDs",
         ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
 
     /// The keys export/import/reset operate on.
@@ -629,9 +629,13 @@ final class BehaviorStore: ObservableObject {
     /// - `panelOpacity`: the panel translucency slider. The material already decides how much shows
     ///   through, and a second control fighting it mostly produced washed-out panels; `Theme` lost
     ///   its matching field with it.
+    /// - `switcherShortcuts`: the rebindable in-switcher window actions (quit, close, minimize and
+    ///   the rest), removed along with the actions themselves.
+    /// - `windowSnapHighlightColorHex`: a colour for the snap outline and landing block. Those
+    ///   follow the system accent now; only the anchor dot is configurable.
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
-        "alwaysShowTitles", "panelOpacity",
+        "alwaysShowTitles", "panelOpacity", "switcherShortcuts", "windowSnapHighlightColorHex",
     ]
 
     /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,

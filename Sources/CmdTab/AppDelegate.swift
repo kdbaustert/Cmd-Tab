@@ -27,16 +27,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.favoriteBundleIDs = ids
         }
 
-        let shortcuts = SwitcherShortcutsStore.shared
-        controller.shortcuts = shortcuts.shortcuts
-        shortcuts.onChange = { [weak self] bindings in
-            self?.controller.shortcuts = bindings
-        }
-
         let tiling = WindowTilingStore.shared
         controller.tiling = tiling.tiling
+        controller.mouseDrag = tiling.mouseDrag
         tiling.onChange = { [weak self] bindings in
             self?.controller.tiling = bindings
+        }
+        tiling.onMouseDragChange = { [weak self] settings in
+            self?.controller.mouseDrag = settings
         }
 
         let globals = GlobalActionsStore.shared

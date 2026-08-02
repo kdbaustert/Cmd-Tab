@@ -5,9 +5,9 @@ import CoreGraphics
 // can be seen at all.
 //
 // Each pane warns about clashes within its own store — two tiling arrangements on one chord, two
-// direct activations on one chord — but nothing could see across them, and there are now seven
-// kinds of binding spread over five stores. Binding ⌃⌘← to both a tiling arrangement and a direct
-// activation produced no warning anywhere, because neither store knew the other existed.
+// direct activations on one chord — but nothing could see across them, and the kinds of binding are
+// spread over several stores. Binding ⌃⌘← to both a tiling arrangement and a direct activation
+// produced no warning anywhere, because neither store knew the other existed.
 
 /// One binding, flattened out of whichever store owns it.
 struct ShortcutEntry: Identifiable {
@@ -20,9 +20,6 @@ struct ShortcutEntry: Identifiable {
         case directActivation
         case allWindows
         case tiling
-        /// Matched in a separate namespace entirely — with the trigger held, against the *extra*
-        /// modifiers — so these can never collide with anything above them, only with each other.
-        case inSwitcherAction
 
         static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -34,23 +31,17 @@ struct ShortcutEntry: Identifiable {
             case .directActivation: return "Direct activation"
             case .allWindows: return "All windows"
             case .tiling: return "Window tiling"
-            case .inSwitcherAction: return "In-switcher action"
             }
         }
 
         /// Where in Settings this binding is edited.
         var location: String {
             switch self {
-            case .switcherTrigger, .appWindowCycle, .scopedTrigger, .inSwitcherAction:
-                return "Shortcuts"
+            case .switcherTrigger, .appWindowCycle, .scopedTrigger: return "Shortcuts"
             case .directActivation: return "Apps"
             case .allWindows, .tiling: return "Windows"
             }
         }
-
-        /// Whether these are matched globally. In-switcher actions are not — they only exist while
-        /// the panel is up.
-        var isGlobal: Bool { self != .inSwitcherAction }
     }
 
     let id: String
@@ -64,18 +55,15 @@ struct ShortcutEntry: Identifiable {
     /// but it cannot collide with anything because it never fires.
     let isActive: Bool
 
-    /// A comparable chord. Shift is dropped for global bindings, where it only ever means "go
-    /// backwards", but kept for in-switcher actions, where ⌥Q and ⌥⇧Q are two different actions.
+    /// A comparable chord. Shift is dropped: on a global binding it only ever means "go backwards".
     struct Chord: Hashable {
         let keyCode: Int
         let modifiers: CGEventFlags
 
-        init(keyCode: Int, modifiers: CGEventFlags, keepsShift: Bool) {
+        init(keyCode: Int, modifiers: CGEventFlags) {
             self.keyCode = keyCode
             self.modifiers = modifiers.intersection(
-                keepsShift
-                    ? [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-                    : [.maskCommand, .maskAlternate, .maskControl])
+                [.maskCommand, .maskAlternate, .maskControl])
         }
 
         func hash(into hasher: inout Hasher) {
@@ -139,28 +127,16 @@ enum ShortcutAudit {
             out.append(
                 entry(
                     .tiling, "tiling.\(arrangement.rawValue)", arrangement.title,
-                    tiling.hotkey(for: arrangement), active: tiling.isEnabled))
+                    tiling.hotkey(for: arrangement),
+                    // The display and Desktop moves do not answer to the tiling switch, so a bound
+                    // one can collide with something while the rest of the family is inert.
+                    active: tiling.isEnabled || arrangement.isMove))
         }
 
-        let shortcuts = SwitcherShortcutsStore.shared.shortcuts
-        for action in SwitcherAction.allCases {
-            guard let binding = shortcuts.bindings[action] else { continue }
-            out.append(
-                ShortcutEntry(
-                    id: "action.\(action.rawValue)", kind: .inSwitcherAction, label: action.title,
-                    display: binding.displayString,
-                    chord: ShortcutEntry.Chord(
-                        keyCode: binding.keyCode, modifiers: binding.extras, keepsShift: true),
-                    isActive: true))
-        }
         return out
     }
 
     /// Chords claimed by more than one *active, bound* entry.
-    ///
-    /// In-switcher actions are pooled separately: they are matched against the extra modifiers held
-    /// on top of the trigger, in a state where nothing else is matched at all, so ⌥Q as an action
-    /// and ⌥Q as a tiling chord are not in competition.
     static func collisions(in entries: [ShortcutEntry]) -> [ShortcutCollision] {
         var byChord: [ShortcutEntry.Chord: [ShortcutEntry]] = [:]
         for entry in entries where entry.isActive {
@@ -168,14 +144,10 @@ enum ShortcutAudit {
             byChord[chord, default: []].append(entry)
         }
         return byChord.compactMap { chord, group -> ShortcutCollision? in
-            // Split the two namespaces before deciding anything is a collision.
-            let global = group.filter { $0.kind.isGlobal }
-            let inPanel = group.filter { !$0.kind.isGlobal }
-            let clashing = global.count > 1 ? global : (inPanel.count > 1 ? inPanel : [])
-            guard clashing.count > 1 else { return nil }
+            guard group.count > 1 else { return nil }
             return ShortcutCollision(
-                chord: chord, display: clashing[0].display,
-                entries: clashing.sorted { $0.kind < $1.kind })
+                chord: chord, display: group[0].display,
+                entries: group.sorted { $0.kind < $1.kind })
         }
         .sorted { $0.display < $1.display }
     }
@@ -189,8 +161,7 @@ enum ShortcutAudit {
         }
         return ShortcutEntry(
             id: id, kind: kind, label: label, display: hotkey.displayString,
-            chord: ShortcutEntry.Chord(
-                keyCode: hotkey.keyCode, modifiers: hotkey.modifiers, keepsShift: false),
+            chord: ShortcutEntry.Chord(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
             isActive: active)
     }
 

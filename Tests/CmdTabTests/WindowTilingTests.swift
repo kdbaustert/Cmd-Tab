@@ -90,13 +90,142 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertNil(frame(.restore))
     }
 
+    // MARK: - Gaps
+
+    /// The whole gap against a screen edge, half of it at a seam — so two neighbours end up exactly
+    /// one gap apart, the same distance as each is from the outside.
+    func testTwoHalvesEndUpOneGapApart() {
+        let gap: CGFloat = 20
+        let left = TilingGap.inset(frame(.leftHalf)!, in: area, gap: gap)
+        let right = TilingGap.inset(frame(.rightHalf)!, in: area, gap: gap)
+        XCTAssertEqual(right.minX - left.maxX, gap, accuracy: 0.001)
+        XCTAssertEqual(left.minX - area.minX, gap, accuracy: 0.001)
+        XCTAssertEqual(area.maxX - right.maxX, gap, accuracy: 0.001)
+    }
+
+    func testMaximizeTakesTheFullGapOnEveryEdge() {
+        let gap: CGFloat = 16
+        let maximized = TilingGap.inset(frame(.maximize)!, in: area, gap: gap)
+        XCTAssertEqual(maximized.minX - area.minX, gap, accuracy: 0.001)
+        XCTAssertEqual(maximized.minY - area.minY, gap, accuracy: 0.001)
+        XCTAssertEqual(area.maxX - maximized.maxX, gap, accuracy: 0.001)
+        XCTAssertEqual(area.maxY - maximized.maxY, gap, accuracy: 0.001)
+    }
+
+    /// A corner has two outside edges and two seams, and has to tell them apart.
+    func testACornerTakesFullGapOutsideAndHalfAtItsSeams() {
+        let gap: CGFloat = 24
+        let corner = TilingGap.inset(frame(.topLeft)!, in: area, gap: gap)
+        XCTAssertEqual(corner.minX - area.minX, gap, accuracy: 0.001)
+        XCTAssertEqual(corner.minY - area.minY, gap, accuracy: 0.001)
+        XCTAssertEqual(frame(.topLeft)!.maxX - corner.maxX, gap / 2, accuracy: 0.001)
+        XCTAssertEqual(frame(.topLeft)!.maxY - corner.maxY, gap / 2, accuracy: 0.001)
+    }
+
+    /// The thirds are computed by division and land a hair off the exact edge; without the slack in
+    /// `TilingGap` the right third would take an inner gap on the side against the screen.
+    func testTheOuterThirdsStillReadAsScreenEdges() {
+        let gap: CGFloat = 18
+        let left = TilingGap.inset(frame(.leftThird)!, in: area, gap: gap)
+        let right = TilingGap.inset(frame(.rightThird)!, in: area, gap: gap)
+        XCTAssertEqual(left.minX - area.minX, gap, accuracy: 0.001)
+        XCTAssertEqual(area.maxX - right.maxX, gap, accuracy: 0.001)
+    }
+
+    /// Every space between and around the thirds is one gap — which is what the eye reads — and the
+    /// two outer thirds match each other.
+    ///
+    /// The middle third comes out half a gap *wider*, because it spends a half gap on each of its
+    /// two seams where its neighbours spend a whole one on the screen edge. That is not an accident
+    /// of this implementation: Rectangle's `GapCalculation.applyGaps` insets by the full gap and
+    /// hands back half on each shared edge, which is the same arithmetic, so a window landing here
+    /// lands where someone coming from Rectangle expects it to.
+    func testThirdsAreEvenlySpacedAndTheOutersMatch() {
+        let gap: CGFloat = 12
+        let thirds = [WindowArrangement.leftThird, .centerThird, .rightThird]
+            .map { TilingGap.inset(frame($0)!, in: area, gap: gap) }
+        XCTAssertEqual(thirds[0].minX - area.minX, gap, accuracy: 0.001)
+        XCTAssertEqual(thirds[1].minX - thirds[0].maxX, gap, accuracy: 0.001)
+        XCTAssertEqual(thirds[2].minX - thirds[1].maxX, gap, accuracy: 0.001)
+        XCTAssertEqual(area.maxX - thirds[2].maxX, gap, accuracy: 0.001)
+        XCTAssertEqual(thirds[0].width, thirds[2].width, accuracy: 0.001)
+        XCTAssertEqual(thirds[1].width - thirds[0].width, gap / 2, accuracy: 0.001)
+    }
+
+    func testZeroGapChangesNothing() {
+        for arrangement in WindowArrangement.tilingArrangements {
+            guard let plain = frame(arrangement) else { continue }
+            XCTAssertEqual(TilingGap.inset(plain, in: area, gap: 0), plain)
+        }
+    }
+
+    /// A gap wider than the tile would invert the frame; the tile is left alone instead.
+    func testAnAbsurdGapIsRefusedRatherThanInverting() {
+        let tiny = CGRect(x: area.minX, y: area.minY, width: 40, height: 30)
+        XCTAssertEqual(TilingGap.inset(tiny, in: area, gap: 60), tiny)
+        for arrangement in WindowArrangement.tilingArrangements {
+            guard let plain = frame(arrangement) else { continue }
+            let inset = TilingGap.inset(plain, in: area, gap: TilingGap.maximum)
+            XCTAssertGreaterThan(inset.width, 0, "\(arrangement.rawValue) inverted")
+            XCTAssertGreaterThan(inset.height, 0, "\(arrangement.rawValue) inverted")
+        }
+    }
+
+    /// Centre keeps the window's own size and restore puts back a frame the user chose, so neither
+    /// takes a gap — nor do the moves, which change no geometry at all.
+    func testOnlyTilingArrangementsTakeAGap() {
+        XCTAssertFalse(WindowArrangement.center.takesGap)
+        XCTAssertFalse(WindowArrangement.restore.takesGap)
+        XCTAssertFalse(WindowArrangement.previousDisplay.takesGap)
+        XCTAssertFalse(WindowArrangement.nextDisplay.takesGap)
+        for arrangement in [WindowArrangement.leftHalf, .topRight, .centerThird, .maximize] {
+            XCTAssertTrue(arrangement.takesGap, "\(arrangement.rawValue) should take a gap")
+        }
+    }
+
     // MARK: - Bindings
 
-    func testDisabledTilingMatchesNothing() {
+    func testDisabledTilingMatchesNoGeometry() {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = false
-        let left = WindowArrangement.leftHalf.defaultHotkey
-        XCTAssertNil(tiling.arrangement(code: left.keyCode, flags: left.modifiers))
+        for arrangement in WindowArrangement.tilingArrangements {
+            let chord = arrangement.defaultHotkey
+            XCTAssertNil(
+                tiling.arrangement(code: chord.keyCode, flags: chord.modifiers),
+                "\(arrangement.rawValue) should be inert while tiling is off")
+        }
+    }
+
+    /// The switch is about resizing. A move changes no layout, so it fires either way — the whole
+    /// point of splitting the two families in `arrangement(code:flags:)`.
+    func testDisabledTilingStillMatchesTheMoves() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.isEnabled = false
+        for arrangement in WindowArrangement.moves {
+            let chord = arrangement.defaultHotkey
+            XCTAssertEqual(
+                tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), arrangement,
+                "\(arrangement.rawValue) should fire with tiling off")
+        }
+    }
+
+    /// A cleared move is still cleared: ungating them is not a licence to revive a binding the user
+    /// has handed back.
+    func testAClearedMoveDoesNotFireWithTilingOff() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.isEnabled = false
+        let chord = WindowArrangement.nextDisplay.defaultHotkey
+        tiling.bindings[.nextDisplay] = nil
+        XCTAssertNil(tiling.arrangement(code: chord.keyCode, flags: chord.modifiers))
+    }
+
+    func testTheTwoFamiliesPartitionTheArrangements() {
+        XCTAssertEqual(
+            Set(WindowArrangement.moves).union(WindowArrangement.tilingArrangements),
+            Set(WindowArrangement.allCases))
+        XCTAssertTrue(
+            Set(WindowArrangement.moves).isDisjoint(with: WindowArrangement.tilingArrangements))
+        XCTAssertEqual(Set(WindowArrangement.moves), Set([.previousDisplay, .nextDisplay]))
     }
 
     func testEnabledTilingMatchesItsOwnChord() {
@@ -276,8 +405,11 @@ final class DragSnapZoneTests: XCTestCase {
         DragSnap.zone(for: CGPoint(x: x, y: y), in: frame)
     }
 
-    func testMiddleOfTheScreenSnapsToNothing() {
-        XCTAssertNil(zone(800, 500))
+    /// The dead ground between the edges and the centre box: most of the screen, and it must stay
+    /// dead, or every drop anywhere would tile something.
+    func testMostOfTheScreenSnapsToNothing() {
+        XCTAssertNil(zone(400, 300))
+        XCTAssertNil(zone(1200, 700))
     }
 
     func testEdgesMapToHalvesAndMaximize() {
@@ -308,5 +440,45 @@ final class DragSnapZoneTests: XCTestCase {
     /// A point on no screen at all — between mismatched displays, or off the end — must not snap.
     func testAPointOffEveryScreenSnapsToNothing() {
         XCTAssertNil(DragSnap.zone(for: CGPoint(x: -5000, y: -5000), in: frame))
+    }
+
+    // MARK: - Centre zone
+
+    /// A drop aimed at the middle of the screen takes the whole screen.
+    func testTheCentreOfTheScreenMaximizes() {
+        XCTAssertEqual(DragSnap.zone(for: CGPoint(x: frame.midX, y: frame.midY), in: frame),
+                       .maximize)
+    }
+
+    /// The box is small on purpose: a window dropped merely *near* the middle is the ordinary case
+    /// and must not be taken over.
+    func testJustOutsideTheCentreBoxIsNotAZone() {
+        let offset = frame.width * 0.125 / 2 + 20
+        XCTAssertNil(DragSnap.zone(for: CGPoint(x: frame.midX + offset, y: frame.midY), in: frame))
+        let vertical = frame.height * 0.125 / 2 + 20
+        XCTAssertNil(DragSnap.zone(for: CGPoint(x: frame.midX, y: frame.midY + vertical), in: frame))
+    }
+
+    /// An edge always wins. On a short screen the centre box could otherwise reach a screen edge and
+    /// swallow the half it belongs to.
+    func testAnEdgeStillWinsOverTheCentre() {
+        let squat = CGRect(x: 0, y: 0, width: 400, height: 200)
+        XCTAssertEqual(DragSnap.zone(for: CGPoint(x: 2, y: 100), in: squat), .leftHalf)
+        XCTAssertEqual(DragSnap.zone(for: CGPoint(x: 200, y: 199), in: squat), .maximize)
+    }
+
+    // MARK: - Is it a window drag?
+
+    /// The origin has to move and the size has to stay put — the pair that tells a window drag from
+    /// a text selection (nothing moves) and from a resize (the size changes with it).
+    func testOnlyAMoveCountsAsAWindowDrag() {
+        let initial = CGRect(x: 100, y: 100, width: 800, height: 600)
+        XCTAssertTrue(DragSnap.isMove(from: initial, to: initial.offsetBy(dx: 30, dy: -12)))
+        XCTAssertFalse(DragSnap.isMove(from: initial, to: initial))
+        let resized = CGRect(x: 100, y: 100, width: 900, height: 600)
+        XCTAssertFalse(DragSnap.isMove(from: initial, to: resized))
+        // A top-left resize moves the origin *and* changes the size; still not a move.
+        let cornerResized = CGRect(x: 80, y: 80, width: 820, height: 620)
+        XCTAssertFalse(DragSnap.isMove(from: initial, to: cornerResized))
     }
 }

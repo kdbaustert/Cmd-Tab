@@ -42,15 +42,6 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | *type* | Filter the list by app / window name |
 | ⌫ | Delete the last character of the filter |
 | ⌘-1 … ⌘-9, ⌘-0 | Switch straight to that tile (no filter active). 0 is the tenth tile |
-| ⌘-⌥-Q | Quit the selected app |
-| ⌘-⌥-⇧-Q | Force-quit the selected app |
-| ⌘-⌥-W | Close the selected window (window mode) or the app's front window |
-| ⌘-⌥-H | Hide the selected app |
-| ⌘-⌥-⇧-H | Hide every other app |
-| ⌘-⌥-M | Minimize the selected window |
-| ⌘-⌥-F | Zoom (maximize / restore) the selected window |
-| ⌘-⌥-← / ⌘-⌥-→ | Move the selected window to the previous / next **desktop** (Space) |
-| ⌘-⌥-⇧-← / ⌘-⌥-⇧-→ | Move the selected window to the previous / next **display** |
 | Esc | Dismiss the switcher — always, filter or not. While the panel is up it owns every key on the machine, so this is the one exit that must never depend on any other state; ⌫ is how you back out of a query |
 | Release ⌘ | Switch to the selection — unless **Stay open** is on, which keeps the panel up |
 | Tab (⌘ released) | With **Stay open**, switches to the selection, the way releasing ⌘ otherwise would. ⇧-Tab still steps backwards, and a session opened from the menu bar works the same way — it has no chord to release either |
@@ -75,11 +66,9 @@ the moment it would otherwise have said "No matches", so nothing is displaced. T
 Because you are still holding ⌘, the character each key would type is read from the event honouring
 your keyboard layout, so it follows the physical keys rather than assuming a US layout.
 
-The window actions live on ⌥ (**⌘-⌥-Q/W/H**, and the rest in the table) precisely so the bare
-letters stay free for this — otherwise you could never search for a word containing q, w or h. Every
-one of those bindings is rebindable in **Settings → Shortcuts → In-switcher keys**. A digit still jumps to that
-tile when the filter is empty; once you have started a query, digits type into it instead (so you can
-find *1Password*). The number badges hide while a filter is active, since the jump is off. **Esc**
+A key held with ⌥ or ⌃ is taken as deliberate rather than typed, so it never reaches the query. A
+digit still jumps to that tile when the filter is empty; once you have started a query, digits type
+into it instead (so you can find *1Password*). The number badges hide while a filter is active, since the jump is off. **Esc**
 backs out of the query first and only dismisses the switcher on a second press, the way a search
 field behaves.
 
@@ -136,23 +125,25 @@ Start at login lives in the system's Login Items, not our defaults.
 | Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
 | Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
 | Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, or minimized windows. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. | None |
-| Overview | Every binding in the app in one list, with cross-store conflicts flagged. Each pane warns about clashes inside its own store; nothing could see *across* them, and there are seven kinds of binding over five stores — a tiling chord and a direct activation on the same keys produced no warning anywhere. Shows which of a clashing pair actually fires. | — |
-| Window actions | The key for each in-switcher window action (quit, force-quit, close, hide, hide-others, minimize, zoom, move-to-display) is rebindable — click a row and press a new combination. ⌘ (the trigger) is always held, so a binding only records the *extra* modifiers, and needs at least ⌥ or ⌃ so it can't collide with type-to-filter. Persisted as `switcherShortcuts`. | ⌥ combos (see [Keys](#keys)) |
+| Overview | Every binding in the app in one list, with cross-store conflicts flagged. Each pane warns about clashes inside its own store; nothing could see *across* them, and the kinds of binding are spread over several stores — a tiling chord and a direct activation on the same keys produced no warning anywhere. Shows which of a clashing pair actually fires. | — |
+| In-switcher keys | The keys the panel handles while it is open, listed for reference: Tab/⇧Tab and ←/→ move the selection, Return switches, 1–9/0 jump, typing filters, ⌫ deletes a filter character, ⎋ closes. Not rebindable. | — |
 
 ### Windows
 
 Global hotkeys that snap the **focused** window — they fire with nothing open and act on whatever
-you are looking at, which is why they are not on the Shortcuts tab with the in-switcher action keys.
+you are looking at, which is why they are not on the Shortcuts tab with the switcher's own triggers.
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| Enable window tiling | The master switch. **Off by default**: each binding is a real global hotkey, so while tiling is on Cmd-Tab takes those combinations away from whatever app is in front. Nothing is claimed until you ask for it. | Off |
+| Enable window tiling | The master switch for the **sizing** arrangements. **Off by default**: each binding is a real global hotkey, so while tiling is on Cmd-Tab takes those combinations away from whatever app is in front. Nothing is claimed until you ask for it. The *move* group below — Displays — is deliberately outside it: a move changes no layout, and a chord that silently did nothing because of a checkbox captioned about tiling is the failure this split exists to avoid. | Off |
 | Cycle widths | Press the same half twice to step the window through ½ → ⅔ → ⅓ of the screen on that side. The cycle resets when you tile a different window or pick a different arrangement. | On |
+| Gaps | Space left around a tiled window: the **full** gap against a screen edge, **half** of it where two windows meet — so neighbours sit exactly one gap apart, the same distance as each is from the outside. 0 keeps them flush. Applies to the keyboard arrangements and to drag-snapping, whose preview is inset to match so it shows where the window will actually land. Not applied to *Center* (it keeps the window's own size), *Restore* (it puts back a frame you chose) or the display moves. Same arithmetic as Rectangle's `GapCalculation`, which insets by the full gap and hands back half on each shared edge — including its consequence that a middle third is half a gap wider than the outer two. Persisted as `windowTilingGap`. | 0 (off) |
 | Halves | Left, right, top, bottom. | ⌃⌘ ← → ↑ ↓ |
 | Thirds | Left, middle, right — a third of the width, full height. | ⌃⌘ 1 2 3 |
 | Corners | Top-left, top-right, bottom-left, bottom-right — each a quarter of the usable area. | ⌃⌘ U I J K |
-| Move to previous / next display | Keeps the window's size and its relative position on the new display. ⇧ on the halves' own arrows: same key, "throw it further". | ⌃⇧⌘ ← → |
-| Snap by dragging | Drag a window's title bar to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, with a translucent preview of where it will land. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
+| Move to previous / next display | Keeps the window's size and its relative position on the new display. ⇧ on the halves' own arrows: same key, "throw it further". Fires whether or not tiling is on. | ⌃⇧⌘ ← → |
+| Snap by dragging | Drag a window to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, **the centre of the screen gives full screen**, with a translucent preview of where it will land. Grab the window **anywhere**, not just its titlebar: what tells a window drag from a text selection is not where the press landed but whether the window actually *moved* — origin changed, size unchanged — which is also how Rectangle's `SnappingManager` decides. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
+| Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block follow the system accent and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
 | Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
 | Center | Keeps the window's size and centres it; a window bigger than the screen is clamped to it. | ⌃⌘C |
 | Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. | ⌃⌘Z |
@@ -171,9 +162,7 @@ swapping a pair around), but the row says which of the two will actually fire an
 A chord one of the **switcher triggers** already claims *is* refused, because there is no workflow
 where binding it is a step towards anything: the tap matches both triggers before tiling, so the
 binding could only ever open the switcher. Rows also re-check this on every render, since changing
-the switcher shortcut later can strand a tiling chord that was fine when it was set. Unlike the
-trigger, a tiling chord is never checked for shadowing in-switcher *actions*: it is matched only
-when nothing is open, holds nothing for the duration, and so cannot strand anything.
+the switcher shortcut later can strand a tiling chord that was fine when it was set.
 
 Tiling goes inert while Cmd-Tab itself is frontmost. Otherwise the tap would consume every bound
 chord before the shortcut recorder could see it — no already-assigned combination could be
@@ -443,10 +432,15 @@ after that. Remove the identity in Keychain Access to undo it.
 - Windows on other Spaces are listed, and switching to one follows macOS's normal Space-switch
   behavior. The hover preview shows them too — only *minimized* windows can't be previewed, since
   they have no live surface to capture.
-- Moving a window to another **desktop** (Space) is on ⌘-⌥-←/→ and uses a private SkyLight call
-  (`SpaceMover`) — there is no public API, so like the ⌘-Tab takeover it is resolved at runtime and
-  no-ops if a future macOS drops the symbol. Moving to another **display** is on ⌘-⌥-⇧-←/→ and
-  raises + activates the window on arrival so it lands in front rather than behind existing windows.
+- Moving a window to another **desktop** (Space) is **not supported**, and deliberately so. There
+  is no public API, and on macOS 26 every private SkyLight route — `CGSMoveWindowsToManagedSpace`,
+  `SLSMoveWindowsToManagedSpace`, and the `RemoveWindowsFromSpaces`/`AddWindowsToSpaces` pair — is
+  accepted and then silently ignored for a window the calling process does not own. All of them
+  resolve, so a caller cannot tell success from failure; only a Space-managing connection may move
+  another app's window, which is why the tools that do it inject into Dock and require SIP to be
+  partially disabled. `SpaceMover` therefore reads Space membership and switches Spaces, and does
+  not pretend to move windows between them. Moving to another **display** is on ⌃⇧⌘-←/→, is plain
+  Accessibility geometry, and keeps the window's relative position on the display it arrives at.
 - Live window thumbnails appear only in the optional hover preview (app mode); tiles themselves are
   app icons.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
@@ -458,9 +452,8 @@ after that. Remove the identity in Keychain Access to undo it.
 | File | Role |
 | --- | --- |
 | `SystemSwitcher.swift` | The private SkyLight shim that disables the Dock's switcher |
-| `SpaceMover.swift` | Private SkyLight shim for moving a window to an adjacent Space |
+| `SpaceMover.swift` | Private SkyLight shim for reading a window's Space and switching to it |
 | `FavoritesStore.swift` | Pinned apps that appear as launchable tiles when not running |
-| `SwitcherShortcuts.swift` | Rebindable key bindings for the in-switcher window actions |
 | `EventTap.swift` | Session event tap; swallows keys, self-heals if the system disables it |
 | `SwitcherController.swift` | State machine — decides what to swallow and when to commit |
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |
@@ -479,6 +472,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
 | `WindowTiling.swift` | Tiling geometry, the binding store, and the Accessibility frame writer |
 | `DragSnap.swift` | Drag-to-edge snapping: gesture inference, zone geometry, preview overlay |
+| `MouseWindowDrag.swift` | Modifier-drag to move or resize: mouse event tap, frame maths, recorded chords |
 | `ShortcutAudit.swift` | Every binding in one list, and cross-store conflict detection |
 | `FuzzyMatch.swift` | Subsequence matching with scoring, for type-to-filter |
 | `InstalledApps.swift` | The installed-app catalogue behind launch-from-search |

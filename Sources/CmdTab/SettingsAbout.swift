@@ -57,10 +57,13 @@ struct AboutSettings: View {
                 }
             }
 
-            Text(Self.copyright)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
+            VStack(spacing: 2) {
+                Text(Self.copyright)
+                Text("Developed by Kenny Baustert")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .onAppear(perform: refresh)
     }
