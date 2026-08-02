@@ -631,8 +631,9 @@ final class BehaviorStore: ObservableObject {
     ///   its matching field with it.
     /// - `switcherShortcuts`: the rebindable in-switcher window actions (quit, close, minimize and
     ///   the rest), removed along with the actions themselves.
-    /// - `windowSnapHighlightColorHex`: a colour for the snap outline and landing block. Those
-    ///   follow the system accent now; only the anchor dot is configurable.
+    /// - `windowSnapHighlightColorHex`: a colour for the snap outline and landing block. Those are
+    ///   fixed now — light grey on black, matching Rectangle's footprint — and only the anchor dot
+    ///   is configurable.
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
         "alwaysShowTitles", "panelOpacity", "switcherShortcuts", "windowSnapHighlightColorHex",

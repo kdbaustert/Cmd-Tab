@@ -868,11 +868,12 @@ private final class TargetOutline {
     func show(_ frame: CGRect) {
         let panel = self.panel ?? make()
         self.panel = panel
-        // Repainted on every show, so a change of appearance never leaves a stale outline behind.
+        // Painted on every show and nowhere else, so a change of appearance never leaves a stale
+        // outline behind and there is only ever one copy of these values.
         if let layer = panel.contentView?.layer {
             layer.borderColor = SnapAppearance.shared.outline.cgColor
             layer.borderWidth = SnapAppearance.borderWidth
-            layer.cornerRadius = SnapAppearance.cornerRadius
+            layer.cornerRadius = SnapAppearance.outlineCornerRadius
         }
         guard let primary = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)
         else { return }
@@ -887,33 +888,10 @@ private final class TargetOutline {
         panel?.orderOut(nil)
     }
 
-    private func make() -> NSPanel {
-        let panel = NSPanel(
-            contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered,
-            defer: false)
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        // Never take a click meant for the window underneath.
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-
-        let view = NSView()
-        view.wantsLayer = true
-        // Rectangle's footprint border — light grey, 2pt, matching corner radius — but no wash: the
-        // targeted window is one you are looking at and reading, and a tint over the whole of it
-        // obscures the very thing it is pointing out. The landing block is filled precisely because
-        // there is nothing underneath it worth seeing.
-        view.layer?.backgroundColor = NSColor.clear.cgColor
-        view.layer?.borderColor = SnapAppearance.shared.outline.cgColor
-        view.layer?.borderWidth = SnapAppearance.borderWidth
-        view.layer?.cornerRadius = SnapAppearance.cornerRadius
-        view.layer?.cornerCurve = .continuous
-        panel.contentView = view
-        return panel
-    }
+    /// Outline only, no wash: the targeted window is one you are looking at and reading, and a tint
+    /// over the whole of it obscures the very thing it is pointing out. The landing block is filled
+    /// precisely because there is nothing underneath it worth seeing.
+    private func make() -> NSPanel { OverlayPanel.make(level: .floating) }
 }
 
 
@@ -933,8 +911,15 @@ private final class AnchorDot {
     func show(at point: CGPoint) {
         let panel = self.panel ?? make()
         self.panel = panel
-        // The one configurable colour here, read on every show.
-        panel.contentView?.layer?.backgroundColor = SnapAppearance.shared.dot.cgColor
+        // The one configurable colour here, read on every show — along with the shape, which lives
+        // here rather than in the factory so the panel has exactly one styling path.
+        if let layer = panel.contentView?.layer {
+            layer.backgroundColor = SnapAppearance.shared.dot.cgColor
+            layer.cornerRadius = Self.diameter / 2
+            // Without this the corner radius shapes the border but not the fill, and a 14pt dot
+            // renders as a square with rounded edges drawn on top of it.
+            layer.masksToBounds = true
+        }
         panel.setFrame(
             NSRect(
                 x: point.x - Self.diameter / 2, y: point.y - Self.diameter / 2,
@@ -947,28 +932,7 @@ private final class AnchorDot {
         panel?.orderOut(nil)
     }
 
-    private func make() -> NSPanel {
-        let panel = NSPanel(
-            contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered,
-            defer: false)
-        panel.isFloatingPanel = true
-        // Above the destination preview, which is a full half-screen block the dot would otherwise
-        // be lost inside.
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = SnapAppearance.shared.dot.cgColor
-        view.layer?.cornerRadius = Self.diameter / 2
-        // Without this the corner radius shapes the border but not the fill, and a 14pt dot renders
-        // as a square with rounded edges drawn on top of it.
-        view.layer?.masksToBounds = true
-        panel.contentView = view
-        return panel
-    }
+    /// Above the destination block, which is a full half-screen the dot would otherwise be lost
+    /// inside. Its colour and corner radius are set on every show — see `show(at:)`.
+    private func make() -> NSPanel { OverlayPanel.make(level: .statusBar) }
 }

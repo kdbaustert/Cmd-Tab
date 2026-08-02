@@ -118,6 +118,46 @@ tooltip.
 
 Start at login lives in the system's Login Items, not our defaults.
 
+## Signing and release
+
+`build.sh` signs with a **self-signed** certificate called `Overtab Local`. That is deliberate for
+local use: macOS keys the Accessibility and Screen Recording grants to the app's *designated
+requirement*, so signing with the same certificate every time keeps both permissions across
+rebuilds. Ad-hoc signing has no certificate, so the requirement falls back to the code hash, which
+changes on every build — hence the re-granting. Create it once in Keychain Access → Certificate
+Assistant → Create a Certificate (name `Overtab Local`, type *Code Signing*, self-signed).
+
+That certificate is trusted by nothing else. Distributing the app needs a **Developer ID
+Application** certificate (a paid Apple Developer Program membership), the hardened runtime, a
+secure timestamp, and notarisation:
+
+```sh
+./release.sh                          # build + Developer ID sign + verify
+./release.sh --notarize               # ... and submit to Apple, staple, re-zip
+VERSION=1.2.0 BUILD=42 ./release.sh   # stamp a version into the built bundle only
+```
+
+| Variable | What it does |
+| --- | --- |
+| `CODESIGN_IDENTITY` | Signing identity. Defaults to the sole `Developer ID Application` in the keychain; set it when several teams' certificates are installed. |
+| `NOTARY_PROFILE` | A stored `notarytool` credential profile, created once with `xcrun notarytool store-credentials`. |
+| `VERSION` / `BUILD` | Override `CFBundleShortVersionString` / `CFBundleVersion` in the built bundle. The tracked `Resources/Info.plist` is never touched, so a release build leaves the working tree clean. |
+
+Notes that cost time if missed:
+
+- `release.sh` **refuses to fall back to ad-hoc signing**. A release that signed itself ad-hoc would
+  notarise nothing and install nowhere, and would do it silently.
+- Signing drops `--deep`, which Apple advises against for distribution. There is no nested code to
+  need it — one executable, no frameworks, no helpers.
+- No entitlements are required today: the app is unsandboxed, loads no third-party code, and reaches
+  Accessibility and ScreenCaptureKit through TCC rather than entitlements. `build.sh` picks up
+  `Resources/CmdTab.entitlements` automatically if that file ever appears.
+- The release prints the **designated requirement**. Changing the certificate changes it, and every
+  user then re-grants Accessibility and Screen Recording with no warning from anywhere else.
+- Packaging uses `ditto`, not `zip`: the Notary Service needs the bundle's symlinks and extended
+  attributes intact. The zip is rebuilt *after* stapling, since the ticket lives inside the bundle
+  and a zip made before stapling does not carry it.
+
 ### Shortcuts
 
 | Setting | What it does | Default |
@@ -143,7 +183,7 @@ you are looking at, which is why they are not on the Shortcuts tab with the swit
 | Corners | Top-left, top-right, bottom-left, bottom-right — each a quarter of the usable area. | ⌃⌘ U I J K |
 | Move to previous / next display | Keeps the window's size and its relative position on the new display. ⇧ on the halves' own arrows: same key, "throw it further". Fires whether or not tiling is on. | ⌃⇧⌘ ← → |
 | Snap by dragging | Drag a window to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, **the centre of the screen gives full screen**, with a translucent preview of where it will land. Grab the window **anywhere**, not just its titlebar: what tells a window drag from a text selection is not where the press landed but whether the window actually *moved* — origin changed, size unchanged — which is also how Rectangle's `SnappingManager` decides. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
-| Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block follow the system accent and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
+| Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block are fixed at light grey on black — Rectangle's own footprint styling (`FootprintWindow`: `borderColor = .lightGray`, `fillColor = .black`, `borderWidth = 2`, alpha `0.3`) — and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
 | Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
 | Center | Keeps the window's size and centres it; a window bigger than the screen is clamped to it. | ⌃⌘C |
 | Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. | ⌃⌘Z |

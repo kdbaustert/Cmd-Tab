@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 CONFIG=release
 APP="build/Cmd-Tab.app"
+ENTITLEMENTS="Resources/CmdTab.entitlements"
 
 echo "==> Compiling"
 swift build -c "$CONFIG"
@@ -22,20 +23,55 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # resource directory, so the subfolder is a repo-tidiness measure that must not survive the copy.
 cp Resources/MenuBar/*.png "$APP/Contents/Resources/"
 
-# Sign with a stable self-signed identity when one is present. macOS keys Accessibility to the
-# app's designated requirement; signed with the same certificate every time, that requirement
-# stays put and the permission survives a rebuild. Ad-hoc signing has no certificate, so the
-# requirement falls back to the code hash, which changes on every build — hence the re-granting.
-# The identity is still called "Overtab Local" from before the rename: it is only a keychain
-# label, and replacing it would change the requirement and cost another re-grant for nothing.
-# See README for how to create it.
-IDENTITY="Overtab Local"
+# Version stamping, for a release that wants something other than what is in Info.plist. Applied to
+# the built copy only — the source plist stays the tracked default, so a release build never leaves
+# the working tree dirty.
+if [[ -n "${VERSION:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+fi
+if [[ -n "${BUILD:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$APP/Contents/Info.plist"
+fi
+
+# Sign with a stable identity when one is present. macOS keys Accessibility to the app's designated
+# requirement; signed with the same certificate every time, that requirement stays put and the
+# permission survives a rebuild. Ad-hoc signing has no certificate, so the requirement falls back to
+# the code hash, which changes on every build — hence the re-granting.
+#
+# The default identity is still called "Overtab Local" from before the rename: it is only a keychain
+# label, and replacing it would change the requirement and cost another re-grant for nothing. See
+# README for how to create it. `release.sh` overrides it with a Developer ID.
+IDENTITY="${CODESIGN_IDENTITY:-Overtab Local}"
+SIGN_ARGS=(--force)
+if [[ "${HARDENED:-0}" == "1" ]]; then
+    # Both are notarisation requirements, not nice-to-haves: the Notary Service rejects a submission
+    # that is not hardened, and a signature without a secure timestamp stops validating the moment
+    # the signing certificate expires.
+    SIGN_ARGS+=(--options runtime --timestamp)
+    # None are needed today — the app is unsandboxed, loads no third-party code, and reaches
+    # Accessibility and ScreenCaptureKit through TCC rather than entitlements — so the file is
+    # optional and only picked up if it exists.
+    if [[ -f "$ENTITLEMENTS" ]]; then
+        echo "==> Entitlements: $ENTITLEMENTS"
+        SIGN_ARGS+=(--entitlements "$ENTITLEMENTS")
+    fi
+else
+    # Local builds keep --deep, which is what this script has always done. Release builds do not:
+    # Apple explicitly advises against it for distribution, and there is no nested code here to
+    # need it — one executable, no frameworks, no helpers.
+    SIGN_ARGS+=(--deep)
+fi
+
 if security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
     echo "==> Signing as \"$IDENTITY\""
-    codesign --force --deep --sign "$IDENTITY" "$APP"
+    codesign "${SIGN_ARGS[@]}" --sign "$IDENTITY" "$APP"
+elif [[ "${HARDENED:-0}" == "1" ]]; then
+    # A release must never fall back to ad-hoc: it would notarise nothing and install nowhere.
+    echo "==> ERROR: signing identity \"$IDENTITY\" not found in the keychain" >&2
+    exit 1
 else
     echo "==> Signing (ad-hoc — \"$IDENTITY\" not found; Accessibility resets on each build)"
-    codesign --force --deep --sign - "$APP"
+    codesign "${SIGN_ARGS[@]}" --sign - "$APP"
 fi
 
 echo "==> Built $APP"

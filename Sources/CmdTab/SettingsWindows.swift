@@ -111,7 +111,8 @@ struct WindowSettings: View {
                 SettingsRow(
                     title: "Dot",
                     subtitle: "The anchor the hold-and-point gesture measures its direction from. "
-                        + "The outline and the landing block follow your system accent colour.",
+                        + "The outline and the landing block are not configurable — they match "
+                        + "Rectangle's snap footprint: light grey on black.",
                     controlWidth: 168
                 ) {
                     HStack(spacing: 8) {

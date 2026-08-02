@@ -273,11 +273,13 @@ final class DragSnap {
     }
 }
 
-/// The colours the snap overlays are drawn in, in one place so they cannot drift.
+/// How the snap overlays are painted — colours, opacity and geometry — in one place so the three of
+/// them cannot drift.
 ///
 /// Read at show time rather than baked in when a panel is built: the panels are made once and
-/// reused for the life of the app, so anything read at creation would be stale after a colour
-/// change — or after the user changes their system accent, which `highlight` follows.
+/// reused for the life of the app, so anything read at creation would be stale after a change. Only
+/// `dot` can actually change today, but reading all of it the same way is what keeps a future
+/// setting from needing new plumbing to reach the screen.
 @MainActor
 final class SnapAppearance {
     static let shared = SnapAppearance()
@@ -303,16 +305,26 @@ final class SnapAppearance {
     /// Rectangle's `footprintBorderWidth` default.
     static let borderWidth: CGFloat = 2
 
-    /// Matching Rectangle's ladder: 16 on macOS 26, 10 back to Big Sur, 5 before that. A snap
-    /// preview whose corners disagree with the system's window corners reads as a misdrawn window.
-    static var cornerRadius: CGFloat {
+    /// Matching Rectangle's ladder, minus the rungs this app cannot reach: 16 on macOS 26, 10
+    /// below it. Rectangle also has a 5 for pre-Big-Sur, which is dead here — `Package.swift` sets
+    /// the deployment target to macOS 14, so the app cannot launch anywhere that would use it.
+    ///
+    /// A snap preview whose corners disagree with the system's window corners reads as a misdrawn
+    /// window. That reasoning applies to the *destination* block, which is a rectangle this app
+    /// draws; `TargetOutline` traces a real window it does not own and so keeps its own radius.
+    static var blockCornerRadius: CGFloat {
         if #available(macOS 26.0, *) { return 16 }
-        if #available(macOS 11.0, *) { return 10 }
-        return 5
+        return 10
     }
 
-    /// The anchor dot. Full strength, never the alpha the larger overlays use — it is 14pt across,
-    /// and a wash at 22% would be invisible.
+    /// The outline around a targeted window. Smaller than the block's, deliberately: this one is
+    /// drawn around whatever the cursor is over — a full-screen window, a borderless one, anything
+    /// with square corners — and a 16pt curve there cuts across the very corners it is marking,
+    /// leaving four wedges of window outside the highlight.
+    static let outlineCornerRadius: CGFloat = 10
+
+    /// The anchor dot. Always full strength: it is 14pt across, and at `blockAlpha` — the 30% the
+    /// larger overlays are shown at — it would be invisible.
     private(set) var dot: NSColor = .controlAccentColor
 
     /// macOS's own accent, which is what the dot was before it was configurable.
@@ -354,34 +366,45 @@ final class SnapPreview {
         panel?.orderOut(nil)
     }
 
-    /// Repainted on every show, so a change of appearance never leaves a stale overlay behind.
+    /// Painted on every show and nowhere else. The panel is made blank: styling it at creation too
+    /// meant two copies of the same four values, and a later change to one of them would have left
+    /// the first frame of a gesture drawn the old way.
     private func restyle(_ panel: NSPanel) {
         guard let layer = panel.contentView?.layer else { return }
         panel.alphaValue = SnapAppearance.blockAlpha
         layer.backgroundColor = SnapAppearance.shared.landing.cgColor
         layer.borderColor = SnapAppearance.shared.outline.cgColor
         layer.borderWidth = SnapAppearance.borderWidth
-        layer.cornerRadius = SnapAppearance.cornerRadius
+        layer.cornerRadius = SnapAppearance.blockCornerRadius
     }
 
-    private func make() -> NSPanel {
+    // Never interrupts the drag it is previewing — see `OverlayPanel`.
+    private func make() -> NSPanel { OverlayPanel.make(level: .floating) }
+}
+
+/// The panel every overlay is built on: non-activating, borderless, transparent, click-through, and
+/// present on every Space.
+///
+/// One factory rather than three copies of the same eight lines. Each property is load-bearing in
+/// the same way for all of them — an overlay that took a click would swallow the very gesture it is
+/// drawn for, and one that did not join all Spaces would vanish the moment a window was thrown to
+/// another Desktop — so a change to any of it belongs in one place.
+@MainActor
+enum OverlayPanel {
+    static func make(level: NSWindow.Level) -> NSPanel {
         let panel = NSPanel(
             contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered,
             defer: false)
         panel.isFloatingPanel = true
-        panel.level = .floating
+        panel.level = level
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.ignoresMouseEvents = true  // never interrupt the drag it is previewing
+        panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
 
         let view = NSView()
         view.wantsLayer = true
-        view.layer?.backgroundColor = SnapAppearance.shared.landing.cgColor
-        view.layer?.borderColor = SnapAppearance.shared.outline.cgColor
-        view.layer?.borderWidth = SnapAppearance.borderWidth
-        view.layer?.cornerRadius = SnapAppearance.cornerRadius
         view.layer?.cornerCurve = .continuous
         panel.contentView = view
         return panel
