@@ -1203,6 +1203,10 @@ final class SwitcherController {
     /// otherwise relayout.
     private func finishListMutation() {
         if !model.hasAnyTarget {
+            // Worth a line: the session opened with a list, so something emptied it underneath the
+            // user. That is a legitimate outcome (the last window closed) and also what a failed
+            // window-list read used to look like, which made the panel appear to vanish on its own.
+            Log.targets.notice("refresh emptied the list under an open session; dismissing")
             cancel()
         } else {
             scheduleLayout()

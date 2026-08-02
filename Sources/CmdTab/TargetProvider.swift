@@ -198,10 +198,14 @@ final class TargetProvider {
             case .apps:
                 targets = Self.appTargets(
                     apps, order: order, sortOrder: sortOrder, badges: badges)
-                if hideEmptyApps {
-                    // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
-                    // counts as non-empty rather than being dropped.
-                    let owning = Self.windowOwningPIDs()
+                // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
+                // counts as non-empty rather than being dropped. A nil answer is the window list
+                // refusing to be read, not a machine with no windows on it — filtering against it
+                // would remove every app there is, and an empty refresh landing under an open
+                // switcher dismisses the session outright (`finishListMutation`). Leaving the list
+                // unfiltered for one pass shows at worst a few empty apps; the alternative is the
+                // panel vanishing a moment after it opened.
+                if hideEmptyApps, let owning = Self.windowOwningPIDs() {
                     targets.removeAll { !owning.contains($0.pid) }
                 }
                 // Splice each expanded app's windows in where its single tile was, so the list keeps
@@ -350,9 +354,14 @@ final class TargetProvider {
 
     /// PIDs owning at least one real window on ANY Space (no on-screen restriction). Used by the
     /// "hide apps with no open windows" filter so fullscreen / other-Space apps are not dropped.
-    private static func windowOwningPIDs() -> Set<pid_t> {
+    ///
+    /// nil when the window list could not be read at all, which is a different answer from "nobody
+    /// owns a window" and has to stay distinguishable: the caller filters every app out of the
+    /// switcher on an empty set, and this read does fail transiently — across a Space switch, on
+    /// wake, and under window-server pressure.
+    private static func windowOwningPIDs() -> Set<pid_t>? {
         guard let info = CGWindowListCopyWindowInfo(
-            [.excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+            [.excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
         var pids = Set<pid_t>()
         for window in info {
             guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,

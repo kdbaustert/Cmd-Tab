@@ -247,6 +247,9 @@ final class MouseWindowDrag: @unchecked Sendable {
     private var source: CFRunLoopSource?
     private var thread: TapThread?
     private var screenObserver: NSObjectProtocol?
+    /// Whether an installation is currently standing and so still wants a screen observer. Read by
+    /// the install task, which registers one asynchronously and can land after an uninstall.
+    private var wantsScreenObserver = false
 
     /// The drag in flight. Resolved asynchronously on the press, so this is nil for the first few
     /// milliseconds of a gesture that is nonetheless already ours.
@@ -342,6 +345,7 @@ final class MouseWindowDrag: @unchecked Sendable {
         // `NSScreen` is main-thread-only and `install` may be called from anywhere, so the cache is
         // filled on the main actor a moment from now. Nothing needs it until a drag is in flight,
         // and an empty cache simply means no zone matches — the gesture still moves the window.
+        lock.withLock { wantsScreenObserver = true }
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.refreshDisplays()
@@ -353,7 +357,17 @@ final class MouseWindowDrag: @unchecked Sendable {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshDisplays() }
             }
-            self.lock.withLock { self.screenObserver = observer }
+            // `uninstall()` can run before this body does — it looks for an observer this task has
+            // not stored yet, finds none, and removes none. Storing unconditionally would leave one
+            // registered for the life of the process with no installation behind it, and every
+            // toggle of the setting that loses the race would strand another. Claiming the slot and
+            // testing the flag under one lock is what makes the two orderings agree.
+            let kept: Bool = self.lock.withLock {
+                guard self.wantsScreenObserver else { return false }
+                self.screenObserver = observer
+                return true
+            }
+            if !kept { NotificationCenter.default.removeObserver(observer) }
         }
 
         self.tap = tap
@@ -380,7 +394,12 @@ final class MouseWindowDrag: @unchecked Sendable {
         }
         thread?.cancel()
         let observer: NSObjectProtocol? = lock.withLock {
-            defer { screenObserver = nil }
+            defer {
+                screenObserver = nil
+                // Clearing this is what tells an install task still in flight that the installation
+                // it was registering for is gone.
+                wantsScreenObserver = false
+            }
             return screenObserver
         }
         if let observer { NotificationCenter.default.removeObserver(observer) }

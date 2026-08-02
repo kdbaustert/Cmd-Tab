@@ -94,15 +94,20 @@ final class PanelGroup {
     /// The frame of the panel the cursor is on.
     var anchorFrame: NSRect { anchor?.frame ?? frame }
 
-    /// One clause per panel: where it is, how opaque it is, and whether the window server has it on
-    /// screen. Logged on every show rather than kept for a debug build, because "the switcher did
-    /// not appear" is reported against a release copy and the show path is otherwise silent about
-    /// the three ways it can fail — a degenerate frame, an opacity of zero, and a window that never
-    /// made it on screen all look identical from the outside.
+    /// One clause per panel: where it is, and whether the window server has it on screen. Logged on
+    /// every show rather than kept for a debug build, because "the switcher did not appear" is
+    /// reported against a release copy and the show path is otherwise silent about the ways it can
+    /// fail — a degenerate frame and a window that never made it on screen look identical from the
+    /// outside, and identical to a panel that drew correctly.
+    ///
+    /// Deliberately no opacity. A fade begins at zero, so read at show time it is the animation's
+    /// starting value on every healthy session and says nothing about whether the panel became
+    /// visible. `SwitcherPanel.show()` reports the opacity at the point it actually means
+    /// something: after the fade has had its grace period and either landed or stalled.
     var diagnostics: String {
         guard !panels.isEmpty else { return "no panels" }
         return panels.map { panel in
-            "\(NSStringFromRect(panel.frame)) alpha=\(panel.alphaValue) onscreen=\(panel.isVisible)"
+            "\(NSStringFromRect(panel.frame)) onscreen=\(panel.isVisible)"
         }.joined(separator: " | ")
     }
 
