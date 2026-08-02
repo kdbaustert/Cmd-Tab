@@ -291,9 +291,25 @@ final class SnapAppearance {
     /// overlays.
     var outline: NSColor { .lightGray }
 
-    /// The block showing where the window will land. The system accent, so the destination reads as
-    /// a selection in the way everything else on the Mac does.
-    var landing: NSColor { .controlAccentColor }
+    /// The block showing where the window will land: black, shown at `blockAlpha`, with the same
+    /// light-grey border as `outline`. Rectangle's footprint exactly — `fillColor = NSColor.black`,
+    /// `borderColor = .lightGray`, `borderWidth = 2`, alpha 0.3 — rather than an accent tint, which
+    /// paints the destination a colour the window itself will not be.
+    var landing: NSColor { .black }
+
+    /// Rectangle's `footprintAlpha` default, applied to the whole overlay rather than to the fill,
+    /// so the border fades with it exactly as theirs does.
+    static let blockAlpha: CGFloat = 0.3
+    /// Rectangle's `footprintBorderWidth` default.
+    static let borderWidth: CGFloat = 2
+
+    /// Matching Rectangle's ladder: 16 on macOS 26, 10 back to Big Sur, 5 before that. A snap
+    /// preview whose corners disagree with the system's window corners reads as a misdrawn window.
+    static var cornerRadius: CGFloat {
+        if #available(macOS 26.0, *) { return 16 }
+        if #available(macOS 11.0, *) { return 10 }
+        return 5
+    }
 
     /// The anchor dot. Full strength, never the alpha the larger overlays use — it is 14pt across,
     /// and a wash at 22% would be invisible.
@@ -338,12 +354,14 @@ final class SnapPreview {
         panel?.orderOut(nil)
     }
 
-    /// Repainted on every show, so a changed accent never leaves a stale overlay behind.
+    /// Repainted on every show, so a change of appearance never leaves a stale overlay behind.
     private func restyle(_ panel: NSPanel) {
         guard let layer = panel.contentView?.layer else { return }
-        let color = SnapAppearance.shared.landing
-        layer.backgroundColor = color.withAlphaComponent(0.22).cgColor
-        layer.borderColor = color.withAlphaComponent(0.85).cgColor
+        panel.alphaValue = SnapAppearance.blockAlpha
+        layer.backgroundColor = SnapAppearance.shared.landing.cgColor
+        layer.borderColor = SnapAppearance.shared.outline.cgColor
+        layer.borderWidth = SnapAppearance.borderWidth
+        layer.cornerRadius = SnapAppearance.cornerRadius
     }
 
     private func make() -> NSPanel {
@@ -360,11 +378,10 @@ final class SnapPreview {
 
         let view = NSView()
         view.wantsLayer = true
-        let color = SnapAppearance.shared.landing
-        view.layer?.backgroundColor = color.withAlphaComponent(0.22).cgColor
-        view.layer?.borderColor = color.withAlphaComponent(0.85).cgColor
-        view.layer?.borderWidth = 2
-        view.layer?.cornerRadius = 10
+        view.layer?.backgroundColor = SnapAppearance.shared.landing.cgColor
+        view.layer?.borderColor = SnapAppearance.shared.outline.cgColor
+        view.layer?.borderWidth = SnapAppearance.borderWidth
+        view.layer?.cornerRadius = SnapAppearance.cornerRadius
         view.layer?.cornerCurve = .continuous
         panel.contentView = view
         return panel

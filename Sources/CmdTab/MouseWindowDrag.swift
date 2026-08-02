@@ -868,9 +868,11 @@ private final class TargetOutline {
     func show(_ frame: CGRect) {
         let panel = self.panel ?? make()
         self.panel = panel
-        // Repainted on every show, so a changed accent never leaves a stale outline behind.
+        // Repainted on every show, so a change of appearance never leaves a stale outline behind.
         if let layer = panel.contentView?.layer {
-            layer.borderColor = SnapAppearance.shared.outline.withAlphaComponent(0.95).cgColor
+            layer.borderColor = SnapAppearance.shared.outline.cgColor
+            layer.borderWidth = SnapAppearance.borderWidth
+            layer.cornerRadius = SnapAppearance.cornerRadius
         }
         guard let primary = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)
         else { return }
@@ -900,13 +902,14 @@ private final class TargetOutline {
 
         let view = NSView()
         view.wantsLayer = true
-        // Outline only, no wash: the targeted window is one you are looking at and reading, and a
-        // tint over the whole of it obscures the very thing it is pointing out. The landing block
-        // is filled precisely because there is nothing underneath it worth seeing.
+        // Rectangle's footprint border — light grey, 2pt, matching corner radius — but no wash: the
+        // targeted window is one you are looking at and reading, and a tint over the whole of it
+        // obscures the very thing it is pointing out. The landing block is filled precisely because
+        // there is nothing underneath it worth seeing.
         view.layer?.backgroundColor = NSColor.clear.cgColor
-        view.layer?.borderColor = SnapAppearance.shared.outline.withAlphaComponent(0.95).cgColor
-        view.layer?.borderWidth = 3
-        view.layer?.cornerRadius = 10
+        view.layer?.borderColor = SnapAppearance.shared.outline.cgColor
+        view.layer?.borderWidth = SnapAppearance.borderWidth
+        view.layer?.cornerRadius = SnapAppearance.cornerRadius
         view.layer?.cornerCurve = .continuous
         panel.contentView = view
         return panel
