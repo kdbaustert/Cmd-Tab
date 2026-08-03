@@ -409,6 +409,10 @@ final class SwitcherController {
             self?.preview.hover(target)
         }
         panels.isOverPreview = { [weak self] point in self?.preview.isShowing(point) ?? false }
+        // A display came or went under an open session. The targets carry a display badge resolved
+        // against `NSScreen.screens` as it was when they were built, and the provider watches
+        // NSWorkspace rather than screen parameters, so this is the only thing that renumbers them.
+        panels.onDisplaysChanged = { [weak self] in self?.provider.refresh() }
         preview.onPick = { [weak self] thumb in
             guard let self, self.isVisible else { return }
             Log.tap.notice(

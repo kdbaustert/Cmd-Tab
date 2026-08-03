@@ -167,8 +167,15 @@ extension SwitchTarget {
             // happened to: nothing else owns the desktop. `.excludeDesktopElements` drops the
             // desktop by request, minimized windows are absent from the on-screen list by
             // definition, and layer 0 keeps panels and menus from counting.
-            guard !hasOnScreenWindow(pid: pid) else {
-                activate(pid: pid, allWindows: true)
+            let onScreen = onScreenWindows(pid: pid)
+            guard onScreen.isEmpty else {
+                // `allWindows` only when there is nothing elsewhere to drag over — see
+                // `ownsWindowOnAnotherSpace`. The set is already in hand, so the check costs one
+                // more window-server read on the rare app that has windows off screen and nothing
+                // at all on the common path.
+                activate(
+                    pid: pid,
+                    allWindows: !ownsWindowOnAnotherSpace(pid: pid, onScreen: onScreen))
                 return
             }
 
@@ -186,7 +193,13 @@ extension SwitchTarget {
                 // Minimized, or on this Desktop but not visible. Activate first — that is what makes
                 // Chromium and Electron build the accessibility tree the restore needs — then raise
                 // whatever comes back minimized.
-                activate(pid: pid, allWindows: true)
+                //
+                // `front` being minimized says nothing about the app's *other* windows: the one in
+                // the Dock is simply first in z-order, and siblings can still be sitting on Desktops
+                // of their own for `allWindows` to gather. Same guard as the on-screen path.
+                activate(
+                    pid: pid,
+                    allWindows: !ownsWindowOnAnotherSpace(pid: pid, onScreen: onScreen))
                 restoreMinimized(pid: pid, attempts: 4)
                 return
             }
@@ -242,10 +255,37 @@ extension SwitchTarget {
         }
     }
 
-    /// Whether `pid` has an ordinary window actually displayed right now — false when its windows
-    /// are all minimized, and false when they are all on another Space.
-    private static func hasOnScreenWindow(pid: pid_t) -> Bool {
-        !ownedWindows(pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]).isEmpty
+    /// The ordinary windows of `pid` actually displayed right now — empty when its windows are all
+    /// minimized, and empty when they are all on another Space.
+    private static func onScreenWindows(pid: pid_t) -> Set<CGWindowID> {
+        Set(ownedWindows(pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]))
+    }
+
+    /// Whether `pid` owns a window living on a Desktop other than the one in front.
+    ///
+    /// `.activateAllWindows` brings *every* window of an app forward, and the only way macOS can
+    /// bring a window on another Space forward is to drag it onto the Space you are looking at. So
+    /// on an app whose windows are spread across Desktops — or one the user pinned to a Desktop with
+    /// the Dock's "Assign To" — the activation meant merely to surface what was already here
+    /// silently gathered the rest of its windows off the Desktops they were left on. That is the
+    /// "windows keep switching Desktops by themselves" report.
+    ///
+    /// Answering yes costs the pick nothing but the whole-window-group raise, which is only
+    /// meaningful for windows that are already here; answering no keeps ⌘-Tab's traditional
+    /// behaviour on the apps where it is safe.
+    ///
+    /// Free on the common case: an app with everything on this Desktop has no off-screen windows to
+    /// look up, and only the off-screen ones are ever asked about.
+    private static func ownsWindowOnAnotherSpace(pid: pid_t, onScreen: Set<CGWindowID>) -> Bool {
+        let offScreen = ownedWindows(pid: pid, options: [.excludeDesktopElements])
+            .filter { !onScreen.contains($0) }
+        guard !offScreen.isEmpty else { return false }
+        // A minimized window sits in the Dock on no Space at all, which is what a nil state means
+        // here — and activation cannot drag it anywhere, so it is no reason to give up `allWindows`.
+        return offScreen.contains { window in
+            guard let state = SpaceMover.spaceState(of: window) else { return false }
+            return state.windowSpace != state.currentSpace
+        }
     }
 
     /// The app's frontmost window on any Desktop, minimized ones included. The window list is in
@@ -561,21 +601,28 @@ extension SwitchTarget {
             guard let window = Self.resolveWindow(kind),
                 let origin = AX.position(window), let size = AX.size(window)
             else { return }
-            // The display the window is mostly on, the same rule `WindowTiler.apply` uses. A centre
-            // test alone answers "display 0" for anything whose middle happens to fall outside every
-            // usable area — a window under the menu bar, or one straddling two screens — and would
-            // then move it from a display it was never on.
+            // The display the window is on, by the one rule the badge and the tiling chords also use
+            // — see `WindowTiler.homeDisplay`. nil means it overlaps no usable area at all, and a
+            // window on no display has no next display to be sent to.
             let frame = CGRect(origin: origin, size: size)
-            let from = frames.indices.max { a, b in
-                frames[a].intersection(frame).area < frames[b].intersection(frame).area
-            } ?? frames.startIndex
+            guard let from = WindowTiler.homeDisplay(of: frame, in: frames) else { return }
             let to = frames[((from + delta) % frames.count + frames.count) % frames.count]
             let current = frames[from]
+            // Shrink to fit before placing, exactly as `WindowTiler.apply`'s displayStep branch does
+            // — the promise both sides document is that a window thrown either way lands in the same
+            // place. Positioning alone left a window that filled a 4K external at 4K on a laptop
+            // screen, pinned to the top-left with most of it hanging off the bottom and right.
+            let fitted = CGSize(
+                width: min(size.width, to.width), height: min(size.height, to.height))
             // Same fractional offset within the destination display, then clamp so it stays on it.
             let relX = current.width > 0 ? (origin.x - current.minX) / current.width : 0
             let relY = current.height > 0 ? (origin.y - current.minY) / current.height : 0
-            let x = min(max(to.minX + relX * to.width, to.minX), max(to.minX, to.maxX - size.width))
-            let y = min(max(to.minY + relY * to.height, to.minY), max(to.minY, to.maxY - size.height))
+            let x = min(max(to.minX + relX * to.width, to.minX), max(to.minX, to.maxX - fitted.width))
+            let y = min(
+                max(to.minY + relY * to.height, to.minY), max(to.minY, to.maxY - fitted.height))
+            // Size before position: a window still at its old size can be clamped back off the
+            // destination by its own width, and AppKit applies each write independently.
+            if fitted != size { AX.setSize(window, fitted) }
             AX.setPosition(window, CGPoint(x: x, y: y))
             // Bring it to the front of the destination display and focus it, rather than dropping it
             // behind whatever is already there.

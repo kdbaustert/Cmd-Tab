@@ -638,7 +638,13 @@ enum WindowTiler {
     /// to, and the order those frames were recorded in so the oldest can be dropped first.
     ///
     /// Touched only on `queue`, which is what keeps them safe without a lock.
-    private nonisolated(unsafe) static var restorePoints: [WindowKey: CGRect] = [:]
+    ///
+    /// The desk the frame was recorded against is kept with it. Restore promises the exact
+    /// rectangle back, and a rescue that tidies a window onto the nearest display breaks that
+    /// promise for anyone who deliberately parked one half off an edge — so the rescue has to be
+    /// able to tell "the display this was saved on is gone" from "this is where the user put it".
+    /// Comparing the areas is enough: the rescue only exists for a desk that has changed.
+    private nonisolated(unsafe) static var restorePoints: [WindowKey: (frame: CGRect, desk: [CGRect])] = [:]
     private nonisolated(unsafe) static var restoreOrder: [WindowKey] = []
     /// Where the last cycling arrangement left off: the window it applied to, which arrangement,
     /// and how far through `cycleFractions` it had got.
@@ -668,13 +674,18 @@ enum WindowTiler {
             // has stacked at the same coordinates — both answered with the first of them, so a
             // move-to-next-display computed its destination as the display it started on and did
             // nothing, with no log line saying why.
-            let home = areas.indices.max { a, b in
-                areas[a].intersection(current).area < areas[b].intersection(current).area
-            } ?? areas.startIndex
+            let resolved = homeDisplay(of: current, in: areas)
+            // Tiling still has to put the window *somewhere*, so it keeps a fallback; a window on no
+            // display at all gets tiled onto the first one rather than left where it is.
+            let home = resolved ?? areas.startIndex
             let area = areas[home]
 
             let target: CGRect
             if let step = arrangement.displayStep {
+                // A move, unlike a tile, is relative: without a display to count from there is no
+                // "next" one, and counting from the fallback would throw the window off a display it
+                // was never on.
+                guard resolved != nil else { return }
                 // Same fractional position on the destination display, then clamped onto it — the
                 // treatment `SwitchTarget.moveWindow(acrossDisplays:)` gives the in-switcher move,
                 // so a window thrown either way lands in the same place. Both are handed *visible*
@@ -697,7 +708,8 @@ enum WindowTiler {
                 guard let saved = restorePoints.removeValue(forKey: key) else { return }
                 restoreOrder.removeAll { $0 == key }
                 cycle = nil
-                target = reachable(saved, in: areas, fallback: area)
+                target = restoreTarget(
+                    saved.frame, savedOn: saved.desk, desk: areas, fallback: area)
             } else {
                 // Saved once per window and not overwritten by later tiles, so restore goes back to
                 // where the window was before any of this started rather than to the previous tile.
@@ -709,7 +721,7 @@ enum WindowTiler {
                         restoreOrder.removeFirst()
                         restorePoints.removeValue(forKey: oldest)
                     }
-                    restorePoints[key] = current
+                    restorePoints[key] = (frame: current, desk: areas)
                     restoreOrder.append(key)
                 }
                 let fraction = nextFraction(
@@ -730,6 +742,23 @@ enum WindowTiler {
             AX.setSize(window, target.size)
             AX.setPosition(window, target.origin)
         }
+    }
+
+    /// Where `.restore` should put a window: the frame it saved, rescued only if the desk moved
+    /// under it.
+    ///
+    /// Restore's promise is the exact rectangle back. `reachable` breaks that promise for anyone who
+    /// deliberately parked a window mostly off an edge — it reads a placement the user chose as a
+    /// window that needs tidying, and there is nothing in the rectangle alone to tell the two apart.
+    /// The desk the frame was recorded against is what tells them apart: the rescue exists for a
+    /// display that has gone away, so it only runs when one has.
+    ///
+    /// Internal rather than private for the same reason `reachable` is — the desk-changed cases can
+    /// then be tested without a monitor to unplug.
+    static func restoreTarget(
+        _ saved: CGRect, savedOn: [CGRect], desk: [CGRect], fallback: CGRect
+    ) -> CGRect {
+        savedOn == desk ? saved : reachable(saved, in: desk, fallback: fallback)
     }
 
     /// A saved restore frame, made reachable again on today's desk.
@@ -830,9 +859,42 @@ enum WindowTiler {
         var isPrimary: Bool = false
     }
 
+    /// Which of `areas` a window belongs to: the one containing its centre, else the one it overlaps
+    /// most. nil when it overlaps none of them.
+    ///
+    /// One rule, shared by everything that has to answer "which display is this window on" — the
+    /// switcher's display badge, the in-switcher move, the tiling chords and layout capture. Those
+    /// had drifted into answering it three different ways on two different rectangle sets, so the
+    /// switcher could badge a window on one display while the move chord treated it as being on
+    /// another and threw it onto the display it was already labelled as being on.
+    ///
+    /// Centre first, because that is what "which display is this window on" means to someone looking
+    /// at it. Largest overlap only as the tiebreak, for a window whose centre falls in a gap — under
+    /// the menu bar, inside the Dock strip, or in the seam between two monitors.
+    ///
+    /// nil rather than a default index. `max(by:)` keeps the first element on ties, so a window
+    /// overlapping *nothing* compared 0 < 0 all the way down and came back as display 0 — which is
+    /// how a move chord picked up a window that was never on display 0 and moved it off it. Callers
+    /// that must have an answer say so themselves; callers that would rather do nothing now can.
+    static func homeDisplay(of frame: CGRect, in areas: [CGRect]) -> Int? {
+        let centre = CGPoint(x: frame.midX, y: frame.midY)
+        if let index = areas.firstIndex(where: { $0.contains(centre) }) { return index }
+        return areas.indices
+            .filter { areas[$0].intersection(frame).area > 0 }
+            .max { areas[$0].intersection(frame).area < areas[$1].intersection(frame).area }
+    }
+
     @MainActor
     static func visibleDisplays() -> [DisplayArea] {
-        let primaryHeight = NSScreen.primary?.frame.height ?? 0
+        // Resolved once, and every use below answers from *this* screen rather than re-deriving it.
+        // `NSScreen.primary` falls back to `main ?? screens.first` when nothing sits at the origin,
+        // which a display reconfiguration can transiently produce — so deriving `isPrimary` from
+        // `frame.origin == .zero` separately marked no display primary at all while `primaryHeight`
+        // still had an answer. `LayoutGeometry.absolute` then found no primary to fall back to and
+        // dropped a restored layout onto `displays[0]`, which is the wrong-monitor outcome its own
+        // fallback exists to prevent.
+        let primary = NSScreen.primary
+        let primaryHeight = primary?.frame.height ?? 0
         return NSScreen.screens.map { screen in
             let visible = screen.visibleFrame
             return DisplayArea(
@@ -844,7 +906,7 @@ enum WindowTiler {
                     x: visible.origin.x,
                     y: primaryHeight - visible.origin.y - visible.height,
                     width: visible.width, height: visible.height),
-                isPrimary: screen.frame.origin == .zero)
+                isPrimary: screen == primary)
         }
     }
 

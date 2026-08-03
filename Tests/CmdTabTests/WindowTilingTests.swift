@@ -527,6 +527,83 @@ final class DragSnapZoneTests: XCTestCase {
         XCTAssertEqual(restored, laptopArea)
     }
 
+    /// The rescue is for a desk that changed, not for a placement that looks untidy. An unchanged
+    /// desk hands the saved rectangle back verbatim without consulting `reachable` at all — which is
+    /// what keeps a window the user deliberately parked mostly off an edge exactly where they put it.
+    func testAnUnchangedDeskRestoresTheExactFrame() {
+        let desk = [laptopArea, externalArea]
+        // Barely any grabbable titlebar: `reachable` would tidy this one back onto the display.
+        let saved = CGRect(x: 1400, y: 860, width: 800, height: 600)
+        XCTAssertNotEqual(
+            WindowTiler.reachable(saved, in: [laptopArea], fallback: laptopArea), saved,
+            "precondition: this frame is one the rescue would move")
+        XCTAssertEqual(
+            WindowTiler.restoreTarget(saved, savedOn: desk, desk: desk, fallback: laptopArea),
+            saved)
+    }
+
+    /// And when the desk *has* changed, the rescue still runs — the unplugged-monitor case the
+    /// restore point would otherwise write to coordinates nothing covers.
+    func testAChangedDeskStillRescuesTheFrame() {
+        let saved = CGRect(x: 2000, y: 100, width: 800, height: 600)  // on the external
+        let restored = WindowTiler.restoreTarget(
+            saved, savedOn: [laptopArea, externalArea], desk: [laptopArea], fallback: laptopArea)
+        XCTAssertTrue(laptopArea.contains(restored))
+    }
+
+    // MARK: - Which display is a window on?
+
+    /// The everyday case, and the one a user would name: the display the window sits inside.
+    func testAWindowIsOnTheDisplayItsCentreIsIn() {
+        let onExternal = CGRect(x: 2000, y: 300, width: 800, height: 600)
+        XCTAssertEqual(
+            WindowTiler.homeDisplay(of: onExternal, in: [laptopArea, externalArea]), 1)
+        let onLaptop = CGRect(x: 100, y: 100, width: 400, height: 300)
+        XCTAssertEqual(
+            WindowTiler.homeDisplay(of: onLaptop, in: [laptopArea, externalArea]), 0)
+    }
+
+    /// Straddling two monitors, the centre lands in whichever one holds it — and when the centre
+    /// falls in the seam, the larger overlap breaks the tie rather than the array order.
+    func testAStraddlingWindowGoesToTheDisplayItIsMostlyOn() {
+        // Mostly on the external: 100pt on the laptop, 700pt past the boundary at x=1440.
+        let mostlyExternal = CGRect(x: 1340, y: 300, width: 800, height: 600)
+        XCTAssertEqual(
+            WindowTiler.homeDisplay(of: mostlyExternal, in: [laptopArea, externalArea]), 1)
+        // Mostly on the laptop: 700pt before the boundary, 100pt past it.
+        let mostlyLaptop = CGRect(x: 740, y: 300, width: 800, height: 600)
+        XCTAssertEqual(
+            WindowTiler.homeDisplay(of: mostlyLaptop, in: [laptopArea, externalArea]), 0)
+    }
+
+    /// The regression the shared rule exists for. `max(by:)` keeps the first element when every
+    /// comparison is 0 < 0, so a window overlapping nothing used to come back as display 0 — and the
+    /// move chord then threw it off a display it had never been on. It is on no display; say so.
+    func testAWindowOnNoDisplayAnswersNil() {
+        // Entirely inside the menu-bar strip, which no *visible* area covers.
+        let inTheMenuBar = CGRect(x: 600, y: 0, width: 200, height: 22)
+        XCTAssertNil(WindowTiler.homeDisplay(of: inTheMenuBar, in: [laptopArea, externalArea]))
+        // Somewhere no display has ever been.
+        let offTheDesk = CGRect(x: 9000, y: 9000, width: 400, height: 300)
+        XCTAssertNil(WindowTiler.homeDisplay(of: offTheDesk, in: [laptopArea, externalArea]))
+    }
+
+    /// Mirrored displays report the same rectangle. The answer has to be an index into the list the
+    /// caller passed, not a rectangle it would have to look back up by equality.
+    func testMirroredDisplaysAnswerTheFirstMatchingIndex() {
+        XCTAssertEqual(
+            WindowTiler.homeDisplay(
+                of: CGRect(x: 100, y: 100, width: 400, height: 300),
+                in: [laptopArea, laptopArea]),
+            0)
+    }
+
+    /// No displays at all — every screen asleep, or one mid-reconfiguration.
+    func testNoDisplaysAnswersNil() {
+        XCTAssertNil(
+            WindowTiler.homeDisplay(of: CGRect(x: 100, y: 100, width: 400, height: 300), in: []))
+    }
+
     // MARK: - Is it a window drag?
 
     /// The origin has to move and the size has to stay put — the pair that tells a window drag from

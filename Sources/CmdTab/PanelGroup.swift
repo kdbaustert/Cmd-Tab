@@ -66,6 +66,31 @@ final class PanelGroup {
     /// tearing panels out from under a live selection.
     var screens: PanelScreens = .automatic
 
+    /// The value `screens` had when this session opened.
+    ///
+    /// The "next `show()`" promise above used to hold by construction, because `rebuildPanels()` was
+    /// only ever reached from `show()`. A stay-open session that re-targets itself on a display
+    /// change reaches it again mid-session, and re-reading the live setting there would apply a
+    /// change the user made in Settings while the switcher was up — dropping two of three panels out
+    /// from under a live selection on nothing more than the Dock sliding in. Captured once, so a
+    /// re-target reproduces the session it started as.
+    private var sessionScreens: PanelScreens = .automatic
+
+    /// The display ids this session was last built against, so a screen-parameter notification that
+    /// changed nothing about the desk can be ignored.
+    ///
+    /// `didChangeScreenParametersNotification` is not a plug/unplug notification: AppKit posts it for
+    /// the Dock showing and hiding, the menu bar auto-hiding, and a resolution or arrangement change.
+    /// Relaying out on all of those moves an unpinned panel to whatever display the cursor is on at
+    /// the time — so an open switcher jumped displays mid-session because the Dock happened to slide
+    /// in, taking its selection with it.
+    private var sessionDisplayIDs: [CGDirectDisplayID?] = []
+
+    /// Fired when the desk really did change under an open session, so the controller can rebuild the
+    /// target list. The display badges are baked into each `SwitchTarget` when it is built and are
+    /// numbered against `NSScreen.screens` as it was then, so nothing else refreshes them.
+    var onDisplaysChanged: (() -> Void)?
+
     // Settings mirrored onto every panel as they change.
     var appearanceMode: PanelAppearance = .system { didSet { panels.forEach { $0.appearanceMode = appearanceMode } } }
     var positionMode: PanelPosition = .center { didSet { panels.forEach { $0.positionMode = positionMode } } }
@@ -164,6 +189,9 @@ final class PanelGroup {
     // MARK: - Lifecycle
 
     func show() {
+        // Snapshot before the first build: everything a re-target does this session is measured
+        // against the session as it opened, not against Settings as they stand later.
+        sessionScreens = screens
         rebuildPanels()
         panels.forEach { $0.show() }
         startHoverTracking()
@@ -187,7 +215,7 @@ final class PanelGroup {
     @discardableResult
     private func rebuildPanels() -> [SwitcherPanel] {
         let targets: [NSScreen?]
-        switch screens {
+        switch sessionScreens {
         case .automatic: targets = [nil]  // nil = let the panel follow the position setting
         // The display with the menu bar, not `NSScreen.main` — which is the screen holding the key
         // window and so follows the frontmost app around, making this option a duplicate of the
@@ -206,8 +234,14 @@ final class PanelGroup {
             added.append(panel)
         }
         for (panel, screen) in zip(panels, targets) {
-            panel.pinnedDisplayID = screen?.displayID
+            let id = screen?.displayID
+            panel.pinnedDisplayID = id
+            // A pin we could not resolve to an id is not a pin — see `SwitcherPanel.isPinned`.
+            // Better to fall through to the position setting than to hold a panel against a display
+            // it can never match, which would leave it never laid out at all.
+            panel.isPinned = screen != nil && id != nil
         }
+        sessionDisplayIDs = targets.map { $0?.displayID }
         return added
     }
 
@@ -241,9 +275,28 @@ final class PanelGroup {
     /// all of them would restart the fade from zero on panels the user is looking at, so a monitor
     /// being plugged in would blink the switcher.
     private func displaysChanged() {
+        // Only when the desk actually changed. See `sessionDisplayIDs`: this notification also fires
+        // for the Dock and the menu bar, and re-laying out on those moves an unpinned panel onto
+        // whatever display the cursor happens to be on, mid-selection.
+        let current: [CGDirectDisplayID?] = {
+            switch sessionScreens {
+            case .automatic: return [nil]
+            case .mainDisplay: return [NSScreen.primary?.displayID]
+            case .allDisplays: return NSScreen.screens.map { $0.displayID }
+            }
+        }()
+        guard current != sessionDisplayIDs else { return }
+
         let added = rebuildPanels()
         added.forEach { $0.show() }
         panels.forEach { $0.layout() }
+        // Paired with the layout, as everywhere else that relayouts: the strip is positioned from a
+        // panel rect captured at hover time, and moving the panel does not re-emit it — so without
+        // this it is left floating at coordinates the old desk had, detached from any tile.
+        refreshPreview()
+        // The badges are numbered against `NSScreen.screens` as it was when the targets were built,
+        // and `TargetProvider` does not watch for screen changes.
+        onDisplaysChanged?()
     }
 
     private func makePanel() -> SwitcherPanel {

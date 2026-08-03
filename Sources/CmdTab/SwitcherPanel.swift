@@ -62,6 +62,19 @@ final class SwitcherPanel: NSPanel {
     /// `NSScreen.displayID`.
     var pinnedDisplayID: CGDirectDisplayID?
 
+    /// Whether this panel exists *because* a display was chosen for it, as opposed to following the
+    /// position setting.
+    ///
+    /// Kept separately from `pinnedDisplayID` because "pinned to a display that is not answering
+    /// right now" and "not pinned at all" want opposite treatment, and the id alone cannot tell them
+    /// apart. A pin that momentarily fails to resolve — a monitor asleep, a DisplayPort link
+    /// renegotiating, a Sidecar screen dropping — used to fall through to the cursor's screen, and
+    /// since `layout()` re-resolves on every selection step and filter keystroke, that happened long
+    /// before the screen-change notification arrived: two identical panels stacked on one monitor
+    /// while the other showed none. Set only when the id was actually readable, so a display whose
+    /// `NSScreenNumber` cannot be read still degrades to the position setting rather than to nothing.
+    var isPinned = false
+
     /// Fired once the tiles have reported their frames for the current layout. `layout()` clears the
     /// geometry and SwiftUI reports the new frames a turn or two later, so anything that needs a
     /// tile's position has to wait for this rather than reading straight after `layout()`.
@@ -321,12 +334,13 @@ final class SwitcherPanel: NSPanel {
 
     private func targetScreen() -> NSScreen? {
         // A pinned screen wins outright — the panel exists *because* that display was chosen.
-        // Re-resolved from the id on every layout rather than held: if the display has been
-        // unplugged since the session opened there is no screen to answer with, and falling through
-        // to the position setting puts the panel somewhere the user can still see it.
-        if let pinnedDisplayID,
-            let screen = NSScreen.screens.first(where: { $0.displayID == pinnedDisplayID }) {
-            return screen
+        // Re-resolved from the id on every layout rather than held; see `pinnedDisplayID`.
+        if isPinned {
+            // nil rather than the cursor's screen when it does not resolve. `layout()` reads that as
+            // "keep the current geometry", which leaves the panel on the display it was put on until
+            // `PanelGroup.displaysChanged` either drops it or re-pins it — the only answer that does
+            // not stack two panels on one monitor the moment a display stops answering.
+            return NSScreen.screens.first { $0.displayID == pinnedDisplayID }
         }
         // "Active screen" follows the frontmost app's screen (NSScreen.main); the others follow
         // the cursor's screen.

@@ -568,12 +568,11 @@ final class TargetProvider {
     /// whose whole job is to show the windows over there.
     private static func displayIndex(of window: AXUIElement, in frames: [CGRect]) -> Int? {
         guard let origin = AX.position(window), let size = AX.size(window) else { return nil }
-        let frame = CGRect(origin: origin, size: size)
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        if let index = frames.firstIndex(where: { $0.contains(center) }) { return index }
-        return frames.indices.filter { frames[$0].intersection(frame).area > 0 }.max {
-            frames[$0].intersection(frame).area < frames[$1].intersection(frame).area
-        }
+        // Shared with the in-switcher move and the tiling chords, so the badge on a tile and the
+        // display the move counts from can no longer disagree. Full frames here rather than visible
+        // areas — see `screenCGFrames` — but the rule applied to them is the one rule.
+        return WindowTiler.homeDisplay(
+            of: CGRect(origin: origin, size: size), in: frames)
     }
 
     /// Every display's full frame in Quartz (top-left) coordinates, to match AX window positions.

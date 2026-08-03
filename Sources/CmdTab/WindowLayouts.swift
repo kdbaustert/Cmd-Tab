@@ -61,11 +61,14 @@ enum LayoutGeometry {
     static func relative(_ frame: CGRect, displays: [WindowTiler.DisplayArea])
         -> (displayID: String?, relativeFrame: CGRect)?
     {
+        // The one shared rule — see `WindowTiler.homeDisplay`. It answers nil for a window that
+        // overlaps no display, where `max(by:)` used to keep the first element on the all-zero
+        // comparison and record the window as a fraction of display 0's area.
         guard
-            let home = displays.max(by: {
-                $0.area.intersection(frame).area < $1.area.intersection(frame).area
-            }), home.area.width > 0, home.area.height > 0
+            let index = WindowTiler.homeDisplay(of: frame, in: displays.map(\.area))
         else { return nil }
+        let home = displays[index]
+        guard home.area.width > 0, home.area.height > 0 else { return nil }
         let area = home.area
         return (
             home.id,
