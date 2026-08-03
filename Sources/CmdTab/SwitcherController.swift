@@ -125,10 +125,10 @@ final class SwitcherController {
     /// Pushed by `AppDelegate` whenever they change.
     var tiling: WindowTilingBindings = .defaults {
         didSet {
-            dragSnap.gaps = tiling.gaps
-            mouseWindowDrag.gaps = tiling.gaps
-            targetHighlight.gaps = tiling.gaps
-            launchArrangements.gaps = tiling.gaps
+            dragSnap.gap = tiling.gap
+            mouseWindowDrag.gap = tiling.gap
+            targetHighlight.gap = tiling.gap
+            launchArrangements.gap = tiling.gap
             guard tiling.dragSnap != oldValue.dragSnap else { return }
             dragSnap.isEnabled = tiling.dragSnap
         }
@@ -614,15 +614,18 @@ final class SwitcherController {
     /// call — the part that can block — happens on `WindowTiler`'s queue.
     private func applyTiling(_ arrangement: WindowArrangement) {
         let cycleWidths = tiling.cycleWidths
-        let gaps = tiling.gaps
+        let gap = tiling.gap
         // Posted, not inline. `frontmostApplication` and the screen walk are both NSWorkspace/AppKit
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
         let rules = appRules
         DispatchQueue.main.async {
+            // Our own windows are tiled like anyone else's. The switcher panel does not activate
+            // this app, so being frontmost means an ordinary window — Settings, or the permissions
+            // window — is in front, and a chord that works on every other window has no business
+            // refusing that one.
             guard let front = NSWorkspace.shared.frontmostApplication,
-                let pid = Optional(front.processIdentifier),
-                pid != ProcessInfo.processInfo.processIdentifier
+                let pid = Optional(front.processIdentifier)
             else {
                 Log.tap.notice("tiling: no frontmost app to act on")
                 return
@@ -634,10 +637,10 @@ final class SwitcherController {
                 return
             }
             Log.tap.notice(
-                "tiling: applying to pid \(pid, privacy: .public), gaps \(String(describing: gaps), privacy: .public)")
+                "tiling: applying to pid \(pid, privacy: .public), gap \(Int(gap), privacy: .public)")
             WindowTiler.apply(
                 arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
-                cycleWidths: cycleWidths, gaps: gaps)
+                cycleWidths: cycleWidths, gap: gap)
         }
     }
 

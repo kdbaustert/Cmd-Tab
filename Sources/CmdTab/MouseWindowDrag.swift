@@ -280,12 +280,12 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// `WindowTiler` uses for its restore and cycle tables, and what keeps it safe without a lock.
     private nonisolated(unsafe) static var draggedWindow: AXUIElement?
 
-    /// The tiling gaps, so a snap through this gesture lands where the keyboard chords put it.
-    var gaps: TilingGap.Edges {
-        get { lock.withLock { storedGaps } }
-        set { lock.withLock { storedGaps = newValue } }
+    /// The tiling gap, so a snap through this gesture lands where the keyboard chords put it.
+    var gap: CGFloat {
+        get { lock.withLock { storedGap } }
+        set { lock.withLock { storedGap = newValue } }
     }
-    private var storedGaps: TilingGap.Edges = .zero
+    private var storedGap: CGFloat = 0
 
     private var displays: [Display] = []
     /// The height of the primary display, for turning the tap's top-left point into the bottom-up
@@ -491,13 +491,13 @@ final class MouseWindowDrag: @unchecked Sendable {
             if let zone = state.zone, let session = state.session {
                 Log.general.notice(
                     "mouse drag: dropped in \(zone.rawValue, privacy: .public)")
-                let gaps = self.gaps
+                let gap = self.gap
                 // Off the tap thread: this reads screens on the main actor and then does the same
                 // Accessibility write the keyboard chords do.
                 Task { @MainActor in
                     WindowTiler.apply(
                         zone, pid: session.pid, areas: WindowTiler.visibleAreas(),
-                        cycleWidths: false, gaps: gaps)
+                        cycleWidths: false, gap: gap)
                 }
             }
             end()
@@ -635,7 +635,7 @@ final class MouseWindowDrag: @unchecked Sendable {
             return true
         }
         guard changed else { return }
-        let gaps = self.gaps
+        let gap = self.gap
         guard let match, let frame = match.zone.frame(
             in: match.area, current: match.area, fraction: 0.5)
         else {
@@ -643,7 +643,7 @@ final class MouseWindowDrag: @unchecked Sendable {
             return
         }
         let target = match.zone.takesGap
-            ? TilingGap.inset(frame, in: match.area, edges: gaps) : frame
+            ? TilingGap.inset(frame, in: match.area, gap: gap) : frame
         Task { @MainActor in SnapPreview.shared.show(target) }
     }
 
@@ -660,7 +660,6 @@ final class MouseWindowDrag: @unchecked Sendable {
             let info = CGWindowListCopyWindowInfo(
                 [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return nil }
-        let mine = ProcessInfo.processInfo.processIdentifier
         for window in info {
             guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
                 let pid = window[kCGWindowOwnerPID as String] as? pid_t,
@@ -669,9 +668,14 @@ final class MouseWindowDrag: @unchecked Sendable {
                 bounds.contains(point)
             else { continue }
             // Front-most match wins — the list is in z-order — so a window behind another cannot
-            // claim a press that landed on the one on top. Our own windows included: stopping here
-            // rather than skipping them means the settings window is never dragged *through*.
-            return pid == mine ? nil : (pid, bounds)
+            // claim a press that landed on the one on top.
+            //
+            // Our own windows are targets like anyone else's: Settings is an ordinary resizable
+            // window, and being unable to grab the one window this app definitely owns is the most
+            // obvious thing that can be wrong with the gesture. The switcher panel and the snap
+            // overlays are not reachable here — they sit above `.normal`, so the `layer == 0` test
+            // has already dropped them.
+            return (pid, bounds)
         }
         return nil
     }
@@ -741,7 +745,10 @@ enum PointDirection {
 /// Passive `NSEvent` monitors throughout: nothing is pressed, so there is nothing to consume, and a
 /// tap here would take modifier keys away from every app on the machine for no gain.
 ///
-/// Global monitors only, so the gesture never targets Cmd-Tab's own settings window.
+/// Each monitor is installed twice, globally and locally. A global monitor sees only the events
+/// going to *other* applications, so on its own it makes the gesture dead over Cmd-Tab's own
+/// windows — the settings window is an ordinary resizable window and snaps like any other. The two
+/// never both fire: an event goes either to this app or to another one.
 @MainActor
 final class ModifierTargetHighlight {
     var settings = MouseDragSettings() {
@@ -752,10 +759,10 @@ final class ModifierTargetHighlight {
     }
 
     /// The tiling gap, so a pointed snap lands exactly where the keyboard chords put it.
-    var gaps: TilingGap.Edges = .zero
+    var gap: CGFloat = 0
 
-    private var flagsMonitor: Any?
-    private var moveMonitor: Any?
+    private var flagsMonitors: [Any] = []
+    private var moveMonitors: [Any] = []
     private let outline = TargetOutline()
     private let dot = AnchorDot()
 
@@ -767,16 +774,24 @@ final class ModifierTargetHighlight {
     private var zone: WindowArrangement?
 
     private func install() {
-        guard flagsMonitor == nil else { return }
-        flagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) {
-            [weak self] event in
+        guard flagsMonitors.isEmpty else { return }
+        let handle: (NSEvent) -> Void = { [weak self] event in
             MainActor.assumeIsolated { self?.flagsChanged(event.modifierFlags) }
         }
+        flagsMonitors = [
+            NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { handle($0) },
+            // Returned unchanged: this watches the chord, it does not claim it, and swallowing
+            // ⌃⌘ inside our own settings window would break every shortcut in it.
+            NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { event in
+                handle(event)
+                return event
+            },
+        ].compactMap { $0 }
     }
 
     private func uninstall() {
-        if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
-        flagsMonitor = nil
+        flagsMonitors.forEach(NSEvent.removeMonitor)
+        flagsMonitors = []
         cancel()
     }
 
@@ -805,13 +820,21 @@ final class ModifierTargetHighlight {
         Log.general.notice(
             "point gesture: armed on pid \(target.pid, privacy: .public)")
 
-        if moveMonitor == nil {
+        if moveMonitors.isEmpty {
             // Only while the chord is held: this fires on every pixel of cursor travel, which is
-            // far too hot to carry for the whole session just in case.
-            moveMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) {
-                [weak self] _ in
+            // far too hot to carry for the whole session just in case. Global and local for the
+            // same reason the flags monitor is both — a cursor moving inside our own window has to
+            // steer the gesture too.
+            let follow: () -> Void = { [weak self] in
                 MainActor.assumeIsolated { self?.follow() }
             }
+            moveMonitors = [
+                NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { _ in follow() },
+                NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { event in
+                    follow()
+                    return event
+                },
+            ].compactMap { $0 }
         }
         follow()
     }
@@ -836,7 +859,7 @@ final class ModifierTargetHighlight {
         guard index < areas.count else { return }
         let area = areas[index]
         guard let frame = zone.frame(in: area, current: area, fraction: 0.5) else { return }
-        SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, edges: gaps) : frame)
+        SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
     }
 
     /// The chord came up: snap to whatever was being offered.
@@ -848,14 +871,14 @@ final class ModifierTargetHighlight {
             point gesture: snapping pid \(target.pid, privacy: .public) to \
             \(zone.rawValue, privacy: .public)
             """)
-        let gaps = self.gaps
+        let gap = self.gap
         WindowTiler.apply(
-            zone, pid: target.pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gaps: gaps)
+            zone, pid: target.pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap)
     }
 
     private func cancel() {
-        if let moveMonitor { NSEvent.removeMonitor(moveMonitor) }
-        moveMonitor = nil
+        moveMonitors.forEach(NSEvent.removeMonitor)
+        moveMonitors = []
         anchor = nil
         target = nil
         zone = nil

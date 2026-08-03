@@ -18,7 +18,7 @@ final class LaunchArrangementWatcher {
     /// Per-app rules, pushed by the controller.
     var appRules: [String: AppRule] = [:]
     /// Gap to leave around the tiled window, from the tiling settings.
-    var gaps: TilingGap.Edges = .zero
+    var gap: CGFloat = 0
 
     /// How long to keep looking for a first window, as attempts × delay. Ten seconds is chosen for
     /// the slow end of real apps — a cold-cache Xcode or a JetBrains IDE — and costs nothing on the
@@ -91,7 +91,7 @@ final class LaunchArrangementWatcher {
         // and the user's first real chord would land on the second.
         WindowTiler.apply(
             arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
-            cycleWidths: false, gaps: gaps)
+            cycleWidths: false, gap: gap)
     }
 
     /// Whether the app owns a window worth tiling. The role filter is what keeps a splash screen or

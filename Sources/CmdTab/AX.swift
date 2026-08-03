@@ -3,12 +3,37 @@ import ApplicationServices
 
 /// Thin shared wrapper over the Accessibility API.
 ///
-/// Every call here is IPC to another process and can block on a wedged one, so none of it may run
-/// on the event tap's thread — the system kills a tap that stalls. Callers push this work onto a
-/// queue of their own.
+/// Almost every call here is IPC to another process and can block on a wedged one, so none of it
+/// may run on the event tap's thread — the system kills a tap that stalls. Callers push this work
+/// onto a queue of their own.
+///
+/// The exception is a call aimed at this process — our own settings window is a tiling target like
+/// any other. Those are not IPC and must run on the main thread; `onOwningThread` is where that is
+/// arranged, so no caller has to know which of the two it is doing.
 enum AX {
     /// Cap on how long any single app can make us wait.
     private static let timeout: Float = 0.25
+
+    /// Runs `work` on a thread where the Accessibility API is safe to call for `element`.
+    ///
+    /// A call aimed at another process is IPC, and belongs off the main thread — that is what this
+    /// whole wrapper exists for. A call aimed at *this* process is not IPC at all: HIServices
+    /// short-circuits it straight into AppKit's accessibility entry points **on the calling
+    /// thread**, and AppKit traps the moment that thread is not the main one — `Must only be used
+    /// from the main thread`, as a crash inside `-[NSWindow _setFrameCommon:display:fromServer:]`.
+    ///
+    /// Our own windows are ordinary tiling targets, so rather than making every caller know which
+    /// process it is about to touch, the hop lives here. Safe from deadlock because nothing on the
+    /// main thread ever waits on the queues these calls run from; they are all `async`.
+    @discardableResult
+    private static func onOwningThread<T>(_ element: AXUIElement, _ work: () -> T) -> T {
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success,
+            owner == ProcessInfo.processInfo.processIdentifier,
+            !Thread.isMainThread
+        else { return work() }
+        return DispatchQueue.main.sync(execute: work)
+    }
 
     /// An app element with the timeout already applied. Always build them through here, so one
     /// hung app cannot hang the switcher.
@@ -19,12 +44,15 @@ enum AX {
     }
 
     static func windows(of app: AXUIElement) -> [AXUIElement] {
-        var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
-            let windows = value as? [AXUIElement]
-        else { return [] }
-        return windows
+        onOwningThread(app) {
+            var value: CFTypeRef?
+            guard
+                AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+                    == .success,
+                let windows = value as? [AXUIElement]
+            else { return [] }
+            return windows
+        }
     }
 
     /// A window as opposed to the other things that turn up in `AXWindows` — Finder puts the
@@ -56,41 +84,51 @@ enum AX {
     }
 
     static func copyString(_ element: AXUIElement, _ attribute: String) -> String? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
-        else { return nil }
-        return value as? String
+        onOwningThread(element) {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+            else { return nil }
+            return value as? String
+        }
     }
 
     static func copyBool(_ element: AXUIElement, _ attribute: String) -> Bool? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
-        else { return nil }
-        return value as? Bool
+        onOwningThread(element) {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+            else { return nil }
+            return value as? Bool
+        }
     }
 
     static func setBool(_ element: AXUIElement, _ attribute: String, _ value: Bool) {
-        AXUIElementSetAttributeValue(element, attribute as CFString, value as CFTypeRef)
+        onOwningThread(element) {
+            AXUIElementSetAttributeValue(element, attribute as CFString, value as CFTypeRef)
+        }
     }
 
     /// Reads an attribute that is itself an element — e.g. an app's `AXMainWindow`/`AXFocusedWindow`.
     static func copyElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
-            let value, CFGetTypeID(value) == AXUIElementGetTypeID()
-        else { return nil }
-        return (value as! AXUIElement)
+        onOwningThread(element) {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+                let value, CFGetTypeID(value) == AXUIElementGetTypeID()
+            else { return nil }
+            return (value as! AXUIElement)
+        }
     }
 
     /// Presses a window control (close/zoom/minimize button) by resolving the button element and
     /// performing its press action — exactly what a click on the traffic-light dot does.
     static func press(_ element: AXUIElement, button attribute: String) {
-        var button: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(element, attribute as CFString, &button) == .success,
-            let button, CFGetTypeID(button) == AXUIElementGetTypeID()
-        else { return }
-        AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+        onOwningThread(element) {
+            var button: CFTypeRef?
+            guard
+                AXUIElementCopyAttributeValue(element, attribute as CFString, &button) == .success,
+                let button, CFGetTypeID(button) == AXUIElementGetTypeID()
+            else { return }
+            AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+        }
     }
 
     /// The window's on-screen origin (top-left, Quartz global coordinates).
@@ -109,13 +147,17 @@ enum AX {
     static func setPosition(_ window: AXUIElement, _ point: CGPoint) {
         var point = point
         guard let value = AXValueCreate(.cgPoint, &point) else { return }
-        AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+        onOwningThread(window) {
+            AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+        }
     }
 
     static func setSize(_ window: AXUIElement, _ size: CGSize) {
         var size = size
         guard let value = AXValueCreate(.cgSize, &size) else { return }
-        AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+        onOwningThread(window) {
+            AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+        }
     }
 
     /// The app's frontmost *real* window — the one a window-management action should act on.
@@ -141,10 +183,12 @@ enum AX {
     }
 
     private static func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
-            let value, CFGetTypeID(value) == AXValueGetTypeID()
-        else { return nil }
-        return (value as! AXValue)
+        onOwningThread(element) {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+                let value, CFGetTypeID(value) == AXValueGetTypeID()
+            else { return nil }
+            return (value as! AXValue)
+        }
     }
 }

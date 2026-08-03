@@ -83,6 +83,10 @@ struct WindowSettings: View {
         Binding(get: { store.dragSnap }, set: { store.dragSnap = $0 })
     }
 
+    private var gap: Binding<Double> {
+        Binding(get: { Double(store.gap) }, set: { store.gap = CGFloat($0) })
+    }
+
     private var mouseDragEnabled: Binding<Bool> {
         Binding(get: { store.mouseDrag.isEnabled }, set: { store.mouseDragEnabled = $0 })
     }
@@ -112,7 +116,15 @@ struct WindowSettings: View {
                     subtitle: "Drag a window's title bar to a screen edge or corner to tile it "
                         + "there. Independent of the shortcuts below — you can have either, or both.",
                     isOn: dragSnap)
-                TilingGapRow(store: store)
+                SettingsSlider(
+                    title: "Gap",
+                    subtitle: "Space left around a tiled window: the full gap against a screen "
+                        + "edge, half of it where two windows meet — so neighbours sit exactly one "
+                        + "gap apart. 0 keeps them flush.",
+                    value: gap,
+                    range: 0...Double(TilingGap.maximum),
+                    step: 2,
+                    format: { $0 == 0 ? "Off" : "\(Int($0)) pt" })
                 SettingsToggle(
                     title: "Cycle widths",
                     subtitle: "Press the same half twice to step the window through ½ → ⅔ → ⅓ of "
@@ -329,61 +341,6 @@ struct WindowSettings: View {
     /// card with the three groups scrolled into view underneath it.
     private func anchor(for title: String) -> String {
         "\(SettingsAnchor.tiling).\(title.lowercased())"
-    }
-}
-
-/// The four edge gaps as one row.
-///
-/// One row rather than four sliders stacked down the card: they are a single setting with a value
-/// per edge, and in a column they read as four unrelated ones — while pushing everything below them
-/// half a pane further down. Paired vertical edges first, then horizontal, so the labels sit in the
-/// order someone thinks about the screen.
-private struct TilingGapRow: View {
-    @ObservedObject var store: WindowTilingStore
-
-    var body: some View {
-        SettingsWideRow(
-            title: "Gaps",
-            subtitle: "Space left around a tiled window, set per screen edge: the full gap against "
-                + "that edge, and half the average of a pair where two windows meet — so "
-                + "neighbours sit exactly one gap apart. 0 keeps them flush."
-        ) {
-            VStack(spacing: 8) {
-                HStack(spacing: 20) {
-                    slider("Top", \.top)
-                    slider("Bottom", \.bottom)
-                }
-                HStack(spacing: 20) {
-                    slider("Left", \.left)
-                    slider("Right", \.right)
-                }
-            }
-        }
-    }
-
-    /// One edge. The label and value columns are fixed, so the four sliders are the same length and
-    /// line up in both directions however wide the pane is.
-    private func slider(
-        _ title: String, _ edge: WritableKeyPath<TilingGap.Edges, CGFloat>
-    ) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.system(size: 12))
-                .frame(width: 46, alignment: .leading)
-            Slider(value: binding(edge), in: 0...Double(TilingGap.maximum), step: 2)
-            Text(store[gap: edge] == 0 ? "Off" : "\(Int(store[gap: edge])) pt")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 38, alignment: .trailing)
-        }
-    }
-
-    /// One binding per screen edge. Each reads and writes only its own value, so dragging the top
-    /// slider does not rewrite the other three.
-    private func binding(_ edge: WritableKeyPath<TilingGap.Edges, CGFloat>) -> Binding<Double> {
-        Binding(
-            get: { Double(store[gap: edge]) },
-            set: { store[gap: edge] = CGFloat($0) })
     }
 }
 
