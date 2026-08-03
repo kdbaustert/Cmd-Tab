@@ -95,6 +95,34 @@ extension SwitchTarget {
     private static let focusQueue = DispatchQueue(
         label: "com.cmdtab.focus", qos: .userInitiated)
 
+    /// Counts completed Desktop transitions, so a pick that issued one can wait for it to *land*.
+    ///
+    /// `NSWorkspace.activeSpaceDidChangeNotification` is the only signal here that means the switch
+    /// is finished rather than merely begun. Both of the cheaper tests lie during the animation: the
+    /// window server's `Current Space` field flips the instant a switch is issued, and — measured,
+    /// which is what this counter exists to fix — so does on-screen membership, because the incoming
+    /// Space's windows start compositing as the transition opens. Activating an app in that gap
+    /// gathers its window onto the Desktop being left, which is how picking a window on Desktop 1
+    /// from Desktop 4 quietly moved it to Desktop 4 instead of taking the user to it.
+    private static let spaceChanges = SpaceChangeCounter()
+
+    /// Registered once, on the main thread; read from `focusQueue`. Its own tiny type so the lock
+    /// around the count stays next to it.
+    final class SpaceChangeCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count: UInt64 = 0
+
+        init() {
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: nil
+            ) { [self] _ in
+                lock.withLock { count &+= 1 }
+            }
+        }
+
+        var value: UInt64 { lock.withLock { count } }
+    }
+
     /// Brings the target forward. Unminimizing has to happen before the raise, and the app
     /// activation has to happen after it, or the window comes up behind its own app.
     ///
@@ -132,6 +160,15 @@ extension SwitchTarget {
                     // Either no id to look a Space up with, or a minimized window — which sits in
                     // the Dock, on no Desktop at all, so there is nothing to switch to first and
                     // the direct raise is both correct and what this path has always done.
+                    //
+                    // The no-id half of that is *not* safe in the same way: a raise with no Space
+                    // check drags an off-Desktop window onto the current one. Logged so it can be
+                    // told apart from the minimized case it shares a branch with.
+                    Log.general.notice(
+                        """
+                        window pick: raising pid \(pid, privacy: .public) blind \
+                        (id=\(resolved ?? 0, privacy: .public) minimized=\(wasMinimized, privacy: .public))
+                        """)
                     Self.beginFocus()
                     Self.raise(element: window)
                     Self.activate(pid: pid)
@@ -173,9 +210,13 @@ extension SwitchTarget {
                 // `ownsWindowOnAnotherSpace`. The set is already in hand, so the check costs one
                 // more window-server read on the rare app that has windows off screen and nothing
                 // at all on the common path.
-                activate(
-                    pid: pid,
-                    allWindows: !ownsWindowOnAnotherSpace(pid: pid, onScreen: onScreen))
+                let elsewhere = ownsWindowOnAnotherSpace(pid: pid, onScreen: onScreen)
+                Log.general.notice(
+                    """
+                    app pick: pid \(pid, privacy: .public) has \(onScreen.count, privacy: .public) \
+                    on screen, elsewhere=\(elsewhere, privacy: .public)
+                    """)
+                activate(pid: pid, allWindows: !elsewhere)
                 return
             }
 
@@ -341,6 +382,14 @@ extension SwitchTarget {
     private static func activate(pid: pid_t, allWindows: Bool = false) {
         DispatchQueue.main.async {
             let app = NSRunningApplication(processIdentifier: pid)
+            // `allWindows` is the one call here that can drag a window off the Desktop it lives on,
+            // so every use of it is on the record: a window that turns up on the wrong Desktop was
+            // either gathered by this line or by nothing this app did.
+            Log.general.notice(
+                """
+                activate pid \(pid, privacy: .public) \
+                (\(app?.localizedName ?? "?", privacy: .public)) allWindows=\(allWindows, privacy: .public)
+                """)
             if app?.isHidden == true { app?.unhide() }
             if allWindows {
                 app?.activate(options: .activateAllWindows)
@@ -405,6 +454,10 @@ extension SwitchTarget {
             // Reading the window's Space first and moving *ourselves* there is the only order that
             // leaves the user's arrangement alone. It covers other displays too, since a Space
             // belongs to a display — `reveal` switches whichever monitor holds the target Space.
+            // Read *before* the switch is issued: the notification it waits on can land while the
+            // reveal call is still returning, and a count taken afterwards would miss it and then
+            // wait for a second transition that never comes.
+            let changesBefore = spaceChanges.value
             let reveal = SpaceMover.reveal(window: id)
             Log.general.notice(
                 "focus window \(id, privacy: .public): windowSpace=\(reveal.state?.windowSpace ?? 0, privacy: .public) current=\(reveal.state?.currentSpace ?? 0, privacy: .public) switch=\(reveal.switched, privacy: .public)"
@@ -417,7 +470,11 @@ extension SwitchTarget {
             // Both halves have to wait for the arrival, so both now live behind the same gate.
             settle(
                 window: id, pid: pid, attempts: 14, delay: reveal.switched ? 0.15 : 0.02,
-                generation: generation, actWhenUnreached: !reveal.switched)
+                generation: generation, actWhenUnreached: !reveal.switched,
+                // Only a pick that actually issued a switch has a transition to wait on. Without a
+                // switch there is nothing in flight and no Desktop to drag the window off, so the
+                // common same-Desktop pick keeps its two-hundredths of a second.
+                awaitingSpaceChange: reveal.switched ? changesBefore : nil)
         }
     }
 
@@ -443,7 +500,7 @@ extension SwitchTarget {
     /// ways a pick can fail. See the give-up branch.
     private static func settle(
         window id: CGWindowID, pid: pid_t, attempts: Int, delay: TimeInterval,
-        generation: UInt64, actWhenUnreached: Bool
+        generation: UInt64, actWhenUnreached: Bool, awaitingSpaceChange: UInt64?
     ) {
         guard generation == focusGeneration else { return }  // superseded by a later pick
         guard attempts > 0 else {
@@ -466,10 +523,22 @@ extension SwitchTarget {
         }
         focusQueue.asyncAfter(deadline: .now() + delay) {
             guard generation == focusGeneration else { return }
-            guard isOnScreen(window: id) else {
+            // Both gates, and the Space one first: on-screen membership opens during the animation,
+            // so on its own it lets the activation through in exactly the window where it still
+            // relocates the window. See `spaceChanges`.
+            let arrived = awaitingSpaceChange.map { spaceChanges.value > $0 } ?? true
+            if arrived, awaitingSpaceChange != nil, isOnScreen(window: id) {
+                Log.general.notice(
+                    """
+                    focus window \(id, privacy: .public): Desktop transition landed, \
+                    \(attempts, privacy: .public) attempts left
+                    """)
+            }
+            guard arrived, isOnScreen(window: id) else {
                 settle(
                     window: id, pid: pid, attempts: attempts - 1, delay: delay,
-                    generation: generation, actWhenUnreached: actWhenUnreached)
+                    generation: generation, actWhenUnreached: actWhenUnreached,
+                    awaitingSpaceChange: awaitingSpaceChange)
                 return
             }
             focusAndActivate(window: id, pid: pid, generation: generation)
@@ -484,6 +553,18 @@ extension SwitchTarget {
     private static func focusAndActivate(window id: CGWindowID, pid: pid_t, generation: UInt64) {
         let raised = raise(window: id, pid: pid)
         activate(pid: pid)
+        // Where things actually ended up, half a second after the dust settles. The difference that
+        // matters: `window == current` on the Desktop we switched *to* means the pick worked, while
+        // the window having moved to the Desktop we came *from* means something relocated it.
+        focusQueue.asyncAfter(deadline: .now() + 0.5) {
+            guard let state = SpaceMover.spaceState(of: id) else { return }
+            Log.general.notice(
+                """
+                focus window \(id, privacy: .public): after activation \
+                windowSpace=\(state.windowSpace, privacy: .public) \
+                current=\(state.currentSpace, privacy: .public)
+                """)
+        }
         // Apps that build their accessibility tree lazily (Chromium, Electron) report *no* windows
         // until they are active, so the raise above found nothing and the activation surfaced
         // whichever window happened to be frontmost rather than the picked one. Retry now that the
