@@ -83,8 +83,12 @@ struct WindowSettings: View {
         Binding(get: { store.dragSnap }, set: { store.dragSnap = $0 })
     }
 
-    private var gap: Binding<Double> {
-        Binding(get: { Double(store.gap) }, set: { store.gap = CGFloat($0) })
+    /// One binding per screen edge. Each reads and writes only its own value, so dragging the top
+    /// slider does not rewrite the other three.
+    private func gap(_ edge: WritableKeyPath<TilingGap.Edges, CGFloat>) -> Binding<Double> {
+        Binding(
+            get: { Double(store[gap: edge]) },
+            set: { store[gap: edge] = CGFloat($0) })
     }
 
     private var mouseDragEnabled: Binding<Bool> {
@@ -117,11 +121,29 @@ struct WindowSettings: View {
                         + "there. Independent of the shortcuts below — you can have either, or both.",
                     isOn: dragSnap)
                 SettingsSlider(
-                    title: "Gaps",
-                    subtitle: "Space left around a tiled window: the full gap against a screen "
-                        + "edge, half of it where two windows meet — so neighbours sit exactly one "
-                        + "gap apart. 0 keeps them flush.",
-                    value: gap,
+                    title: "Gap — top",
+                    subtitle: "Space left around a tiled window, set per screen edge: the full gap "
+                        + "against that edge, and half the average of a pair where two windows "
+                        + "meet — so neighbours sit exactly one gap apart. 0 keeps them flush.",
+                    value: gap(\.top),
+                    range: 0...Double(TilingGap.maximum),
+                    step: 2,
+                    format: { $0 == 0 ? "Off" : "\(Int($0)) pt" })
+                SettingsSlider(
+                    title: "Gap — bottom",
+                    value: gap(\.bottom),
+                    range: 0...Double(TilingGap.maximum),
+                    step: 2,
+                    format: { $0 == 0 ? "Off" : "\(Int($0)) pt" })
+                SettingsSlider(
+                    title: "Gap — left",
+                    value: gap(\.left),
+                    range: 0...Double(TilingGap.maximum),
+                    step: 2,
+                    format: { $0 == 0 ? "Off" : "\(Int($0)) pt" })
+                SettingsSlider(
+                    title: "Gap — right",
+                    value: gap(\.right),
                     range: 0...Double(TilingGap.maximum),
                     step: 2,
                     format: { $0 == 0 ? "Off" : "\(Int($0)) pt" })

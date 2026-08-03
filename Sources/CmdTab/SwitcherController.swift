@@ -125,10 +125,10 @@ final class SwitcherController {
     /// Pushed by `AppDelegate` whenever they change.
     var tiling: WindowTilingBindings = .defaults {
         didSet {
-            dragSnap.gap = tiling.gap
-            mouseWindowDrag.gap = tiling.gap
-            targetHighlight.gap = tiling.gap
-            launchArrangements.gap = tiling.gap
+            dragSnap.gaps = tiling.gaps
+            mouseWindowDrag.gaps = tiling.gaps
+            targetHighlight.gaps = tiling.gaps
+            launchArrangements.gaps = tiling.gaps
             guard tiling.dragSnap != oldValue.dragSnap else { return }
             dragSnap.isEnabled = tiling.dragSnap
         }
@@ -614,7 +614,7 @@ final class SwitcherController {
     /// call — the part that can block — happens on `WindowTiler`'s queue.
     private func applyTiling(_ arrangement: WindowArrangement) {
         let cycleWidths = tiling.cycleWidths
-        let gap = tiling.gap
+        let gaps = tiling.gaps
         // Posted, not inline. `frontmostApplication` and the screen walk are both NSWorkspace/AppKit
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
@@ -634,10 +634,10 @@ final class SwitcherController {
                 return
             }
             Log.tap.notice(
-                "tiling: applying to pid \(pid, privacy: .public), gap \(gap, privacy: .public)")
+                "tiling: applying to pid \(pid, privacy: .public), gaps \(String(describing: gaps), privacy: .public)")
             WindowTiler.apply(
                 arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
-                cycleWidths: cycleWidths, gap: gap)
+                cycleWidths: cycleWidths, gaps: gaps)
         }
     }
 

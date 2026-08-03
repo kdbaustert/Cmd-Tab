@@ -207,17 +207,63 @@ enum TilingGap {
     /// gap on the side that is actually against the screen.
     private static let epsilon: CGFloat = 1
 
-    static func inset(_ frame: CGRect, in area: CGRect, gap: CGFloat) -> CGRect {
-        guard gap > 0 else { return frame }
-        let left = frame.minX - area.minX <= epsilon ? gap : gap / 2
-        let right = area.maxX - frame.maxX <= epsilon ? gap : gap / 2
-        let top = frame.minY - area.minY <= epsilon ? gap : gap / 2
-        let bottom = area.maxY - frame.maxY <= epsilon ? gap : gap / 2
+    /// Points of space left around a tiled window, one value per screen edge.
+    ///
+    /// Four values rather than one because the edges are not interchangeable in practice: a Dock on
+    /// the left, a camera notch at the top, or a display whose bottom edge is level with a second
+    /// monitor all want a different amount of room from the other three.
+    ///
+    /// The names are screen edges, not tile edges, and they are read in Accessibility's top-left
+    /// space like everything else here — `top` is the edge under the menu bar.
+    struct Edges: Equatable {
+        var top: CGFloat = 0
+        var bottom: CGFloat = 0
+        var left: CGFloat = 0
+        var right: CGFloat = 0
+
+        static let zero = Edges()
+
+        /// The same gap on every edge — what the single slider used to mean, and what a stored
+        /// setting from before this was split into four migrates to.
+        init(uniform: CGFloat) {
+            self.init(top: uniform, bottom: uniform, left: uniform, right: uniform)
+        }
+
+        init(top: CGFloat = 0, bottom: CGFloat = 0, left: CGFloat = 0, right: CGFloat = 0) {
+            self.top = top
+            self.bottom = bottom
+            self.left = left
+            self.right = right
+        }
+
+        var isZero: Bool { top == 0 && bottom == 0 && left == 0 && right == 0 }
+
+        /// Every value held inside the range the settings offer, so a hand-edited defaults entry
+        /// cannot produce a window narrower than the tiling maths expects.
+        var clamped: Edges {
+            func hold(_ value: CGFloat) -> CGFloat { min(max(value, 0), TilingGap.maximum) }
+            return Edges(
+                top: hold(top), bottom: hold(bottom), left: hold(left), right: hold(right))
+        }
+    }
+
+    static func inset(_ frame: CGRect, in area: CGRect, edges: Edges) -> CGRect {
+        guard !edges.isZero else { return frame }
+        // A tile edge lying against the screen takes that screen edge's whole gap. An edge where two
+        // tiles meet takes half the mean of the two gaps on its axis, so the seam between a pair of
+        // tiles adds up to one gap's worth of space — and so a uniform setting still produces
+        // exactly what the single slider produced before the split.
+        let seamX = (edges.left + edges.right) / 4
+        let seamY = (edges.top + edges.bottom) / 4
+        let left = frame.minX - area.minX <= epsilon ? edges.left : seamX
+        let right = area.maxX - frame.maxX <= epsilon ? edges.right : seamX
+        let top = frame.minY - area.minY <= epsilon ? edges.top : seamY
+        let bottom = area.maxY - frame.maxY <= epsilon ? edges.bottom : seamY
 
         let width = frame.width - left - right
         let height = frame.height - top - bottom
         // A gap wider than the tile would invert the frame. Nothing here can produce a window
-        // narrower than a quarter of its tile, however the slider is set.
+        // narrower than a quarter of its tile, however the sliders are set.
         guard width > frame.width / 4, height > frame.height / 4 else { return frame }
         return CGRect(x: frame.minX + left, y: frame.minY + top, width: width, height: height)
     }
@@ -234,9 +280,10 @@ struct WindowTilingBindings: Equatable {
     /// Drag a window to a screen edge to tile it there. Independent of `isEnabled`: someone may want
     /// the mouse gesture and no global chords at all, or the reverse.
     var dragSnap: Bool = false
-    /// Points of space left around a tiled window: the whole gap against a screen edge, half of it
-    /// where two tiles meet. 0 keeps windows flush, which is what tiling has always done.
-    var gap: CGFloat = 0
+    /// Points of space left around a tiled window: the whole gap against a screen edge, half the
+    /// axis mean where two tiles meet. All zero keeps windows flush, which is what tiling has always
+    /// done.
+    var gaps: TilingGap.Edges = .zero
     var bindings: [WindowArrangement: Hotkey]
 
     static let defaults = WindowTilingBindings(
@@ -313,7 +360,13 @@ final class WindowTilingStore: ObservableObject {
         static let cycleWidths = "windowTilingCycleWidths"
         static let shortcuts = "windowTilingShortcuts"
         static let dragSnap = "windowTilingDragSnap"
+        /// The pre-split single gap. Still read, never written: it is what a setting made before the
+        /// gap became four values migrates from. See `load`.
         static let gap = "windowTilingGap"
+        static let gapTop = "windowTilingGapTop"
+        static let gapBottom = "windowTilingGapBottom"
+        static let gapLeft = "windowTilingGapLeft"
+        static let gapRight = "windowTilingGapRight"
         static let dotHex = "windowSnapDotColorHex"
         static let mouseDrag = "windowMouseDragEnabled"
         static let mouseMove = "windowMouseDragMoveModifiers"
@@ -322,7 +375,8 @@ final class WindowTilingStore: ObservableObject {
 
     /// Every key this store owns, for export/import/reset.
     static let defaultsKeys = [
-        Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap, Key.gap,
+        Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap,
+        Key.gap, Key.gapTop, Key.gapBottom, Key.gapLeft, Key.gapRight,
         Key.dotHex,
         Key.mouseDrag, Key.mouseMove, Key.mouseResize,
     ]
@@ -393,13 +447,24 @@ final class WindowTilingStore: ObservableObject {
             ?? SnapAppearance.defaultDot
     }
 
-    var gap: CGFloat {
-        get { tiling.gap }
+    var gaps: TilingGap.Edges {
+        get { tiling.gaps }
         set {
-            let clamped = min(max(newValue, 0), TilingGap.maximum)
-            guard clamped != tiling.gap else { return }
-            tiling.gap = clamped
+            let clamped = newValue.clamped
+            guard clamped != tiling.gaps else { return }
+            tiling.gaps = clamped
             persist()
+        }
+    }
+
+    /// One edge at a time, for the four sliders. Each is its own binding, so dragging one does not
+    /// have to rebuild the other three.
+    subscript(gap edge: WritableKeyPath<TilingGap.Edges, CGFloat>) -> CGFloat {
+        get { tiling.gaps[keyPath: edge] }
+        set {
+            var updated = tiling.gaps
+            updated[keyPath: edge] = newValue
+            gaps = updated
         }
     }
 
@@ -569,7 +634,22 @@ final class WindowTilingStore: ObservableObject {
         result.dragSnap = defaults.bool(forKey: Key.dragSnap)
         // Absent means never set, which is 0 — `double(forKey:)` already reports 0 for a missing
         // key, so the two cases need no telling apart here.
-        result.gap = min(max(CGFloat(defaults.double(forKey: Key.gap)), 0), TilingGap.maximum)
+        //
+        // The pre-split single value seeds all four, so a gap someone had already set survives the
+        // upgrade as the uniform gap it used to be. Each edge then overrides it if it has been set
+        // since; `object(forKey:)` rather than `double(forKey:)` because 0 is a gap someone can
+        // deliberately choose for one edge, and a missing key must not read as that.
+        let legacy = CGFloat(defaults.double(forKey: Key.gap))
+        var gaps = TilingGap.Edges(uniform: legacy)
+        func override(_ key: String, _ edge: WritableKeyPath<TilingGap.Edges, CGFloat>) {
+            guard let stored = defaults.object(forKey: key) as? Double else { return }
+            gaps[keyPath: edge] = CGFloat(stored)
+        }
+        override(Key.gapTop, \.top)
+        override(Key.gapBottom, \.bottom)
+        override(Key.gapLeft, \.left)
+        override(Key.gapRight, \.right)
+        result.gaps = gaps.clamped
         if let raw = defaults.dictionary(forKey: Key.shortcuts) {
             for arrangement in WindowArrangement.allCases {
                 guard let pair = raw[arrangement.rawValue] as? [Int] else { continue }
@@ -593,7 +673,12 @@ final class WindowTilingStore: ObservableObject {
         defaults.set(tiling.isEnabled, forKey: Key.enabled)
         defaults.set(tiling.cycleWidths, forKey: Key.cycleWidths)
         defaults.set(tiling.dragSnap, forKey: Key.dragSnap)
-        defaults.set(Double(tiling.gap), forKey: Key.gap)
+        defaults.set(Double(tiling.gaps.top), forKey: Key.gapTop)
+        defaults.set(Double(tiling.gaps.bottom), forKey: Key.gapBottom)
+        defaults.set(Double(tiling.gaps.left), forKey: Key.gapLeft)
+        defaults.set(Double(tiling.gaps.right), forKey: Key.gapRight)
+        // `Key.gap` is deliberately not written back. It is the migration source only, and rewriting
+        // it would mean picking one of four values to stand for the whole thing.
         // Every arrangement is written, so a cleared one is recorded as cleared rather than simply
         // missing — see `load()`.
         var raw: [String: [Int]] = [:]
@@ -656,7 +741,7 @@ enum WindowTiler {
 
     static func apply(
         _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
-        gap: CGFloat = 0
+        gaps: TilingGap.Edges = .zero
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
@@ -731,7 +816,7 @@ enum WindowTiler {
                 // Applied last, to the finished tile: the gap is about where a window ends up, not
                 // about how the arrangement divides the screen, so the fraction maths above stays
                 // exactly as it is at any gap.
-                target = arrangement.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame
+                target = arrangement.takesGap ? TilingGap.inset(frame, in: area, edges: gaps) : frame
             }
 
             // Position, size, position. Some apps clamp a move against their *current* size (so the

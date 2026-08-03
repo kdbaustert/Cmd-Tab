@@ -48,7 +48,7 @@ final class DragSnap {
     /// The tiling gap, so the preview shows where the window will actually land rather than the
     /// zone it was dropped in. A preview that ignored the gap would be wrong by up to a gap on
     /// every edge — and the preview is the only thing the user sees before letting go.
-    var gap: CGFloat = 0
+    var gaps: TilingGap.Edges = .zero
 
     private var monitors: [Any] = []
     private let preview = SnapPreview.shared
@@ -125,7 +125,7 @@ final class DragSnap {
         currentZone = zone
         if let zone, let area = Self.visibleArea(containing: point),
             let frame = zone.frame(in: area, current: area, fraction: 0.5) {
-            preview.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
+            preview.show(zone.takesGap ? TilingGap.inset(frame, in: area, edges: gaps) : frame)
         } else {
             preview.hide()
         }
@@ -136,10 +136,10 @@ final class DragSnap {
         guard isDragging, let zone = currentZone, let pid = draggedPID else { return }
         // Dropped in a zone: tile the window that was dragged. Posted rather than run here for the
         // same reason the keyboard path posts — this is an Accessibility write.
-        let gap = self.gap
+        let gaps = self.gaps
         DispatchQueue.main.async {
             WindowTiler.apply(
-                zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap)
+                zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gaps: gaps)
         }
     }
 

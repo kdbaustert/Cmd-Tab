@@ -280,12 +280,12 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// `WindowTiler` uses for its restore and cycle tables, and what keeps it safe without a lock.
     private nonisolated(unsafe) static var draggedWindow: AXUIElement?
 
-    /// The tiling gap, so a snap through this gesture lands where the keyboard chords put it.
-    var gap: CGFloat {
-        get { lock.withLock { storedGap } }
-        set { lock.withLock { storedGap = newValue } }
+    /// The tiling gaps, so a snap through this gesture lands where the keyboard chords put it.
+    var gaps: TilingGap.Edges {
+        get { lock.withLock { storedGaps } }
+        set { lock.withLock { storedGaps = newValue } }
     }
-    private var storedGap: CGFloat = 0
+    private var storedGaps: TilingGap.Edges = .zero
 
     private var displays: [Display] = []
     /// The height of the primary display, for turning the tap's top-left point into the bottom-up
@@ -491,13 +491,13 @@ final class MouseWindowDrag: @unchecked Sendable {
             if let zone = state.zone, let session = state.session {
                 Log.general.notice(
                     "mouse drag: dropped in \(zone.rawValue, privacy: .public)")
-                let gap = self.gap
+                let gaps = self.gaps
                 // Off the tap thread: this reads screens on the main actor and then does the same
                 // Accessibility write the keyboard chords do.
                 Task { @MainActor in
                     WindowTiler.apply(
                         zone, pid: session.pid, areas: WindowTiler.visibleAreas(),
-                        cycleWidths: false, gap: gap)
+                        cycleWidths: false, gaps: gaps)
                 }
             }
             end()
@@ -635,7 +635,7 @@ final class MouseWindowDrag: @unchecked Sendable {
             return true
         }
         guard changed else { return }
-        let gap = self.gap
+        let gaps = self.gaps
         guard let match, let frame = match.zone.frame(
             in: match.area, current: match.area, fraction: 0.5)
         else {
@@ -643,7 +643,7 @@ final class MouseWindowDrag: @unchecked Sendable {
             return
         }
         let target = match.zone.takesGap
-            ? TilingGap.inset(frame, in: match.area, gap: gap) : frame
+            ? TilingGap.inset(frame, in: match.area, edges: gaps) : frame
         Task { @MainActor in SnapPreview.shared.show(target) }
     }
 
@@ -752,7 +752,7 @@ final class ModifierTargetHighlight {
     }
 
     /// The tiling gap, so a pointed snap lands exactly where the keyboard chords put it.
-    var gap: CGFloat = 0
+    var gaps: TilingGap.Edges = .zero
 
     private var flagsMonitor: Any?
     private var moveMonitor: Any?
@@ -836,7 +836,7 @@ final class ModifierTargetHighlight {
         guard index < areas.count else { return }
         let area = areas[index]
         guard let frame = zone.frame(in: area, current: area, fraction: 0.5) else { return }
-        SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
+        SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, edges: gaps) : frame)
     }
 
     /// The chord came up: snap to whatever was being offered.
@@ -848,9 +848,9 @@ final class ModifierTargetHighlight {
             point gesture: snapping pid \(target.pid, privacy: .public) to \
             \(zone.rawValue, privacy: .public)
             """)
-        let gap = self.gap
+        let gaps = self.gaps
         WindowTiler.apply(
-            zone, pid: target.pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap)
+            zone, pid: target.pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gaps: gaps)
     }
 
     private func cancel() {

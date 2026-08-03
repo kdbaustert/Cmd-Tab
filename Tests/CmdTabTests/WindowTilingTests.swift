@@ -96,8 +96,8 @@ final class WindowTilingTests: XCTestCase {
     /// one gap apart, the same distance as each is from the outside.
     func testTwoHalvesEndUpOneGapApart() {
         let gap: CGFloat = 20
-        let left = TilingGap.inset(frame(.leftHalf)!, in: area, gap: gap)
-        let right = TilingGap.inset(frame(.rightHalf)!, in: area, gap: gap)
+        let left = TilingGap.inset(frame(.leftHalf)!, in: area, edges: .init(uniform: gap))
+        let right = TilingGap.inset(frame(.rightHalf)!, in: area, edges: .init(uniform: gap))
         XCTAssertEqual(right.minX - left.maxX, gap, accuracy: 0.001)
         XCTAssertEqual(left.minX - area.minX, gap, accuracy: 0.001)
         XCTAssertEqual(area.maxX - right.maxX, gap, accuracy: 0.001)
@@ -105,7 +105,7 @@ final class WindowTilingTests: XCTestCase {
 
     func testMaximizeTakesTheFullGapOnEveryEdge() {
         let gap: CGFloat = 16
-        let maximized = TilingGap.inset(frame(.maximize)!, in: area, gap: gap)
+        let maximized = TilingGap.inset(frame(.maximize)!, in: area, edges: .init(uniform: gap))
         XCTAssertEqual(maximized.minX - area.minX, gap, accuracy: 0.001)
         XCTAssertEqual(maximized.minY - area.minY, gap, accuracy: 0.001)
         XCTAssertEqual(area.maxX - maximized.maxX, gap, accuracy: 0.001)
@@ -115,7 +115,7 @@ final class WindowTilingTests: XCTestCase {
     /// A corner has two outside edges and two seams, and has to tell them apart.
     func testACornerTakesFullGapOutsideAndHalfAtItsSeams() {
         let gap: CGFloat = 24
-        let corner = TilingGap.inset(frame(.topLeft)!, in: area, gap: gap)
+        let corner = TilingGap.inset(frame(.topLeft)!, in: area, edges: .init(uniform: gap))
         XCTAssertEqual(corner.minX - area.minX, gap, accuracy: 0.001)
         XCTAssertEqual(corner.minY - area.minY, gap, accuracy: 0.001)
         XCTAssertEqual(frame(.topLeft)!.maxX - corner.maxX, gap / 2, accuracy: 0.001)
@@ -126,8 +126,8 @@ final class WindowTilingTests: XCTestCase {
     /// `TilingGap` the right third would take an inner gap on the side against the screen.
     func testTheOuterThirdsStillReadAsScreenEdges() {
         let gap: CGFloat = 18
-        let left = TilingGap.inset(frame(.leftThird)!, in: area, gap: gap)
-        let right = TilingGap.inset(frame(.rightThird)!, in: area, gap: gap)
+        let left = TilingGap.inset(frame(.leftThird)!, in: area, edges: .init(uniform: gap))
+        let right = TilingGap.inset(frame(.rightThird)!, in: area, edges: .init(uniform: gap))
         XCTAssertEqual(left.minX - area.minX, gap, accuracy: 0.001)
         XCTAssertEqual(area.maxX - right.maxX, gap, accuracy: 0.001)
     }
@@ -143,7 +143,7 @@ final class WindowTilingTests: XCTestCase {
     func testThirdsAreEvenlySpacedAndTheOutersMatch() {
         let gap: CGFloat = 12
         let thirds = [WindowArrangement.leftThird, .centerThird, .rightThird]
-            .map { TilingGap.inset(frame($0)!, in: area, gap: gap) }
+            .map { TilingGap.inset(frame($0)!, in: area, edges: .init(uniform: gap)) }
         XCTAssertEqual(thirds[0].minX - area.minX, gap, accuracy: 0.001)
         XCTAssertEqual(thirds[1].minX - thirds[0].maxX, gap, accuracy: 0.001)
         XCTAssertEqual(thirds[2].minX - thirds[1].maxX, gap, accuracy: 0.001)
@@ -155,17 +155,70 @@ final class WindowTilingTests: XCTestCase {
     func testZeroGapChangesNothing() {
         for arrangement in WindowArrangement.tilingArrangements {
             guard let plain = frame(arrangement) else { continue }
-            XCTAssertEqual(TilingGap.inset(plain, in: area, gap: 0), plain)
+            XCTAssertEqual(TilingGap.inset(plain, in: area, edges: .init(uniform: 0)), plain)
         }
+    }
+
+    /// Each screen edge takes its own value, so a Dock on the left or a notch at the top can be
+    /// given room without padding the other three.
+    func testEachScreenEdgeTakesItsOwnGap() {
+        let edges = TilingGap.Edges(top: 40, bottom: 4, left: 30, right: 10)
+        let maximized = TilingGap.inset(frame(.maximize)!, in: area, edges: edges)
+        XCTAssertEqual(maximized.minY - area.minY, 40, accuracy: 0.001, "top")
+        XCTAssertEqual(area.maxY - maximized.maxY, 4, accuracy: 0.001, "bottom")
+        XCTAssertEqual(maximized.minX - area.minX, 30, accuracy: 0.001, "left")
+        XCTAssertEqual(area.maxX - maximized.maxX, 10, accuracy: 0.001, "right")
+    }
+
+    /// A seam is still exactly one gap wide, taken as the mean of the two edges on its axis — so the
+    /// space between neighbours stays even however lopsided the outer values are.
+    func testASeamIsTheMeanOfItsAxis() {
+        let edges = TilingGap.Edges(top: 0, bottom: 0, left: 30, right: 10)
+        let left = TilingGap.inset(frame(.leftHalf)!, in: area, edges: edges)
+        let right = TilingGap.inset(frame(.rightHalf)!, in: area, edges: edges)
+        XCTAssertEqual(left.minX - area.minX, 30, accuracy: 0.001)
+        XCTAssertEqual(area.maxX - right.maxX, 10, accuracy: 0.001)
+        XCTAssertEqual(right.minX - left.maxX, 20, accuracy: 0.001, "the mean of 30 and 10")
+    }
+
+    /// The four-value form reduces to the old single-slider behaviour when every edge matches, which
+    /// is what makes the migration from the pre-split setting a no-op.
+    func testAUniformEdgeSetMatchesTheOldSingleGap() {
+        for arrangement in WindowArrangement.tilingArrangements {
+            guard let plain = frame(arrangement) else { continue }
+            let uniform = TilingGap.inset(plain, in: area, edges: .init(uniform: 20))
+            // The old rule, written out: whole gap on a screen edge, half at a seam.
+            let g: CGFloat = 20
+            let l = plain.minX - area.minX <= 1 ? g : g / 2
+            let r = area.maxX - plain.maxX <= 1 ? g : g / 2
+            let t = plain.minY - area.minY <= 1 ? g : g / 2
+            let b = area.maxY - plain.maxY <= 1 ? g : g / 2
+            XCTAssertEqual(
+                uniform,
+                CGRect(
+                    x: plain.minX + l, y: plain.minY + t,
+                    width: plain.width - l - r, height: plain.height - t - b),
+                "\(arrangement.rawValue)")
+        }
+    }
+
+    /// Zero on one edge is a value someone can choose, not "unset": the other three still apply.
+    func testZeroOnOneEdgeLeavesTheOthersApplied() {
+        let edges = TilingGap.Edges(top: 0, bottom: 20, left: 20, right: 20)
+        let maximized = TilingGap.inset(frame(.maximize)!, in: area, edges: edges)
+        XCTAssertEqual(maximized.minY, area.minY, accuracy: 0.001, "flush with the top")
+        XCTAssertEqual(area.maxY - maximized.maxY, 20, accuracy: 0.001)
+        XCTAssertEqual(maximized.minX - area.minX, 20, accuracy: 0.001)
     }
 
     /// A gap wider than the tile would invert the frame; the tile is left alone instead.
     func testAnAbsurdGapIsRefusedRatherThanInverting() {
         let tiny = CGRect(x: area.minX, y: area.minY, width: 40, height: 30)
-        XCTAssertEqual(TilingGap.inset(tiny, in: area, gap: 60), tiny)
+        XCTAssertEqual(TilingGap.inset(tiny, in: area, edges: .init(uniform: 60)), tiny)
         for arrangement in WindowArrangement.tilingArrangements {
             guard let plain = frame(arrangement) else { continue }
-            let inset = TilingGap.inset(plain, in: area, gap: TilingGap.maximum)
+            let inset = TilingGap.inset(
+                plain, in: area, edges: .init(uniform: TilingGap.maximum))
             XCTAssertGreaterThan(inset.width, 0, "\(arrangement.rawValue) inverted")
             XCTAssertGreaterThan(inset.height, 0, "\(arrangement.rawValue) inverted")
         }
