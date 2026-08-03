@@ -57,8 +57,13 @@ enum SpaceMover {
     ///
     /// The single source of truth for every Space decision here, so the two ids can be logged side
     /// by side — the only way to tell "the window really is on this Desktop" from "the lookup is
-    /// lying". nil when the layout can't be read at all.
-    private static func spaceState(of window: CGWindowID) -> SpaceState? {
+    /// lying". nil when the layout can't be read at all, and also nil for a minimized window: one
+    /// sitting in the Dock occupies no Space, which is a distinction callers need before they decide
+    /// whether a pick is a Desktop switch or an unminimize.
+    ///
+    /// Read-only, unlike `reveal` — callers that only need to *know* where a window is must not pay
+    /// a Space animation to find out.
+    static func spaceState(of window: CGWindowID) -> SpaceState? {
         guard window != 0, let mainConnection, let copyManaged, let copySpacesForWindows else {
             return nil
         }

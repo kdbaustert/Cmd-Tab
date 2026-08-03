@@ -754,9 +754,24 @@ final class SwitcherController {
             model.setLaunchSuggestions([])
             return
         }
+        // Only the apps that actually have a tile, not every app that happens to be running.
+        //
+        // Excluding all running apps left a hole with "hide apps with no open windows" turned on: an
+        // app that is running but owns no window — a Finder whose last window was closed is the one
+        // people hit — was filtered out of the switcher for having no window *and* refused a launch
+        // suggestion for being running, so there was no way to reach it at all. A running app that
+        // does have a tile is still excluded, which is all this was ever for: a suggestion must
+        // never duplicate a tile the user is already looking at.
+        //
+        // Picking such a suggestion is correct rather than a fudge: `openApplication` on an already
+        // running app is a reopen event, which is what makes it produce a window.
         var excluded = provider.excludedBundleIDs
+        let tiled = Set(model.targets.map(\.pid))
         for app in NSWorkspace.shared.runningApplications {
-            if let id = app.bundleIdentifier { excluded.insert(id) }
+            guard let id = app.bundleIdentifier, tiled.contains(app.processIdentifier) else {
+                continue
+            }
+            excluded.insert(id)
         }
         let suggestions = InstalledApps.matches(query, excluding: excluded).map { entry in
             SwitchTarget(
