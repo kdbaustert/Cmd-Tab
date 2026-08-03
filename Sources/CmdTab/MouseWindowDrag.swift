@@ -593,16 +593,16 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
 
     /// Snapshots the displays in both coordinate spaces. Main-thread work, by `NSScreen`'s rules.
+    ///
+    /// One read of the display list, not two. Pairing `visibleAreas()` with a separate walk of
+    /// `NSScreen.screens` left the two lists index-aligned only by convention, with a comment as the
+    /// only thing saying so; `visibleDisplays()` reports both spaces from a single pass.
     @MainActor
     private func refreshDisplays() {
-        let areas = WindowTiler.visibleAreas()
-        let height =
-            (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
-        // `visibleAreas` is built by mapping `NSScreen.screens`, so the two lists are index-aligned.
-        let snapshot = NSScreen.screens.enumerated().compactMap { index, screen -> Display? in
-            guard index < areas.count else { return nil }
-            return Display(frame: screen.frame, area: areas[index])
+        let snapshot = WindowTiler.visibleDisplays().map {
+            Display(frame: $0.frame, area: $0.area)
         }
+        let height = NSScreen.primary?.frame.height ?? 0
         lock.withLock {
             displays = snapshot
             primaryHeight = height
@@ -867,7 +867,7 @@ final class ModifierTargetHighlight {
     /// The window under a Cocoa-space point, in the top-left space the overlays and the window list
     /// both use.
     private static func windowUnderCursor(at point: CGPoint) -> (pid: pid_t, bounds: CGRect)? {
-        guard let primary = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)
+        guard let primary = NSScreen.primary
         else { return nil }
         let flipped = CGPoint(x: point.x, y: primary.frame.height - point.y)
         return MouseWindowDrag.window(at: flipped)
@@ -894,7 +894,7 @@ private final class TargetOutline {
             layer.borderWidth = SnapAppearance.borderWidth
             layer.cornerRadius = SnapAppearance.outlineCornerRadius
         }
-        guard let primary = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)
+        guard let primary = NSScreen.primary
         else { return }
         let rect = NSRect(
             x: frame.minX, y: primary.frame.height - frame.maxY,

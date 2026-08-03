@@ -662,17 +662,26 @@ enum WindowTiler {
 
             // The screen the window is mostly on, rather than the one it merely touches: a window
             // straddling two displays should tile on the one it is actually being used on.
-            let area = areas.max { a, b in
-                a.intersection(current).area < b.intersection(current).area
-            } ?? areas[0]
+            //
+            // Resolved as an *index* and kept as one. Looking the rectangle back up by equality
+            // meant two displays showing the same frame — a mirrored pair, or two panels the user
+            // has stacked at the same coordinates — both answered with the first of them, so a
+            // move-to-next-display computed its destination as the display it started on and did
+            // nothing, with no log line saying why.
+            let home = areas.indices.max { a, b in
+                areas[a].intersection(current).area < areas[b].intersection(current).area
+            } ?? areas.startIndex
+            let area = areas[home]
 
             let target: CGRect
             if let step = arrangement.displayStep {
                 // Same fractional position on the destination display, then clamped onto it — the
                 // treatment `SwitchTarget.moveWindow(acrossDisplays:)` gives the in-switcher move,
-                // so a window thrown either way lands in the same place.
-                guard areas.count > 1, let from = areas.firstIndex(of: area) else { return }
-                let to = areas[((from + step) % areas.count + areas.count) % areas.count]
+                // so a window thrown either way lands in the same place. Both are handed *visible*
+                // areas, which is what keeps that promise: measuring against full display frames
+                // instead puts the window's top edge under the destination's menu bar.
+                guard areas.count > 1 else { return }
+                let to = areas[((home + step) % areas.count + areas.count) % areas.count]
                 let relX = area.width > 0 ? (current.minX - area.minX) / area.width : 0
                 let relY = area.height > 0 ? (current.minY - area.minY) / area.height : 0
                 let size = CGSize(
@@ -688,7 +697,7 @@ enum WindowTiler {
                 guard let saved = restorePoints.removeValue(forKey: key) else { return }
                 restoreOrder.removeAll { $0 == key }
                 cycle = nil
-                target = saved
+                target = reachable(saved, in: areas, fallback: area)
             } else {
                 // Saved once per window and not overwritten by later tiles, so restore goes back to
                 // where the window was before any of this started rather than to the previous tile.
@@ -722,6 +731,54 @@ enum WindowTiler {
             AX.setPosition(window, target.origin)
         }
     }
+
+    /// A saved restore frame, made reachable again on today's desk.
+    ///
+    /// A restore point is recorded against the displays as they were, and nothing invalidates it
+    /// when they change: tile a window on an external monitor, unplug the monitor, press the restore
+    /// chord, and the saved frame names coordinates no display covers. The window is written there
+    /// all the same, with no titlebar left on screen to drag it back — the one way this feature can
+    /// lose a window outright.
+    ///
+    /// Left exactly as saved whenever it is still reachable, so a window the user deliberately left
+    /// hanging off an edge comes back hanging off the same edge.
+    ///
+    /// Internal rather than private so the desk-changed cases can be tested without a second monitor
+    /// to unplug.
+    static func reachable(_ saved: CGRect, in areas: [CGRect], fallback: CGRect) -> CGRect {
+        // Reachable means "enough of the titlebar is on a display to aim at", which is neither of
+        // the two obvious tests. Asking whether the *frame* overlaps a display calls a window
+        // reachable when a corner of its bottom-right is showing, which is as lost as being off
+        // screen entirely; asking whether a single point of the top edge is on one calls a window
+        // unreachable when it is merely hanging half off an edge, which is a placement people choose
+        // deliberately and the restore point exists to give back.
+        //
+        // Width from one display rather than summed across them: two displays can only both
+        // contribute to one titlebar if they are adjacent, and the conservative answer is the right
+        // way to be wrong here.
+        let titlebar = CGRect(
+            x: saved.minX, y: saved.minY,
+            width: saved.width, height: min(saved.height, titlebarHeight))
+        let grabbable =
+            areas.map { $0.intersection(titlebar) }
+            .filter { !$0.isNull && $0.height > 0 }
+            .map(\.width).max() ?? 0
+        // A window narrower than the threshold only has to be fully on screen to qualify.
+        if grabbable >= min(minimumGrab, saved.width) { return saved }
+        // Whichever display it still overlaps most, or — if the desk has changed enough that it
+        // overlaps none — the one the window is on now.
+        let home = areas.filter { $0.intersection(saved).area > 0 }.max { a, b in
+            a.intersection(saved).area < b.intersection(saved).area
+        } ?? fallback
+        return LayoutGeometry.clamp(saved, into: home)
+    }
+
+    /// The strip along the top of a window that can be dragged. macOS's own titlebar height; nothing
+    /// here depends on it being exact, only on it being the top edge rather than the whole frame.
+    private static let titlebarHeight: CGFloat = 28
+    /// How much of that strip has to be on a display for the window to count as grabbable. About the
+    /// width of the traffic lights — enough to put a cursor on without hunting for it.
+    private static let minimumGrab: CGFloat = 60
 
     /// How much of the screen this press should take, advancing the cycle when the same arrangement
     /// is applied to the same window twice running.
@@ -759,22 +816,35 @@ enum WindowTiler {
         /// nil when the UUID can't be read. Such a display still takes part in tiling, which only
         /// needs the rectangle; only layouts need the identity.
         let id: String?
+        /// The full frame in Cocoa's bottom-up space — `NSScreen.frame` verbatim, menu bar and Dock
+        /// included. Carried alongside `area` so a caller that needs both coordinate spaces gets
+        /// them from one read of `NSScreen.screens` rather than pairing two by index.
+        var frame: CGRect = .zero
+        /// The usable area in Accessibility's top-left space.
         let area: CGRect
+        /// Whether this is the display with the menu bar.
+        ///
+        /// Carried rather than derived: `area` is a *visible* frame, so the primary's does not start
+        /// at the origin and there is nothing in the rectangle alone to tell it apart from any other
+        /// display's.
+        var isPrimary: Bool = false
     }
 
+    @MainActor
     static func visibleDisplays() -> [DisplayArea] {
-        let primaryHeight =
-            (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
+        let primaryHeight = NSScreen.primary?.frame.height ?? 0
         return NSScreen.screens.map { screen in
             let visible = screen.visibleFrame
             return DisplayArea(
                 id: displayUUID(of: screen),
+                frame: screen.frame,
                 // Cocoa's bottom-left origin flipped into Accessibility's top-left one, against the
                 // *primary* display's height — the origin both coordinate spaces share.
                 area: CGRect(
                     x: visible.origin.x,
                     y: primaryHeight - visible.origin.y - visible.height,
-                    width: visible.width, height: visible.height))
+                    width: visible.width, height: visible.height),
+                isPrimary: screen.frame.origin == .zero)
         }
     }
 
@@ -792,5 +862,9 @@ enum WindowTiler {
 extension CGRect {
     /// Zero for a null rect, which `intersection` returns when two frames do not overlap at all —
     /// `CGRect.null` has an infinite size, so its `width * height` is not a number you can compare.
-    fileprivate var area: CGFloat { isNull || isEmpty ? 0 : width * height }
+    ///
+    /// Module-wide rather than per-file: four places pick "the display a window is mostly on" this
+    /// way, and three private copies of the same two lines is three chances for one of them to
+    /// answer differently.
+    var area: CGFloat { isNull || isEmpty ? 0 : width * height }
 }

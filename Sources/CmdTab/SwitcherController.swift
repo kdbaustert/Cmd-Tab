@@ -1440,9 +1440,15 @@ final class SwitcherController {
     }
 
     /// Moves the selected window to the next/previous display, wrapping around.
+    ///
+    /// Visible areas, not full display frames: this is the same move the ⌃⌘⇧-arrow chords make, and
+    /// they measure against `visibleAreas` too. Handed the full frames instead, a window sitting at
+    /// the top of one display landed under the destination's menu bar — and the two paths disagreed
+    /// by the menu bar and Dock insets, which is exactly the promise `WindowTiler.apply` documents
+    /// they keep.
     private func moveSelectedWindow(acrossDisplays delta: Int) {
         model.selected?.moveWindow(
-            acrossDisplays: delta, screenFramesCG: TargetProvider.screenCGFrames())
+            acrossDisplays: delta, visibleAreas: WindowTiler.visibleAreas())
     }
 
     /// Hides every other regular app, leaving the selected one (and Cmd-Tab) alone.

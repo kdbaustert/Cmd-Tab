@@ -467,6 +467,66 @@ final class DragSnapZoneTests: XCTestCase {
         XCTAssertEqual(DragSnap.zone(for: CGPoint(x: 200, y: 199), in: squat), .maximize)
     }
 
+    // MARK: - Restore points against a desk that has changed
+
+    /// The laptop, plus an external monitor to its right — the desk a restore point gets recorded
+    /// on and then loses.
+    private let laptopArea = CGRect(x: 0, y: 25, width: 1440, height: 875)
+    private let externalArea = CGRect(x: 1440, y: 25, width: 2560, height: 1415)
+
+    /// The ordinary case, and the one that must not change: a saved frame still sitting on a
+    /// connected display comes back untouched.
+    func testAReachableRestorePointIsUsedExactly() {
+        let saved = CGRect(x: 200, y: 100, width: 800, height: 600)
+        XCTAssertEqual(
+            WindowTiler.reachable(saved, in: [laptopArea, externalArea], fallback: laptopArea),
+            saved)
+    }
+
+    /// Deliberately hanging off an edge is a placement, not a mistake: as long as the titlebar can
+    /// still be grabbed, the frame is left alone rather than tidied onto the screen.
+    func testAWindowLeftHangingOffAnEdgeComesBackHangingOffIt() {
+        let saved = CGRect(x: 1200, y: 100, width: 800, height: 600)  // spills past the laptop
+        XCTAssertEqual(WindowTiler.reachable(saved, in: [laptopArea], fallback: laptopArea), saved)
+    }
+
+    /// The bug this exists for: tile a window on the external monitor, unplug it, press restore.
+    /// The saved frame names coordinates no display covers, and written as-is the window would land
+    /// with no titlebar on screen to drag it back.
+    func testARestorePointOnAnUnpluggedDisplayIsBroughtBackOnScreen() {
+        let saved = CGRect(x: 2000, y: 100, width: 800, height: 600)
+        let restored = WindowTiler.reachable(saved, in: [laptopArea], fallback: laptopArea)
+        XCTAssertEqual(restored.size, saved.size, "the size the user chose is kept")
+        XCTAssertTrue(
+            laptopArea.contains(restored), "and the whole frame is on the display that is left")
+    }
+
+    /// A corner of the frame overlapping a display is not the same as being reachable. What has to
+    /// be on screen is enough of the strip along the *top* edge to aim a cursor at.
+    func testAFrameWithBarelyAnyTitlebarShowingIsBroughtBack() {
+        // Overlaps the laptop's bottom-right corner by 40pt — a sliver, and none of it grabbable.
+        let saved = CGRect(x: 1400, y: 860, width: 800, height: 600)
+        let restored = WindowTiler.reachable(saved, in: [laptopArea], fallback: laptopArea)
+        XCTAssertTrue(laptopArea.contains(restored))
+    }
+
+    /// A frame overlapping nothing at all falls back to the display the window is on now, rather
+    /// than to whichever display happens to be first.
+    func testAFrameOverlappingNoDisplayLandsOnTheFallback() {
+        let saved = CGRect(x: 5000, y: 5000, width: 800, height: 600)
+        let restored = WindowTiler.reachable(
+            saved, in: [laptopArea, externalArea], fallback: externalArea)
+        XCTAssertTrue(externalArea.contains(restored))
+    }
+
+    /// A saved frame bigger than every remaining display is shrunk to fit rather than left
+    /// overhanging — the same treatment a saved layout gets.
+    func testAnOversizedRestorePointIsShrunkOntoTheDisplay() {
+        let saved = CGRect(x: 1440, y: 25, width: 2560, height: 1415)  // the whole external monitor
+        let restored = WindowTiler.reachable(saved, in: [laptopArea], fallback: laptopArea)
+        XCTAssertEqual(restored, laptopArea)
+    }
+
     // MARK: - Is it a window drag?
 
     /// The origin has to move and the size has to stay put — the pair that tells a window drag from

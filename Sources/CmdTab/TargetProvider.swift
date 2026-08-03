@@ -559,18 +559,32 @@ final class TargetProvider {
         }
     }
 
-    /// Which display a window sits on, by its centre — used only for the multi-display badge.
+    /// Which display a window sits on: the one its centre falls on, or failing that the one it
+    /// overlaps most. Drives the multi-display badge and the current-display scope.
+    ///
+    /// The fallback matters more than it looks. A window can sit with its centre on no display at
+    /// all — dragged half off an edge, or stranded where a monitor used to be — and answering "no
+    /// display" for those dropped them from the current-display scope entirely, which is a list
+    /// whose whole job is to show the windows over there.
     private static func displayIndex(of window: AXUIElement, in frames: [CGRect]) -> Int? {
         guard let origin = AX.position(window), let size = AX.size(window) else { return nil }
-        let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
-        return frames.firstIndex { $0.contains(center) }
+        let frame = CGRect(origin: origin, size: size)
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        if let index = frames.firstIndex(where: { $0.contains(center) }) { return index }
+        return frames.indices.filter { frames[$0].intersection(frame).area > 0 }.max {
+            frames[$0].intersection(frame).area < frames[$1].intersection(frame).area
+        }
     }
 
     /// Every display's full frame in Quartz (top-left) coordinates, to match AX window positions.
-    /// Shared with the window move so the two never disagree about a display's bounds.
+    ///
+    /// Full frames, deliberately: this places a window *among* the displays for the badge, where the
+    /// menu bar and the Dock are part of the display a window is on. Anything that has to place a
+    /// window *within* one — tiling, the cross-display move — wants `WindowTiler.visibleAreas()`
+    /// instead, or it will put the window under the menu bar.
     static func screenCGFrames() -> [CGRect] {
         let primaryHeight =
-            (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height ?? 0
+            NSScreen.primary?.frame.height ?? 0
         return NSScreen.screens.map { screen in
             let f = screen.frame
             return CGRect(

@@ -549,9 +549,11 @@ extension SwitchTarget {
     }
 
     /// Moves the window to the next/previous display, keeping its position relative to the display it
-    /// leaves. `screenFramesCG` are the displays' visible frames in Quartz (top-left) coordinates,
-    /// resolved on the main thread by the caller since `NSScreen` is main-thread-only.
-    func moveWindow(acrossDisplays delta: Int, screenFramesCG frames: [CGRect]) {
+    /// leaves. `visibleAreas` are the displays' usable areas — menu bar and Dock already excluded —
+    /// in Quartz (top-left) coordinates, resolved on the main thread by the caller since `NSScreen`
+    /// is main-thread-only. `WindowTiler.visibleAreas()` is the one source for them, shared with the
+    /// keyboard chords so a window thrown either way lands in the same place.
+    func moveWindow(acrossDisplays delta: Int, visibleAreas frames: [CGRect]) {
         guard frames.count > 1, delta != 0 else { return }
         let kind = self.kind
         let pid = self.pid
@@ -559,8 +561,14 @@ extension SwitchTarget {
             guard let window = Self.resolveWindow(kind),
                 let origin = AX.position(window), let size = AX.size(window)
             else { return }
-            let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
-            let from = frames.firstIndex { $0.contains(center) } ?? 0
+            // The display the window is mostly on, the same rule `WindowTiler.apply` uses. A centre
+            // test alone answers "display 0" for anything whose middle happens to fall outside every
+            // usable area — a window under the menu bar, or one straddling two screens — and would
+            // then move it from a display it was never on.
+            let frame = CGRect(origin: origin, size: size)
+            let from = frames.indices.max { a, b in
+                frames[a].intersection(frame).area < frames[b].intersection(frame).area
+            } ?? frames.startIndex
             let to = frames[((from + delta) % frames.count + frames.count) % frames.count]
             let current = frames[from]
             // Same fractional offset within the destination display, then clamp so it stays on it.

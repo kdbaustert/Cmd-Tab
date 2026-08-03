@@ -12,6 +12,29 @@ extension NSScreen {
         let mouse = NSEvent.mouseLocation
         return screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? main ?? screens.first
     }
+
+    /// The display with the menu bar — the one whose top-left corner is the origin that Cocoa's
+    /// bottom-up space and Accessibility's top-left one share, and so the display every flip between
+    /// them is measured against.
+    ///
+    /// Deliberately **not** `NSScreen.main`, which is the screen containing the key window and
+    /// therefore follows the frontmost app around the desk. That is what "active screen" means here;
+    /// this is what "main display" means. `main` is kept only as a fallback for the configurations
+    /// where no screen sits at the origin at all.
+    static var primary: NSScreen? {
+        screens.first { $0.frame.origin == .zero } ?? main ?? screens.first
+    }
+
+    /// The display this screen is showing on, for holding onto a display across a reconfiguration.
+    ///
+    /// An `NSScreen` itself must not be kept: the objects are rebuilt when the displays change, and
+    /// a retained one goes on answering with the frame it had at the moment it was detached. The id
+    /// is stable for exactly as long as the display is attached, which is exactly as long as
+    /// anything should still be pinned to it.
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
+            .map { CGDirectDisplayID($0.uint32Value) }
+    }
 }
 
 /// The overlay window. It is deliberately non-activating: the panel must appear without our
@@ -32,7 +55,12 @@ final class SwitcherPanel: NSPanel {
 
     /// The display this panel is pinned to, or nil to follow the position setting. Set by
     /// `PanelGroup` when it spreads panels across displays.
-    var pinnedScreen: NSScreen?
+    ///
+    /// An id rather than the `NSScreen`: a session can outlive the desk it opened on — a stay-open
+    /// one lasts until it is dismissed — and a retained screen goes on reporting the frame it had
+    /// when its display was unplugged, which puts the panel at coordinates nothing covers. See
+    /// `NSScreen.displayID`.
+    var pinnedDisplayID: CGDirectDisplayID?
 
     /// Fired once the tiles have reported their frames for the current layout. `layout()` clears the
     /// geometry and SwiftUI reports the new frames a turn or two later, so anything that needs a
@@ -293,7 +321,13 @@ final class SwitcherPanel: NSPanel {
 
     private func targetScreen() -> NSScreen? {
         // A pinned screen wins outright — the panel exists *because* that display was chosen.
-        if let pinnedScreen { return pinnedScreen }
+        // Re-resolved from the id on every layout rather than held: if the display has been
+        // unplugged since the session opened there is no screen to answer with, and falling through
+        // to the position setting puts the panel somewhere the user can still see it.
+        if let pinnedDisplayID,
+            let screen = NSScreen.screens.first(where: { $0.displayID == pinnedDisplayID }) {
+            return screen
+        }
         // "Active screen" follows the frontmost app's screen (NSScreen.main); the others follow
         // the cursor's screen.
         if positionMode == .activeScreen, let main = NSScreen.main {

@@ -49,6 +49,8 @@ final class PanelGroup {
     private var hoverTimer: Timer?
     private var lastHoverLocation: NSPoint?
     private var scrollMonitor: Any?
+    /// Live only while the panels are up — see `startScreenTracking`.
+    private var screenObserver: NSObjectProtocol?
     private var scrollAccumulator: CGFloat = 0
     /// The last target emitted, so nothing re-fires while the cursor sits on the same tile.
     private var lastPreviewTarget: PreviewTarget = .away
@@ -165,9 +167,11 @@ final class PanelGroup {
         rebuildPanels()
         panels.forEach { $0.show() }
         startHoverTracking()
+        startScreenTracking()
     }
 
     func hide() {
+        stopScreenTracking()
         stopHoverTracking()
         panels.forEach { $0.hide() }
     }
@@ -176,28 +180,70 @@ final class PanelGroup {
         panels.forEach { $0.layout() }
     }
 
-    /// Creates or drops panels so there is exactly one per targeted display.
+    /// Creates or drops panels so there is exactly one per targeted display, and returns whichever
+    /// ones were created — a caller re-targeting a live session has to put those on screen itself.
     ///
-    /// Rebuilt per session rather than kept in sync with display changes: a monitor plugged in while
-    /// the switcher is open is vanishingly rare next to the cost of watching for it, and the next
-    /// session picks the new layout up anyway.
-    private func rebuildPanels() {
+    /// The pin is stored as a display id rather than an `NSScreen`; see `SwitcherPanel`.
+    @discardableResult
+    private func rebuildPanels() -> [SwitcherPanel] {
         let targets: [NSScreen?]
         switch screens {
         case .automatic: targets = [nil]  // nil = let the panel follow the position setting
-        case .mainDisplay: targets = [NSScreen.main ?? NSScreen.screens.first]
+        // The display with the menu bar, not `NSScreen.main` — which is the screen holding the key
+        // window and so follows the frontmost app around, making this option a duplicate of the
+        // active-screen position rather than the fixed display it is captioned as.
+        case .mainDisplay: targets = [NSScreen.primary]
         case .allDisplays: targets = NSScreen.screens.map { $0 }
         }
 
         while panels.count > targets.count {
             panels.removeLast().orderOut(nil)
         }
+        var added: [SwitcherPanel] = []
         while panels.count < targets.count {
-            panels.append(makePanel())
+            let panel = makePanel()
+            panels.append(panel)
+            added.append(panel)
         }
         for (panel, screen) in zip(panels, targets) {
-            panel.pinnedScreen = screen
+            panel.pinnedDisplayID = screen?.displayID
         }
+        return added
+    }
+
+    // MARK: - Display changes
+
+    /// Watches for the desk changing under an open session.
+    ///
+    /// Registered only while the panels are up. A session that lasts as long as a chord is held can
+    /// reasonably ignore a monitor being plugged in, which is what this used to do for every
+    /// session — but a stay-open one lasts until it is dismissed, and over that span a display being
+    /// unplugged leaves a pinned panel with nowhere to be while `.allDisplays` is left a panel short
+    /// of the desk it is meant to cover. Off between sessions, where this would only ever fire for
+    /// Dock and menu-bar changes there is nothing to do about.
+    private func startScreenTracking() {
+        guard screenObserver == nil else { return }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.displaysChanged() }
+        }
+    }
+
+    private func stopScreenTracking() {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = nil
+    }
+
+    /// Re-targets the panels onto the displays that exist now.
+    ///
+    /// Only the panels this creates are shown; the ones already up are relaid out instead. Showing
+    /// all of them would restart the fade from zero on panels the user is looking at, so a monitor
+    /// being plugged in would blink the switcher.
+    private func displaysChanged() {
+        let added = rebuildPanels()
+        added.forEach { $0.show() }
+        panels.forEach { $0.layout() }
     }
 
     private func makePanel() -> SwitcherPanel {

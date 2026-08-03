@@ -159,12 +159,19 @@ actor WindowCapture {
         return built.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
 
-    /// Which display a window's centre falls on, from the frame SC already reported — both are in
-    /// global top-left coordinates, so no Accessibility round-trip is needed to place it.
+    /// Which display a window is on, from the frame SC already reported — both are in global
+    /// top-left coordinates, so no Accessibility round-trip is needed to place it.
+    ///
+    /// Centre first, then largest overlap, matching `TargetProvider.displayIndex` so a window cannot
+    /// be badged one way in the switcher and another in its preview strip. A window whose centre is
+    /// off every display still belongs to one.
     private static func displayIndex(of frame: CGRect, in screenFrames: [CGRect]) -> Int? {
         guard !screenFrames.isEmpty else { return nil }
         let centre = CGPoint(x: frame.midX, y: frame.midY)
-        return screenFrames.firstIndex { $0.contains(centre) }
+        if let index = screenFrames.firstIndex(where: { $0.contains(centre) }) { return index }
+        return screenFrames.indices.filter { screenFrames[$0].intersection(frame).area > 0 }.max {
+            screenFrames[$0].intersection(frame).area < screenFrames[$1].intersection(frame).area
+        }
     }
 
     /// Drops the caches when a session ends.

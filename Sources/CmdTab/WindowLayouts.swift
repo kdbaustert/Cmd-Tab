@@ -82,10 +82,17 @@ enum LayoutGeometry {
     /// Falls back to the primary display when that one is not connected — the honest degradation.
     /// A window from an absent monitor lands in the same relative place on a screen the user can
     /// actually see, which beats both dropping it and putting it at coordinates nothing covers.
+    /// The same fallback catches a window whose display had no readable UUID when it was captured,
+    /// which is saved as no display at all and cannot be told apart from one that has since gone.
+    ///
+    /// "Primary" is the display carrying the menu bar, asked of the display list rather than taken
+    /// as its first element: the list is in `NSScreen.screens` order so that callers who pair it
+    /// with a screen index stay aligned, and nothing promises the primary sits at the front of it.
     static func absolute(_ window: LayoutWindow, displays: [WindowTiler.DisplayArea]) -> CGRect? {
         guard !displays.isEmpty else { return nil }
         let home =
             window.displayID.flatMap { id in displays.first { $0.id == id } }
+            ?? displays.first(where: \.isPrimary)
             ?? displays[0]
         let area = home.area
         let frame = CGRect(
@@ -206,6 +213,11 @@ enum WindowLayoutEngine {
     ///
     /// Runs on `queue` and comes back on the main thread, because reading a wedged app's window list
     /// blocks for the Accessibility messaging timeout and there may be dozens of apps.
+    ///
+    /// `@MainActor` for the prelude, not the walk: `NSScreen` and `NSWorkspace` are both read before
+    /// anything is handed off, and the isolation is what makes that a compiler-checked fact rather
+    /// than a comment every future caller has to notice.
+    @MainActor
     static func capture(completion: @escaping ([LayoutWindow]) -> Void) {
         // `runningApplications` and `NSScreen` are both main-thread work, so they are read here and
         // only the Accessibility walk goes to the queue.
@@ -240,6 +252,10 @@ enum WindowLayoutEngine {
     }
 
     /// Puts every window back where the layout says, as far as it can.
+    ///
+    /// `@MainActor` for the same reason `capture` is: the running-application list and the display
+    /// geometry are both read here, before the Accessibility work goes to `queue`.
+    @MainActor
     static func restore(_ windows: [LayoutWindow], completion: ((Result) -> Void)? = nil) {
         let live = NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular && !$0.isTerminated }
@@ -551,10 +567,4 @@ struct LayoutShortcuts: Equatable {
                     [.maskCommand, .maskAlternate, .maskControl, .maskShift]) == pressed
         }?.id
     }
-}
-
-extension CGRect {
-    /// Zero for a null rect, which `intersection` returns when two frames do not overlap at all —
-    /// `CGRect.null` has an infinite size, so its `width * height` is not a number you can compare.
-    fileprivate var area: CGFloat { isNull || isEmpty ? 0 : width * height }
 }

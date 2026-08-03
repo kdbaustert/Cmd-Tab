@@ -6,8 +6,10 @@ import XCTest
 /// Saved layouts: turning absolute frames into display-relative ones and back, and re-identifying a
 /// saved window among the live ones. Both are the parts that have to survive the desk changing.
 final class WindowLayoutTests: XCTestCase {
+    /// The built-in display, carrying the menu bar — so this is the one a window whose own display
+    /// is gone falls back to.
     private let laptop = WindowTiler.DisplayArea(
-        id: "laptop", area: CGRect(x: 0, y: 0, width: 1440, height: 900))
+        id: "laptop", area: CGRect(x: 0, y: 0, width: 1440, height: 900), isPrimary: true)
     private let external = WindowTiler.DisplayArea(
         id: "external", area: CGRect(x: 1440, y: 0, width: 2560, height: 1440))
     /// The same physical monitor at a lower resolution — same id, different size.
@@ -72,6 +74,27 @@ final class WindowLayoutTests: XCTestCase {
     func testMissingDisplayFallsBackToThePrimaryOne() {
         let entry = saved("Notes", display: "external", frame: rightHalf)
         let frame = LayoutGeometry.absolute(entry, displays: [laptop])
+        XCTAssertEqual(frame, CGRect(x: 720, y: 0, width: 720, height: 900))
+    }
+
+    /// "Primary" means the display with the menu bar, not the first one in the list. The list is in
+    /// `NSScreen.screens` order so that callers pairing it with a screen index stay aligned, and a
+    /// desk can perfectly well report an external monitor first — where taking index 0 would drop
+    /// the window onto exactly the monitor the user has just unplugged the *other* one to avoid.
+    func testMissingDisplayFallsBackToTheMenuBarDisplayNotTheFirstOne() {
+        let secondExternal = WindowTiler.DisplayArea(
+            id: "second", area: CGRect(x: -1920, y: 0, width: 1920, height: 1080))
+        let entry = saved("Notes", display: "external", frame: rightHalf)
+        let frame = LayoutGeometry.absolute(entry, displays: [secondExternal, laptop])
+        XCTAssertEqual(frame, CGRect(x: 720, y: 0, width: 720, height: 900))
+    }
+
+    /// A window whose display had no readable UUID when it was captured is stored with no display at
+    /// all, which cannot be told apart from one whose display has since gone. It takes the same
+    /// fallback rather than landing wherever the list happens to start.
+    func testAWindowSavedWithNoDisplayTakesTheSameFallback() {
+        let entry = saved("Notes", display: nil, frame: rightHalf)
+        let frame = LayoutGeometry.absolute(entry, displays: [external, laptop])
         XCTAssertEqual(frame, CGRect(x: 720, y: 0, width: 720, height: 900))
     }
 

@@ -232,7 +232,7 @@ final class DragSnap {
                 [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return nil }
         // Screen point is bottom-up; the window list is top-down.
-        guard let primary = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)
+        guard let primary = NSScreen.primary
         else { return nil }
         let flipped = CGPoint(x: point.x, y: primary.frame.height - point.y)
 
@@ -360,7 +360,7 @@ final class SnapPreview {
         self.panel = panel
         restyle(panel)
         // Back from Accessibility's top-left space into Cocoa's bottom-up screen space.
-        guard let primary = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)
+        guard let primary = NSScreen.primary
         else { return }
         let rect = NSRect(
             x: areaFrame.minX, y: primary.frame.height - areaFrame.maxY,
