@@ -85,7 +85,6 @@ enum SettingsAnchor {
     static let tiling = "windows.tiling"
     static let mouseDrag = "windows.mouseDrag"
     static let allWindows = "windows.allWindows"
-    static let layouts = "windows.layouts"
 
     static let session = "behavior.session"
     static let contents = "behavior.contents"
@@ -141,7 +140,11 @@ enum SettingsIndex {
 
         item("configFile", .general, SettingsAnchor.configFile, "Configuration file",
              "Keep settings in a config file",
-             ["config", "config file", "dotfiles", "json", "xdg", "sync", "symlink", "~/.config"]),
+             ["config", "config file", "dotfiles", "json", "xdg", "symlink", "~/.config"]),
+        item("iCloudSync", .general, SettingsAnchor.configFile, "Configuration file",
+             "Sync settings over iCloud",
+             ["icloud", "icloud drive", "cloud", "sync", "sync settings", "between macs",
+              "share settings", "another mac", "second mac", "backup"]),
 
         item("restoreNative", .general, SettingsAnchor.recovery, "Recovery",
              "Restore macOS \u{2318}-Tab",
@@ -177,9 +180,6 @@ enum SettingsIndex {
              ["mouse", "drag", "modifier", "move window", "resize", "rectangle", "alt drag",
               "grab", "pointer", "trackpad", "point", "hold", "dot", "anchor", "highlight",
               "color", "colour", "dot color", "accent"]),
-        item("layouts", .windows, SettingsAnchor.layouts, "Saved layouts", "Saved layouts",
-             ["layout", "layouts", "workspace", "arrangement", "snapshot", "save windows",
-              "restore windows", "session", "desk"]),
         item("allWindows", .windows, SettingsAnchor.allWindows, "All windows",
              "Hide all windows",
              ["hide all", "show all", "desktop", "clear screen", "show desktop", "unhide"]),
@@ -444,6 +444,29 @@ struct GeneralSettings: View {
     @ObservedObject var behavior: BehaviorStore
     @ObservedObject private var config = ConfigFile.shared
 
+    /// Says what the switch does, and why it is unavailable when it is. A greyed-out iCloud row with
+    /// no reason given reads as a bug in the app rather than as a switch turned off in System
+    /// Settings.
+    ///
+    /// It also has to say where the file goes when both switches are on, since that is the one case
+    /// where turning this on moves a file the other switch put somewhere else.
+    private var iCloudSyncSubtitle: String {
+        guard ConfigFile.isICloudAvailable else {
+            return "iCloud Drive is not set up on this Mac. Turn it on in System Settings to share "
+                + "one set of settings between your Macs."
+        }
+        if config.isICloudSyncEnabled {
+            // No path here: "Show the file" below spells out where it went, and repeating it turns
+            // the one line explaining what sync *does* into a line about a directory.
+            return "Every Mac signed into this iCloud account reads and writes the same file, so a "
+                + "change on one turns up on the others. Changed on two Macs at once, iCloud keeps "
+                + "both and leaves a conflicted copy beside it."
+        }
+        return "Keeps the settings file in iCloud Drive instead, where your other Macs see it. "
+            + "Works on its own — the config-file switch above is not needed, and turning this on "
+            + "while it is set moves the file rather than keeping two that would drift apart."
+    }
+
     var body: some View {
         SettingsPage(title: "General", subtitle: "How Cmd-Tab itself starts and presents itself.") {
             SettingsSection(title: "Startup", anchor: SettingsAnchor.startup) {
@@ -502,15 +525,23 @@ struct GeneralSettings: View {
                 title: "Configuration file", anchor: SettingsAnchor.configFile,
                 footer: "Written in place rather than replaced, so a symlink into a dotfiles repo "
                     + "survives every save. On launch the file wins over local settings — that is "
-                    + "what makes a fresh checkout come up configured."
+                    + "what makes a fresh checkout come up configured, and what makes a second Mac "
+                    + "pick up the settings iCloud sent it rather than publish its own over them."
             ) {
                 SettingsToggle(
                     title: "Keep settings in a config file",
-                    subtitle: "Mirrors every preference to \(ConfigFile.displayPath). Edits to the "
-                        + "file apply live; changes made here are written back.",
+                    subtitle: "Mirrors every preference to \(ConfigFile.displayPath(for: .local)). "
+                        + "Edits to the file apply live; changes made here are written back.",
                     isOn: Binding(
-                        get: { config.isEnabled },
-                        set: { config.setEnabled($0) }))
+                        get: { config.isFileEnabled },
+                        set: { config.setFileEnabled($0) }))
+                SettingsToggle(
+                    title: "Sync settings over iCloud",
+                    subtitle: iCloudSyncSubtitle,
+                    isOn: Binding(
+                        get: { config.isICloudSyncEnabled },
+                        set: { config.setICloudSyncEnabled($0) }))
+                .disabled(!ConfigFile.isICloudAvailable)
                 SettingsRow(title: "Show the file", subtitle: ConfigFile.displayPath) {
                     Button("Reveal in Finder", action: config.revealInFinder)
                         .disabled(!config.isEnabled)

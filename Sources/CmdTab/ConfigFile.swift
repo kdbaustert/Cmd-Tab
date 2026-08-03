@@ -17,10 +17,11 @@ final class ConfigFile: ObservableObject {
 
     private enum Key {
         static let enabled = "useConfigFile"
+        static let iCloudSync = "syncSettingsViaICloud"
     }
 
     /// Every key this owns, for export/import/reset.
-    static let defaultsKeys = [Key.enabled]
+    static let defaultsKeys = [Key.enabled, Key.iCloudSync]
 
     /// How long a burst of writes is allowed to settle before we mirror it out.
     ///
@@ -29,7 +30,30 @@ final class ConfigFile: ObservableObject {
     /// the time anyone alt-tabs to their editor.
     private static let writeDebounce: TimeInterval = 0.4
 
-    @Published private(set) var isEnabled: Bool
+    /// The dotfiles switch: keep a config file on this Mac.
+    @Published private(set) var isFileEnabled: Bool
+    /// The sync switch: keep that file in iCloud Drive, where the other Macs see it.
+    @Published private(set) var isICloudSyncEnabled: Bool
+
+    /// Whether anything is being mirrored at all. Either switch is reason enough — they ask for the
+    /// same machinery and differ only in which directory it points at, which is what lets iCloud
+    /// sync be turned on without first opting into a dotfiles file.
+    var isEnabled: Bool { Self.resolve(file: isFileEnabled, sync: isICloudSyncEnabled).enabled }
+
+    /// Where the one mirror lives.
+    var location: Location { Self.resolve(file: isFileEnabled, sync: isICloudSyncEnabled).location }
+
+    /// What the two switches mean together.
+    ///
+    /// One mirror, never two: when both are on the file lives in iCloud Drive, because that is the
+    /// copy that syncs and a second one under `~/.config` would start diverging from it the moment
+    /// either changed — two files each claiming to be the settings, with nothing to say which wins.
+    ///
+    /// A function rather than a pair of stored flags so the table can be checked without a real
+    /// `UserDefaults` to write to.
+    static func resolve(file: Bool, sync: Bool) -> (enabled: Bool, location: Location) {
+        (file || sync, sync ? .iCloud : .local)
+    }
 
     /// The bytes last written or read, so our own writes do not read back as external edits.
     private var lastSynced: Data?
@@ -38,9 +62,42 @@ final class ConfigFile: ObservableObject {
     private var writeWorkItem: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
 
+    /// Where the mirrored file lives. The mechanism is identical either way — the same JSON, the same
+    /// watcher, the same two-way mirroring — so this only ever picks a directory.
+    enum Location: String, CaseIterable {
+        /// `~/.config/cmdtab/config.json`, for a dotfiles repo.
+        case local
+        /// Inside iCloud Drive, where every Mac signed into the same account sees the same file.
+        case iCloud
+
+        var title: String {
+            switch self {
+            case .local: return "This Mac"
+            case .iCloud: return "iCloud Drive"
+            }
+        }
+    }
+
+    /// The file, wherever it currently lives.
+    ///
+    /// Reads the location straight out of `UserDefaults` rather than from `shared`, so the static
+    /// accessors stay usable from anywhere without hopping onto the main actor for a path.
+    static var url: URL { url(for: storedLocation) }
+
+    static var storedLocation: Location {
+        UserDefaults.standard.bool(forKey: Key.iCloudSync) ? .iCloud : .local
+    }
+
+    static func url(for location: Location) -> URL {
+        switch location {
+        case .local: return localURL
+        case .iCloud: return iCloudURL ?? localURL
+        }
+    }
+
     /// `~/.config/cmdtab/config.json`, honouring `XDG_CONFIG_HOME` where it is set — anyone who has
     /// moved their config root has done so deliberately and expects everything to follow.
-    static var url: URL {
+    static var localURL: URL {
         let base: URL
         if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
             base = URL(fileURLWithPath: xdg, isDirectory: true)
@@ -52,13 +109,38 @@ final class ConfigFile: ObservableObject {
             .appendingPathComponent("config.json")
     }
 
+    /// `~/Library/Mobile Documents/com~apple~CloudDocs/Cmd-Tab/config.json`, or nil when iCloud Drive
+    /// is not set up on this Mac.
+    ///
+    /// The user-visible iCloud Drive folder, reached by its own path rather than through
+    /// `url(forUbiquityContainerIdentifier:)`. That call wants the ubiquity-container entitlement and
+    /// a provisioning profile naming a team; this app ships neither and is signed for direct
+    /// distribution, where a plain file in CloudDocs syncs perfectly well and needs no entitlement at
+    /// all. The trade is that the file is visible to the user in Finder — which, for a config file
+    /// whose whole point is being editable, is the right side of the trade anyway.
+    static var iCloudURL: URL? {
+        let cloudDocs = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: cloudDocs.path) else { return nil }
+        return cloudDocs.appendingPathComponent("Cmd-Tab", isDirectory: true)
+            .appendingPathComponent("config.json")
+    }
+
+    /// Whether iCloud Drive is available to sync to. False means the account is signed out or iCloud
+    /// Drive is switched off, and the option has to be refused rather than silently writing to a
+    /// folder that syncs nowhere.
+    static var isICloudAvailable: Bool { iCloudURL != nil }
+
     /// Where the file is, in the form a person would type — `~` rather than `/Users/…`.
-    static var displayPath: String {
-        (url.path as NSString).abbreviatingWithTildeInPath
+    static var displayPath: String { displayPath(for: storedLocation) }
+
+    static func displayPath(for location: Location) -> String {
+        (url(for: location).path as NSString).abbreviatingWithTildeInPath
     }
 
     private init() {
-        isEnabled = UserDefaults.standard.bool(forKey: Key.enabled)
+        isFileEnabled = UserDefaults.standard.bool(forKey: Key.enabled)
+        isICloudSyncEnabled = UserDefaults.standard.bool(forKey: Key.iCloudSync)
     }
 
     /// Called once at launch. When the file is already in use it wins over what is in
@@ -67,49 +149,143 @@ final class ConfigFile: ObservableObject {
     /// the stale copy the file is meant to replace.
     func start() {
         guard isEnabled else { return }
+        let waiting = requestDownload()
         if FileManager.default.fileExists(atPath: Self.url.path) {
             readFromDisk()
-        } else {
+        } else if !waiting {
             // Enabled but missing — a repo checked out without the file, or someone deleted it.
             // Recreate it from what we have rather than silently doing nothing.
+            //
+            // Not when a download is pending: "missing" then means iCloud has the file and has not
+            // handed it over yet, and writing would publish this Mac's settings over the ones on
+            // their way down. The watcher picks them up when they land.
             writeToDisk()
         }
         beginWatching()
         observeSettingsChanges()
     }
 
-    /// Re-reads the switch from `UserDefaults` and starts or stops watching to match.
+    /// Re-reads both switches from `UserDefaults` and starts, stops or moves the mirror to match.
     ///
-    /// Called after an import or a reset, both of which write the key underneath us: "Reset to
-    /// defaults" clears it, and without this the app went on mirroring to a file the preferences
+    /// Called after an import or a reset, both of which write the keys underneath us: "Reset to
+    /// defaults" clears them, and without this the app went on mirroring to a file the preferences
     /// said it had stopped using — a watcher running against a setting that was no longer true.
     /// Guarded on an actual change so re-reading cannot tear down a healthy watcher.
     func reload() {
-        let stored = UserDefaults.standard.bool(forKey: Key.enabled)
-        guard stored != isEnabled else { return }
-        isEnabled = stored
-        if stored {
-            beginWatching()
-            observeSettingsChanges()
-        } else {
+        let file = UserDefaults.standard.bool(forKey: Key.enabled)
+        let sync = UserDefaults.standard.bool(forKey: Key.iCloudSync)
+        guard file != isFileEnabled || sync != isICloudSyncEnabled else { return }
+        let before = state
+        isFileEnabled = file
+        isICloudSyncEnabled = sync
+        transition(from: before)
+    }
+
+    /// The dotfiles switch. Turning it off while iCloud sync is on leaves the mirror running — it
+    /// just moves back to `~/.config` if sync is off too, and stops entirely when neither wants it.
+    func setFileEnabled(_ on: Bool) {
+        guard on != isFileEnabled else { return }
+        let before = state
+        isFileEnabled = on
+        UserDefaults.standard.set(on, forKey: Key.enabled)
+        transition(from: before)
+    }
+
+    /// The sync switch. Independent of the dotfiles one: turning this on alone starts mirroring
+    /// straight into iCloud Drive, which is the whole point of it being its own control.
+    ///
+    /// Refused when iCloud Drive is not set up, rather than writing into a folder that syncs
+    /// nowhere — that would look exactly like sync that silently never works.
+    func setICloudSyncEnabled(_ on: Bool) {
+        guard on != isICloudSyncEnabled else { return }
+        if on, !Self.isICloudAvailable {
+            Log.general.error("config file: iCloud Drive is unavailable; sync not enabled")
+            return
+        }
+        let before = state
+        isICloudSyncEnabled = on
+        UserDefaults.standard.set(on, forKey: Key.iCloudSync)
+        transition(from: before)
+        Log.general.notice(
+            "config file: iCloud sync \(on ? "on" : "off", privacy: .public), mirroring to \(Self.displayPath, privacy: .public)")
+    }
+
+    /// Whether anything is mirrored and where, as one value — so a transition can be described by
+    /// what it was before rather than by which switch the user happened to touch.
+    private struct State {
+        let enabled: Bool
+        let location: Location
+    }
+
+    private var state: State { State(enabled: isEnabled, location: location) }
+
+    /// Brings the watcher and the file into line after either switch moves.
+    ///
+    /// Three outcomes, and only three: nothing is mirrored any more, the mirror moved to a different
+    /// file, or nothing about the file changed and a healthy watcher is left alone.
+    private func transition(from before: State) {
+        guard isEnabled else {
             stopWatching()
+            // The file is deliberately left on disk. It may be a symlink into a repo, or the copy
+            // the *other* Macs are still syncing against, and deleting either because a checkbox
+            // was unticked is not ours to do.
+            return
+        }
+        // Already mirroring the same file: the switches moved, the destination did not.
+        guard !before.enabled || before.location != location else { return }
+        stopWatching()
+        lastSynced = nil  // a different file entirely; nothing about the old one's bytes applies
+        adopt(
+            destination: Self.url,
+            seedingFrom: before.enabled ? Self.url(for: before.location) : Self.url)
+        beginWatching()
+        observeSettingsChanges()
+    }
+
+    /// What the file at a newly chosen location means. Three cases, and getting them the wrong way
+    /// round is precisely how a sync loses somebody's settings:
+    ///
+    /// - Something is already there — another Mac's copy, or an older one of ours. It wins, exactly
+    ///   as the file wins at launch.
+    /// - iCloud has it and has not sent it down yet. Wait; writing now would overwrite it.
+    /// - Nothing there at all. Seed it from the file we were using, so turning sync on publishes
+    ///   this Mac's settings rather than blanking them.
+    private func adopt(destination: URL, seedingFrom previous: URL) {
+        if FileManager.default.fileExists(atPath: destination.path) {
+            readFromDisk()
+            return
+        }
+        if requestDownload() { return }
+        if let data = try? Data(contentsOf: previous) {
+            write(data, to: destination)
+        } else {
+            writeToDisk()
         }
     }
 
-    func setEnabled(_ enabled: Bool) {
-        guard enabled != isEnabled else { return }
-        isEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Key.enabled)
-        if enabled {
-            writeToDisk()  // seed it from the current settings; the file starts as a true mirror
-            beginWatching()
-            observeSettingsChanges()
-        } else {
-            stopWatching()
-            // The file is deliberately left on disk. It may be a symlink into a repo, and deleting
-            // a tracked file because a checkbox was unticked is not ours to do.
-        }
+    /// The file iCloud has but this Mac has not pulled down yet, if there is one.
+    ///
+    /// An undownloaded item is a `.name.icloud` placeholder sitting beside where the real file goes.
+    /// Worth the check because "nothing here" and "it exists, on another Mac" call for opposite
+    /// responses, and treating the second as the first is how setting up a second Mac would
+    /// overwrite the settings of the first.
+    private var pendingDownload: URL? {
+        guard location == .iCloud else { return nil }
+        let url = Self.url
+        let placeholder = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).icloud")
+        return FileManager.default.fileExists(atPath: placeholder.path) ? url : nil
     }
+
+    /// Asks iCloud for the file, and says whether anything is now being waited on.
+    @discardableResult
+    private func requestDownload() -> Bool {
+        guard let url = pendingDownload else { return false }
+        try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        Log.general.notice("config file: waiting for iCloud to send the file down")
+        return true
+    }
+
 
     /// Reveals the file in Finder, creating it first if it is somehow missing.
     func revealInFinder() {
@@ -146,8 +322,14 @@ final class ConfigFile: ObservableObject {
         // Nothing changed since the last sync — skip the write entirely rather than touch the file's
         // mtime, which would wake the watcher and (harmlessly, but pointlessly) re-read it.
         guard data != lastSynced else { return }
+        // Never over a copy iCloud is still sending down: that is this Mac's settings overwriting
+        // the ones it is in the middle of receiving. Self-correcting — once the file lands, the
+        // placeholder is gone and writes resume.
+        guard pendingDownload == nil else { return }
+        write(data, to: Self.url)
+    }
 
-        let url = Self.url
+    private func write(_ data: Data, to url: URL) {
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

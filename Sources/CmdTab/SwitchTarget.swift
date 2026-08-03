@@ -106,17 +106,32 @@ extension SwitchTarget {
     /// from Desktop 4 quietly moved it to Desktop 4 instead of taking the user to it.
     private static let spaceChanges = SpaceChangeCounter()
 
-    /// Registered once, on the main thread; read from `focusQueue`. Its own tiny type so the lock
-    /// around the count stays next to it.
-    final class SpaceChangeCounter: @unchecked Sendable {
+    /// Registers the observer from the main thread at launch instead of leaving it to whichever pick
+    /// touches `spaceChanges` first — that would be `focusQueue`, and `NSWorkspace.shared`'s own
+    /// first initialisation is not background work to be doing in the middle of a pick.
+    ///
+    /// Only decides *when*: the `static let` is what registers, so a pick that somehow beats this
+    /// call still gets an observer, and one that follows it does not get a second.
+    static func warmSpaceTracking() {
+        _ = spaceChanges.value
+    }
+
+    /// Registered once and never removed — it lives as long as the process, which is why the
+    /// observer token is not kept. Its own tiny type so the lock around the count stays next to it;
+    /// the increment lands on the main thread and the read comes from `focusQueue`.
+    private final class SpaceChangeCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var count: UInt64 = 0
 
         init() {
+            // `queue: nil` runs the block synchronously on the thread that posts, rather than hopping
+            // it onto a queue: a transition that has landed has to be visible to the very next poll
+            // on `focusQueue`, not one hop later.
             NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: nil
-            ) { [self] _ in
-                lock.withLock { count &+= 1 }
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.lock.withLock { self.count &+= 1 }
             }
         }
 
@@ -162,13 +177,18 @@ extension SwitchTarget {
                     // the direct raise is both correct and what this path has always done.
                     //
                     // The no-id half of that is *not* safe in the same way: a raise with no Space
-                    // check drags an off-Desktop window onto the current one. Logged so it can be
-                    // told apart from the minimized case it shares a branch with.
-                    Log.general.notice(
-                        """
-                        window pick: raising pid \(pid, privacy: .public) blind \
-                        (id=\(resolved ?? 0, privacy: .public) minimized=\(wasMinimized, privacy: .public))
-                        """)
+                    // check drags an off-Desktop window onto the current one. The two say different
+                    // things in the log despite sharing a branch, because only one of them is a
+                    // suspect when a window turns up on the wrong Desktop.
+                    if wasMinimized {
+                        Log.general.notice(
+                            "window pick: unminimizing pid \(pid, privacy: .public) (id=\(resolved ?? 0, privacy: .public))"
+                        )
+                    } else {
+                        Log.general.notice(
+                            "window pick: raising pid \(pid, privacy: .public) blind — no window id, Space unchecked"
+                        )
+                    }
                     Self.beginFocus()
                     Self.raise(element: window)
                     Self.activate(pid: pid)
@@ -526,15 +546,25 @@ extension SwitchTarget {
             // Both gates, and the Space one first: on-screen membership opens during the animation,
             // so on its own it lets the activation through in exactly the window where it still
             // relocates the window. See `spaceChanges`.
+            //
+            // Each read once and reused below. `isOnScreen` is a window-server round-trip on the
+            // pick's critical path, and it runs up to fourteen times per switch as it is.
             let arrived = awaitingSpaceChange.map { spaceChanges.value > $0 } ?? true
-            if arrived, awaitingSpaceChange != nil, isOnScreen(window: id) {
+            let onScreen = isOnScreen(window: id)
+            // Only the switched path has anything to say: a same-Desktop pick opens both gates on
+            // its first attempt. Which gate is holding is the whole question this logging exists to
+            // answer — "transition still in flight" and "transition landed, window not composited
+            // yet" are different problems, and the combined test cannot tell them apart.
+            if awaitingSpaceChange != nil {
                 Log.general.notice(
                     """
-                    focus window \(id, privacy: .public): Desktop transition landed, \
+                    focus window \(id, privacy: .public): \
+                    transition=\(arrived ? "landed" : "in flight", privacy: .public) \
+                    onScreen=\(onScreen, privacy: .public), \
                     \(attempts, privacy: .public) attempts left
                     """)
             }
-            guard arrived, isOnScreen(window: id) else {
+            guard arrived, onScreen else {
                 settle(
                     window: id, pid: pid, attempts: attempts - 1, delay: delay,
                     generation: generation, actWhenUnreached: actWhenUnreached,
@@ -552,17 +582,30 @@ extension SwitchTarget {
     /// surface. Runs on `focusQueue`.
     private static func focusAndActivate(window id: CGWindowID, pid: pid_t, generation: UInt64) {
         let raised = raise(window: id, pid: pid)
-        activate(pid: pid)
+        // Front *this window*, not its app. `NSRunningApplication.activate()` is app-level, and on a
+        // machine with several Desktops that is the very relocation the Space gate above exists to
+        // prevent, arriving one line later by another route: it gathers the app's *other* windows
+        // onto the Desktop in front of you, so reaching one Ghostty window still dragged the one on
+        // Desktop 4 across. `FrontProcess` names the window to the window server instead, and the
+        // siblings stay where the user left them. False means the private symbols are gone — plain
+        // activation is wrong about Spaces, but a pick that does nothing at all is worse.
+        let fronted = FrontProcess.focus(window: id, pid: pid)
+        if !fronted { activate(pid: pid) }
         // Where things actually ended up, half a second after the dust settles. The difference that
         // matters: `window == current` on the Desktop we switched *to* means the pick worked, while
         // the window having moved to the Desktop we came *from* means something relocated it.
         focusQueue.asyncAfter(deadline: .now() + 0.5) {
-            guard let state = SpaceMover.spaceState(of: id) else { return }
+            // A superseded pick's diagnostic is not worth a whole display/Space enumeration on the
+            // serial queue the pick that replaced it is waiting to use.
+            guard generation == focusGeneration, let state = SpaceMover.spaceState(of: id) else {
+                return
+            }
             Log.general.notice(
                 """
                 focus window \(id, privacy: .public): after activation \
                 windowSpace=\(state.windowSpace, privacy: .public) \
-                current=\(state.currentSpace, privacy: .public)
+                current=\(state.currentSpace, privacy: .public) \
+                fronted=\(fronted, privacy: .public)
                 """)
         }
         // Apps that build their accessibility tree lazily (Chromium, Electron) report *no* windows

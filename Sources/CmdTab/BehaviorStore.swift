@@ -126,13 +126,13 @@ enum PanelPosition: String, CaseIterable {
 /// the bundle Resources (`<name>.png` plus `@2x`/`@3x`), so AppKit picks the scale for the display
 /// and tints the artwork for a light or dark menu bar.
 ///
-/// The artwork is a 22pt canvas rather than the conventional 18pt, and each glyph was trimmed of
-/// the padding its own artboard carried and rescaled to fill 95% of that canvas on its longest
-/// side. Both steps matter: the source art padded each glyph differently, so shipping it as drawn
-/// left the ⌘ around 12pt while the keycap sat near 18, and they read as inconsistent as well as
-/// undersized next to the system's own menu-bar items. `NSImage.size` follows the @1x pixel size,
-/// so the canvas is what sets the on-screen height — there is no separate scale to set at the
-/// status item, and 22pt is the ceiling before the menu bar clips.
+/// The artwork ships on a 22pt canvas, and each glyph was trimmed of the padding its own artboard
+/// carried and rescaled to fill 95% of that canvas on its longest side. That trimming still matters:
+/// the source art padded each glyph differently, so shipping it as drawn left the ⌘ around 12pt
+/// while the keycap sat near 18, and they read as inconsistent whatever size they are drawn at.
+///
+/// The canvas no longer sets the on-screen height, though — `image` resizes to `drawnHeight`, which
+/// is what the menu bar actually shows.
 ///
 /// The raw values are persisted, so renaming a case drops that user back to the default.
 enum MenuBarIcon: String, CaseIterable {
@@ -162,12 +162,29 @@ enum MenuBarIcon: String, CaseIterable {
         }
     }
 
+    /// How tall the glyph is drawn in the menu bar, on its longest side.
+    ///
+    /// The PNGs are cut at 22pt, which `NSImage.size` picks up from the @1x pixel size, and at that
+    /// height they sat noticeably larger than the system's own menu-bar items. Resized here rather
+    /// than re-cut, so the @2x/@3x representations survive — AppKit still picks the right one for
+    /// the display, and only the drawn size changes.
+    private static let drawnHeight: CGFloat = 18
+
     /// The artwork, ready for either a status item or a menu of choices. Marked as a template here
     /// rather than at each call site — every one of these is a template, and an unflagged one would
     /// render as flat black on a dark menu bar.
     var image: NSImage? {
-        let image = NSImage(named: imageName)
-        image?.isTemplate = true
+        // A copy: `NSImage(named:)` hands back a shared cached instance, and resizing that would
+        // reach every other user of the same artwork.
+        guard let image = NSImage(named: imageName)?.copy() as? NSImage else { return nil }
+        image.isTemplate = true
+        // Fitted by the longest side rather than forced square: the Command-Tab glyph is wider than
+        // it is tall, and setting both dimensions would squash it.
+        let size = image.size
+        if size.width > 0, size.height > 0 {
+            let scale = Self.drawnHeight / max(size.width, size.height)
+            image.size = NSSize(width: size.width * scale, height: size.height * scale)
+        }
         return image
     }
 }
@@ -387,7 +404,7 @@ final class BehaviorStore: ObservableObject {
             "iconSize", "iconSpacing", "titleSpacing",
             "excludedBundleIDs", "favoriteBundleIDs",
         ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
-        + SwitcherShortcutsStore.defaultsKeys + WindowLayoutsStore.defaultsKeys
+        + SwitcherShortcutsStore.defaultsKeys
 
     /// The keys export/import/reset operate on.
     static var ownedDefaultsKeys: [String] { ownedKeys.map(\.name) + otherStoreKeys }

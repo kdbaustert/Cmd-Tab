@@ -149,8 +149,6 @@ final class SwitcherController {
     var activations = DirectActivations()
     /// The hide-all / show-all chords.
     var allWindows = AllWindowsShortcuts()
-    /// Chords that restore a saved window layout.
-    var layouts = LayoutShortcuts()
     /// Extra triggers that open a narrowed window list.
     var scopedTriggers = ScopedTriggers()
 
@@ -577,16 +575,6 @@ final class SwitcherController {
         }
         if let action = allWindows.action(code: code, flags: flags) {
             if acts { GlobalActions.perform(action) }
-            return true
-        }
-        // Before tiling, so a chord shared with an arrangement restores the layout: a layout is the
-        // more specific instruction, and the user had to record it against a named thing to have it
-        // at all. The Windows pane warns about the clash either way.
-        if let id = layouts.layoutID(code: code, flags: flags) {
-            if acts {
-                Log.tap.notice("layout: restoring \(id, privacy: .public)")
-                DispatchQueue.main.async { WindowLayoutsStore.shared.restore(id: id) }
-            }
             return true
         }
         if let arrangement = tiling.arrangement(code: code, flags: flags) {

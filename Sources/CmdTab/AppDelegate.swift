@@ -55,12 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller.scopedTriggers = triggers
         }
 
-        let layouts = WindowLayoutsStore.shared
-        applyLayouts(layouts)
-        layouts.onChange = { [weak self] _ in
-            self?.applyLayouts(layouts)
-        }
-
         let shortcuts = SwitcherShortcutsStore.shared
         applySwitcherShortcuts(shortcuts)
         shortcuts.onChange = { [weak self] _ in
@@ -86,6 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Catalogued off the main thread now, so the first query that needs it does not pay for a
         // few hundred Info.plist reads mid-keystroke.
         InstalledApps.warm()
+
+        // Same reason, from the main thread: the Desktop-transition observer a cross-Desktop pick
+        // waits on should not be registered from inside the pick that first needs it.
+        SwitchTarget.warmSpaceTracking()
 
         installSignalHandlers()
 
@@ -152,14 +150,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyGlobalActions(_ store: GlobalActionsStore) {
         controller.activations = store.activations
         controller.allWindows = store.allWindows
-    }
-
-    /// The chords that restore a saved layout, flattened so the tap never touches the store.
-    private func applyLayouts(_ store: WindowLayoutsStore) {
-        controller.layouts = LayoutShortcuts(
-            entries: store.layouts.compactMap { layout in
-                layout.hotkey.map { (id: layout.id, hotkey: $0) }
-            })
     }
 
     /// The in-switcher window actions. `actionsEnabled` is set before the bindings, so the shadow

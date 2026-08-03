@@ -19,7 +19,6 @@ struct ShortcutEntry: Identifiable {
         case scopedTrigger
         case directActivation
         case allWindows
-        case savedLayout
         case tiling
         /// Matched in a separate namespace entirely — with the trigger held, against the *extra*
         /// modifiers — so these can never collide with anything above them, only with each other.
@@ -34,7 +33,6 @@ struct ShortcutEntry: Identifiable {
             case .scopedTrigger: return "Scoped shortcut"
             case .directActivation: return "Direct activation"
             case .allWindows: return "All windows"
-            case .savedLayout: return "Saved layout"
             case .tiling: return "Window tiling"
             case .inSwitcherAction: return "Window action"
             }
@@ -46,7 +44,7 @@ struct ShortcutEntry: Identifiable {
             case .switcherTrigger, .appWindowCycle, .scopedTrigger, .inSwitcherAction:
                 return "Shortcuts"
             case .directActivation: return "Apps"
-            case .allWindows, .tiling, .savedLayout: return "Windows"
+            case .allWindows, .tiling: return "Windows"
             }
         }
 
@@ -135,12 +133,6 @@ enum ShortcutAudit {
             entry(.allWindows, "hideAll", "Hide all windows", globals.allWindows.hideAll, active: true))
         out.append(
             entry(.allWindows, "showAll", "Show all windows", globals.allWindows.showAll, active: true))
-
-        for layout in WindowLayoutsStore.shared.layouts {
-            out.append(
-                entry(
-                    .savedLayout, "layout.\(layout.id)", layout.name, layout.hotkey, active: true))
-        }
 
         let tiling = WindowTilingStore.shared
         for arrangement in WindowArrangement.allCases {

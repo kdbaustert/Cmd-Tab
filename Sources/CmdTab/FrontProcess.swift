@@ -48,11 +48,19 @@ enum FrontProcess {
     private static let setFront = symbol("_SLPSSetFrontProcessWithOptions", SetFrontFn.self)
     private static let postEvent = symbol("SLPSPostEventRecordTo", PostEventFn.self)
 
-    /// Every already-loaded image, which is where Carbon's symbol lives — it comes in with AppKit
-    /// rather than from a framework this file has any business `dlopen`ing itself.
+    /// Resolved out of the ApplicationServices umbrella by path, not out of the already-loaded
+    /// images: `RTLD_DEFAULT` does not find this one. Measured on macOS 26 — `import
+    /// ApplicationServices` is not enough to bring the image that vends `GetProcessForPID` in, so
+    /// the search over loaded images came up empty, `isAvailable` was false, and every call here
+    /// silently fell back to the app-level activation this file exists to avoid. The umbrella is
+    /// already a dependency of this target; `dlopen` only forces it to be resident.
     private static let getProcessForPID: GetProcessForPIDFn? = {
-        let anyLoadedImage = UnsafeMutableRawPointer(bitPattern: -2)  // RTLD_DEFAULT
-        guard let pointer = dlsym(anyLoadedImage, "GetProcessForPID") else { return nil }
+        guard
+            let handle = dlopen(
+                "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices",
+                RTLD_LAZY),
+            let pointer = dlsym(handle, "GetProcessForPID")
+        else { return nil }
         return unsafeBitCast(pointer, to: GetProcessForPIDFn.self)
     }()
 

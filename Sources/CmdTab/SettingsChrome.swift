@@ -223,7 +223,7 @@ struct SettingsToggle: View {
     }
 }
 
-/// A slider with its value beside it. The number matters — several of these are point sizes someone
+/// A slider with its value beside it. The number matters — several of these are pixel sizes someone
 /// wants to set exactly, not by feel.
 struct SettingsSlider<V: BinaryFloatingPoint>: View where V.Stride: BinaryFloatingPoint {
     let title: String
@@ -231,19 +231,41 @@ struct SettingsSlider<V: BinaryFloatingPoint>: View where V.Stride: BinaryFloati
     @Binding var value: V
     let range: ClosedRange<V>
     var step: V.Stride = 1
-    /// Shown in place of the number, for sliders whose units are not points.
+    /// Shown in place of the number, for sliders whose units are not pixels — a bare number is read
+    /// as px, so anything else (milliseconds, an "Off" at zero) has to say so itself.
     var format: ((V) -> String)?
 
     var body: some View {
         SettingsRow(title: title, subtitle: subtitle, controlWidth: 190) {
             HStack(spacing: 8) {
-                Slider(value: $value, in: range, step: step)
+                Slider(value: stepped, in: range)
                 Text(format?(value) ?? "\(Int(Double(value)))")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(width: 30, alignment: .trailing)
             }
         }
+    }
+
+    /// The value snapped to `step` on the way in, rather than by handing `step` to the `Slider`.
+    ///
+    /// Same stepping, no tick marks. AppKit draws a tick for every step beneath a slider built with
+    /// the stepping initialiser, so a 0–100 gap in twos arrived as fifty dots under the track — and
+    /// what they were there for is already spelled out in the number beside it.
+    private var stepped: Binding<V> {
+        Binding(
+            get: { value },
+            set: { new in
+                let size = V(step)
+                guard size > 0 else {
+                    value = new
+                    return
+                }
+                // Clamped after rounding: the top of a range that is not a whole number of steps
+                // would otherwise round past its own end.
+                let snapped = (new / size).rounded() * size
+                value = min(max(snapped, range.lowerBound), range.upperBound)
+            })
     }
 }
 

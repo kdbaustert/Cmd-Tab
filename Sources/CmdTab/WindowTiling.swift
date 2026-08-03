@@ -197,9 +197,11 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
 /// frame itself rather than tracked per arrangement: an edge sitting on the usable area's boundary
 /// is an outside edge, anything else meets another tile.
 enum TilingGap {
-    /// The widest gap the settings slider offers. Past this a half is more gap than window on a
-    /// laptop display.
-    static let maximum: CGFloat = 60
+    /// The widest gap the settings slider offers. Generous on purpose — on a large display a gap
+    /// this wide is a deliberate look rather than a mistake — and safe at the top end because
+    /// `inset` refuses outright any gap that would eat more than three quarters of its tile, so the
+    /// extreme of the slider degrades to "no gap" on a tile too small for it instead of inverting.
+    static let maximum: CGFloat = 100
 
     /// A point of slack when deciding whether an edge is on the boundary. The thirds are computed
     /// by division and land a hair off the exact edge — `area.maxX - area.width / 3` is not bitwise
@@ -242,7 +244,7 @@ struct WindowTilingBindings: Equatable {
     /// Drag a window to a screen edge to tile it there. Independent of `isEnabled`: someone may want
     /// the mouse gesture and no global chords at all, or the reverse.
     var dragSnap: Bool = false
-    /// Points of space left around a tiled window: the whole gap against a screen edge, half of it
+    /// Pixels of space left around a tiled window: the whole gap against a screen edge, half of it
     /// where two tiles meet. 0 keeps windows flush, which is what tiling has always done.
     var gap: CGFloat = 0
     var bindings: [WindowArrangement: Hotkey]
@@ -827,7 +829,21 @@ enum WindowTiler {
         let home = areas.filter { $0.intersection(saved).area > 0 }.max { a, b in
             a.intersection(saved).area < b.intersection(saved).area
         } ?? fallback
-        return LayoutGeometry.clamp(saved, into: home)
+        return clamp(saved, into: home)
+    }
+
+    /// Keeps a frame on its display. A restore point captured on a monitor that has since gone would
+    /// otherwise come back proportionally further off a smaller screen, which is how "put it back"
+    /// loses a window on a laptop.
+    ///
+    /// Internal for the same reason `reachable` is: testable without a second monitor to unplug.
+    static func clamp(_ frame: CGRect, into area: CGRect) -> CGRect {
+        let size = CGSize(
+            width: min(frame.width, area.width), height: min(frame.height, area.height))
+        return CGRect(
+            x: min(max(frame.minX, area.minX), area.maxX - size.width),
+            y: min(max(frame.minY, area.minY), area.maxY - size.height),
+            width: size.width, height: size.height)
     }
 
     /// The strip along the top of a window that can be dragged. macOS's own titlebar height; nothing
@@ -918,9 +934,8 @@ enum WindowTiler {
         // `NSScreen.primary` falls back to `main ?? screens.first` when nothing sits at the origin,
         // which a display reconfiguration can transiently produce — so deriving `isPrimary` from
         // `frame.origin == .zero` separately marked no display primary at all while `primaryHeight`
-        // still had an answer. `LayoutGeometry.absolute` then found no primary to fall back to and
-        // dropped a restored layout onto `displays[0]`, which is the wrong-monitor outcome its own
-        // fallback exists to prevent.
+        // still had an answer, so a caller looking for the primary to fall back to found none and
+        // took `displays[0]` instead — the wrong-monitor outcome the fallback exists to prevent.
         let primary = NSScreen.primary
         let primaryHeight = primary?.frame.height ?? 0
         return NSScreen.screens.map { screen in
