@@ -117,6 +117,7 @@ extension SwitchTarget {
             if app.isHidden { app.unhide() }
             app.activate(options: .activateAllWindows)
             Self.restoreWindowIfAllMinimized(pid: pid)
+            Self.reopenIfWindowless(pid: pid, bundleURL: app.bundleURL)
 
         case .window(_, let window):
             if app.isHidden { app.unhide() }
@@ -152,20 +153,41 @@ extension SwitchTarget {
     ///
     /// Runs off the main thread: `focus()` is called from inside the event tap callback, and
     /// every Accessibility call here is IPC that can block on a wedged app.
-    private static func restoreWindowIfAllMinimized(pid: pid_t) {
+    private static func restoreWindowIfAllMinimized(pid: pid_t, attempts: Int = 4) {
         focusQueue.async {
             // An app pick supersedes any window pick still waiting for its Desktop, whether or not
             // the restore below ends up being needed.
             beginFocus()
 
-            // Every window, not just the switchable ones: an app showing only a dialog still has
-            // something on screen, and restoring a minimized window over it would be wrong. The
-            // role check is what keeps Finder's desktop (an AXScrollArea) out.
+            // "Is anything of this app's actually up?" is a question for the window server, not for
+            // `AXWindows`, and asking Accessibility got it wrong in both directions.
+            //
+            // Finder keeps the desktop in its accessibility window list. The role filter here was
+            // meant to drop it — the comment claimed it arrives as an `AXScrollArea` — but it comes
+            // through as a window, so a Finder whose only real window was minimized in the Dock
+            // looked like an app that already had something on screen and the restore never ran.
+            // That is the "Finder won't open" report, and it is why Finder was the app it happened
+            // to: nothing else owns the desktop.
+            //
+            // The window server has no such ambiguity. `.excludeDesktopElements` drops the desktop
+            // by request, minimized windows are absent from the on-screen list by definition, and
+            // it answers for Chromium and Electron hosts whose accessibility tree does not exist
+            // yet. Layer 0 keeps panels and menus from counting as "something is up".
+            guard !hasOnScreenWindow(pid: pid) else { return }
+
+            // Only now does Accessibility get asked anything, and only to find the element to
+            // raise. Apps that build their tree lazily (Chromium, Electron) report nothing until
+            // they are active — `focus()` has just activated this one, so the tree is on its way
+            // and a short retry is the difference between restoring a minimized Chrome window and
+            // silently doing nothing.
             let windows = AX.windows(of: AX.application(pid)).filter(AX.isWindow)
-            guard !windows.isEmpty else { return }
-            // Something is already up — leave the user's arrangement alone.
-            guard !windows.contains(where: { !AX.isMinimized($0) }) else { return }
-            guard let target = windows.first else { return }
+            guard let target = windows.first(where: AX.isMinimized) else {
+                guard windows.isEmpty, attempts > 1 else { return }
+                focusQueue.asyncAfter(deadline: .now() + 0.1) {
+                    restoreWindowIfAllMinimized(pid: pid, attempts: attempts - 1)
+                }
+                return
+            }
 
             raise(element: target)
 
@@ -174,6 +196,56 @@ extension SwitchTarget {
             // Restoring does not reliably bring the app forward on its own, and by now our own
             // activation has already happened.
             activate(pid: pid)
+        }
+    }
+
+    /// Whether `pid` has an ordinary window actually displayed right now — false when its windows
+    /// are all minimized, and false when they are all on another Space.
+    private static func hasOnScreenWindow(pid: pid_t) -> Bool {
+        ownsWindow(pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements])
+    }
+
+    /// Asks an app that owns no window at all to make one, which is what picking its tile means.
+    ///
+    /// `activate()` only moves focus; it never creates a window. So an app that is running with
+    /// nothing open — Finder after its last window is closed is the one everybody hits, but any
+    /// document app left windowless behaves the same — swapped the menu bar and left the screen
+    /// exactly as it was. The pick looked like it did nothing.
+    ///
+    /// The Dock does not have this problem because clicking a Dock tile sends a *reopen* Apple
+    /// event, and an app's response to that is to open a window. `openApplication` on an already
+    /// running app is that same event, so this is the Dock's behaviour and not a new invention.
+    ///
+    /// Emptiness is decided from the window server's list, never from `AXWindows`: Chromium and
+    /// Electron report no accessibility windows until they are active, so an AX-based test would
+    /// call an ordinary Chrome switch "windowless" and open a spurious second window every time.
+    private static func reopenIfWindowless(pid: pid_t, bundleURL: URL?) {
+        guard let bundleURL else { return }
+        focusQueue.async {
+            guard !ownsWindow(pid: pid) else { return }
+            Log.targets.notice(
+                "pid \(pid, privacy: .public) owns no window; reopening to make one")
+            DispatchQueue.main.async {
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = true
+                NSWorkspace.shared.openApplication(at: bundleURL, configuration: config)
+            }
+        }
+    }
+
+    /// Whether `pid` owns at least one ordinary window matching `options` — every Space by default,
+    /// which includes minimized windows, since those are still windows the app has.
+    ///
+    /// Layer 0 only, and desktop elements excluded, so Finder's desktop — which it owns for the
+    /// whole session and which is never something the user switched *to* — never counts.
+    private static func ownsWindow(
+        pid: pid_t, options: CGWindowListOption = [.excludeDesktopElements]
+    ) -> Bool {
+        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
+        else { return true }  // Unreadable list: assume a window, so a pick never opens one blind.
+        return info.contains { window in
+            (window[kCGWindowLayer as String] as? Int) == 0
+                && (window[kCGWindowOwnerPID as String] as? pid_t) == pid
         }
     }
 
