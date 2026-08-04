@@ -8,12 +8,21 @@ import SwiftUI
 /// the thing anyone actually opens About to check when the switcher is not responding, had no
 /// place in it.
 struct AboutSettings: View {
+    @ObservedObject private var behavior = BehaviorStore.shared
+
     /// Re-read whenever the tab appears rather than cached at launch: the usual reason to be
     /// looking at this pane is that you have just granted something in System Settings.
     @State private var isTrusted = Permissions.isTrusted
     @State private var canCapture = Permissions.canCaptureScreen
+    /// Momentary "Copied" confirmation on the button below. Nothing else observes it.
+    @State private var didCopyCommand = false
 
     private static let repositoryURL = URL(string: "https://github.com/kdbaustert/Cmd-Tab")!
+
+    /// Reads back everything this app has logged in the last half hour. `--info` is what includes
+    /// the `notice` lines the switcher writes; without it `log show` returns only errors and faults.
+    private static let logCommand =
+        "log show --last 30m --predicate 'subsystem == \"com.cmdtab.CmdTab\"' --style compact --info"
 
     var body: some View {
         SettingsPage(title: "About") {
@@ -42,6 +51,26 @@ struct AboutSettings: View {
                         StatusPill(ok: canCapture, granted: "Granted", missing: "Not granted")
                         Button("Open…") { Permissions.openScreenRecordingSettings() }
                     }
+                }
+            }
+
+            SettingsSection(
+                title: "Diagnostics", anchor: SettingsAnchor.diagnostics,
+                footer: "Off, the switcher records what it did — sessions opening, picks, tiling, "
+                    + "anything that failed. On, it also records every key it saw getting there. "
+                    + "Leave it off unless you are chasing something; it is a line per keystroke."
+            ) {
+                SettingsToggle(
+                    title: "Verbose logging",
+                    subtitle: "Keep the per-key tracing in the system log, so a problem can be read "
+                        + "back afterwards instead of having to happen again while you watch.",
+                    isOn: $behavior.verboseLogging)
+                SettingsRow(
+                    title: "Console command",
+                    subtitle: "Paste into Terminal to read back what was logged."
+                ) {
+                    Button(didCopyCommand ? "Copied" : "Copy") { copyLogCommand() }
+                        .disabled(didCopyCommand)
                 }
             }
 
@@ -107,6 +136,16 @@ struct AboutSettings: View {
     private func refresh() {
         isTrusted = Permissions.isTrusted
         canCapture = Permissions.canCaptureScreen
+    }
+
+    private func copyLogCommand() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(Self.logCommand, forType: .string)
+        didCopyCommand = true
+        // Back to "Copy" on its own, so the button does not sit there claiming a copy that happened
+        // a quarter of an hour ago.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { didCopyCommand = false }
     }
 
     /// `1.2.3 (45)`, or just the short string when there is no separate build number to add.

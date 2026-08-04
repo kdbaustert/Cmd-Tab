@@ -369,6 +369,10 @@ extension Defaults.Keys {
     /// Offer installed apps when a query matches nothing running. On by default: it only ever
     /// appears in place of "No matches", so it costs nothing when it is not wanted.
     static let launchFromSearch = Key<Bool>("launchFromSearch", default: true)
+
+    /// Promotes the per-event tracing from `.debug` to `.default` so it survives in the system log.
+    /// Off by default — see `Log.traceLevel` for what it costs and why it is worth having at all.
+    static let verboseLogging = Key<Bool>("verboseLogging", default: false)
 }
 
 /// Everything the user can tune that is not one of the appearance sliders. One store, backed by the
@@ -395,6 +399,7 @@ final class BehaviorStore: ObservableObject {
         .showNumbers, .showDisplayBadges, .showSpaceBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
         .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview, .launchFromSearch,
+        .verboseLogging,
     ]
 
     /// Keys belonging to the *other* stores, which export/import/reset also cover. Listed by name
@@ -528,6 +533,12 @@ final class BehaviorStore: ObservableObject {
     @Published var launchFromSearch: Bool = Defaults[.launchFromSearch] {
         didSet { persist(launchFromSearch, oldValue, to: .launchFromSearch) }
     }
+    /// Writes the per-keystroke tracing to the system log instead of a live stream only. A
+    /// troubleshooting switch, not a preference — but it persists like one so it survives the
+    /// relaunch that reproducing a problem usually involves.
+    @Published var verboseLogging: Bool = Defaults[.verboseLogging] {
+        didSet { persist(verboseLogging, oldValue, to: .verboseLogging) }
+    }
 
     /// The built-in highlight tint. The hex lives in `BehaviorDefault` — see there for why — and
     /// these are the names the rest of the app already uses for it.
@@ -579,6 +590,7 @@ final class BehaviorStore: ObservableObject {
         menuBarIcon = Defaults[.menuBarIcon]
         windowPreview = Defaults[.windowPreview]
         launchFromSearch = Defaults[.launchFromSearch]
+        verboseLogging = Defaults[.verboseLogging]
     }
 
     /// A hotkey lives in two keys — the key code and the modifier mask. An absent *code* is the

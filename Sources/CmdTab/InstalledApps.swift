@@ -49,7 +49,9 @@ enum InstalledApps {
             DispatchQueue.main.async {
                 catalogue = found
                 isLoading = false
-                Log.general.debug("installed apps catalogued: \(found.count, privacy: .public)")
+                Log.general.log(
+                    level: Log.traceLevel,
+                    "installed apps catalogued: \(found.count, privacy: .public)")
             }
         }
     }

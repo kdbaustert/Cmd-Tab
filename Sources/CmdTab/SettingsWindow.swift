@@ -102,6 +102,7 @@ enum SettingsAnchor {
     static let overrides = "apps.overrides"
 
     static let permissions = "about.permissions"
+    static let diagnostics = "about.diagnostics"
     static let build = "about.build"
 }
 
@@ -263,6 +264,12 @@ enum SettingsIndex {
         item("screenRecording", .about, SettingsAnchor.permissions, "Permissions",
              "Screen Recording access",
              ["screen recording", "permission", "preview", "thumbnail", "capture"]),
+        item("verboseLogging", .about, SettingsAnchor.diagnostics, "Diagnostics",
+             "Verbose logging",
+             ["log", "logs", "logging", "verbose", "debug", "console", "trace", "diagnostics",
+              "troubleshoot", "not working", "bug report", "os_log"]),
+        item("logCommand", .about, SettingsAnchor.diagnostics, "Diagnostics", "Console command",
+             ["log", "logs", "console", "terminal", "command", "copy", "read back", "log show"]),
         item("version", .about, SettingsAnchor.build, "Build", "Version",
              ["version", "build", "about", "release"]),
         item("source", .about, SettingsAnchor.build, "Build", "Source",

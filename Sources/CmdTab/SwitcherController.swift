@@ -487,7 +487,7 @@ final class SwitcherController {
         // Modifier events are never swallowed — other apps need to track modifier state, and this
         // is also the escape hatch that guarantees the panel can always be dismissed.
         if type == .flagsChanged {
-            Log.tap.debug("flagsChanged: flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) stillHeld=\(self.stillHeld(flags, self.activeHeld), privacy: .public)")
+            Log.tap.log(level: Log.traceLevel, "flagsChanged: flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) stillHeld=\(self.stillHeld(flags, self.activeHeld), privacy: .public)")
             // A sticky session is defined by *not* ending here — releasing the modifier is how the
             // user gets their hands back, not how they commit.
             if !staysOpenOnRelease, (isVisible || armed || pendingSameApp), !stillHeld(flags, activeHeld) {
@@ -500,7 +500,7 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            Log.tap.debug("visible: code=\(code, privacy: .public) flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) commit=\(self.release.shouldCommit(flags: flags), privacy: .public)")
+            Log.tap.log(level: Log.traceLevel, "visible: code=\(code, privacy: .public) flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) commit=\(self.release.shouldCommit(flags: flags), privacy: .public)")
             if release.shouldCommit(flags: flags) {
                 commit()
                 return false
@@ -588,7 +588,8 @@ final class SwitcherController {
         // per-keystroke path while still catching "I pressed the chord and nothing happened".
         if type == .keyDown, tiling.isEnabled,
             !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty {
-            Log.tap.debug(
+            Log.tap.log(
+                level: Log.traceLevel,
                 """
                 tiling: no binding for key \(code, privacy: .public) \
                 flags \(flags.rawValue, privacy: .public)
@@ -1103,6 +1104,13 @@ final class SwitcherController {
                 target.hideApp()
                 return
             }
+            // The ordinary switch used to be the one outcome that logged nothing, so a session read
+            // back afterwards ended at "panel shown" with no record of what it picked — and an app
+            // pick leaves no other trace at all, since only the cross-Desktop window path narrates
+            // itself. The target id is `app:<pid>` / `win:<id>` / `launch:<bundle>`, which names the
+            // kind and the thing without carrying a window title.
+            Log.tap.notice(
+                "commit: \(target.id, privacy: .public) pid \(target.pid, privacy: .public)")
             target.focus()
         }
     }

@@ -144,6 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.sameAppHotkey = behavior.sameAppCycle ? behavior.sameAppHotkey : nil
         controller.stickyMode = behavior.stickyMode
         controller.panelScreens = behavior.panelScreens
+        // Not a controller field: the tracing is spread across types that have no view of the
+        // stores, so the level lives on `Log` and is pushed here with everything else.
+        Log.isVerbose = behavior.verboseLogging
         updateStatusItem(behavior)
     }
 
