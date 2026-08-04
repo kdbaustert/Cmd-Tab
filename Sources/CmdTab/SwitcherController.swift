@@ -227,6 +227,15 @@ final class SwitcherController {
         }
     }
 
+    var pinFavoritesFirst: Bool {
+        get { provider.pinFavoritesFirst }
+        set {
+            guard newValue != provider.pinFavoritesFirst else { return }
+            provider.pinFavoritesFirst = newValue
+            provider.refresh()
+        }
+    }
+
     var panelAppearance: PanelAppearance {
         get { panels.appearanceMode }
         set {
@@ -1034,8 +1043,11 @@ final class SwitcherController {
         let mode = mode ?? provider.mode
         model.mode = mode
         model.begin(targets)
-        // The frontmost app/window is index 0, so a plain tap lands on the previous one.
-        model.selection = backwards ? targets.count - 1 : min(1, targets.count - 1)
+        // The frontmost app/window is index 0, so a plain tap lands on the previous one — unless
+        // pinned favourites hold the front of the list, which is what `tapIndex` answers for.
+        model.selection = backwards
+            ? targets.count - 1
+            : provider.tapIndex(in: targets, mode: mode)
 
         // The state flip stays synchronous — the very next key event has to see `isVisible` — but
         // everything that *costs* anything is deferred. `panels.show()` runs a full SwiftUI layout,
@@ -1149,7 +1161,9 @@ final class SwitcherController {
             armWorkItem = nil
             armed = false
             stopWatchdog()
-            let index = armedBackwards ? armedTargets.count - 1 : min(1, armedTargets.count - 1)
+            let index = armedBackwards
+                ? armedTargets.count - 1
+                : provider.tapIndex(in: armedTargets, mode: provider.mode)
             if armedTargets.indices.contains(index) {
                 let target = armedTargets[index]
                 DispatchQueue.main.async { target.focus() }

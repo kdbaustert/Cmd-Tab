@@ -339,6 +339,10 @@ extension Defaults.Keys {
     static let stickyMode = Key<Bool>("stickyMode", default: false)
     static let sameAppCycle = Key<Bool>("sameAppCycle", default: false)
     static let hideEmptyApps = Key<Bool>("hideEmptyApps", default: false)
+    /// On by default: with no favourites starred it changes nothing, and a user who has starred
+    /// apps asked for those apps to be special — holding a fixed slot is what that finally means
+    /// for one that happens to be running.
+    static let pinFavoritesFirst = Key<Bool>("pinFavoritesFirst", default: true)
     static let showDelay = Key<Double>("showDelayMs", default: 0)
     static let maxColumns = Key<Int>("maxColumns", default: 0)
     /// On by default, at a heavier radius than any material carries natively. Best-effort — the
@@ -394,7 +398,7 @@ final class BehaviorStore: ObservableObject {
         .panelAppearance, .panelPosition, .panelScreens, .panelMaterial,
         .highlightColorHex,
         .hotkeyKeyCode, .hotkeyModifiers, .sameAppKeyCode, .sameAppModifiers,
-        .stickyMode, .sameAppCycle, .hideEmptyApps, .showDelay, .maxColumns,
+        .stickyMode, .sameAppCycle, .hideEmptyApps, .pinFavoritesFirst, .showDelay, .maxColumns,
         .blurOverride, .blurRadius,
         .showNumbers, .showDisplayBadges, .showSpaceBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
@@ -471,6 +475,11 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var hideEmptyApps: Bool = Defaults[.hideEmptyApps] {
         didSet { persist(hideEmptyApps, oldValue, to: .hideEmptyApps) }
+    }
+    /// Favourites hold fixed slots at the front of the app list instead of falling wherever the
+    /// sort puts them.
+    @Published var pinFavoritesFirst: Bool = Defaults[.pinFavoritesFirst] {
+        didSet { persist(pinFavoritesFirst, oldValue, to: .pinFavoritesFirst) }
     }
     @Published var showDelay: Double = Defaults[.showDelay] {
         didSet { persist(showDelay, oldValue, to: .showDelay) }
@@ -573,6 +582,7 @@ final class BehaviorStore: ObservableObject {
         sameAppHotkey = Self.loadHotkey(
             code: .sameAppKeyCode, mods: .sameAppModifiers, default: .commandBacktick)
         hideEmptyApps = Defaults[.hideEmptyApps]
+        pinFavoritesFirst = Defaults[.pinFavoritesFirst]
         showDelay = Defaults[.showDelay]
         maxColumns = Defaults[.maxColumns]
         panelMaterial = Defaults[.panelMaterial]

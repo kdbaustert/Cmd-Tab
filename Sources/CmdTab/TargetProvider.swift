@@ -36,11 +36,18 @@ final class TargetProvider {
     /// Per-app overrides. Only apps the user has given a rule appear here.
     var appRules: [String: AppRule] = [:]
 
-    /// Favourited apps, in the user's order. Any that aren't running are appended as launchable
-    /// tiles.
+    /// Favourited apps, in the user's order. Any that aren't running are shown as launchable tiles.
     var favoriteBundleIDs: [String] = [] {
         didSet { appInfoCache = appInfoCache.filter { favoriteBundleIDs.contains($0.key) } }
     }
+
+    /// Give the favourites the first slots of the app list, in the user's order, whether or not they
+    /// are running — so a favourite is at the same place every time and can be reached by its
+    /// number. Off leaves them to the sort, with the ones that aren't running appended at the end.
+    ///
+    /// App mode only. A window list has as many tiles per app as the app has windows, so no app can
+    /// hold a slot in it.
+    var pinFavoritesFirst: Bool = true
 
     /// Resolved metadata for launchable favourites, keyed by bundle id.
     ///
@@ -189,6 +196,15 @@ final class TargetProvider {
         let screenFrames = needsFrames && NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
         let launchTargets = launchFavorites()
+        // Pinning has to put each favourite's tiles where the favourite sits, and a tile knows its
+        // pid but not its bundle id — so the mapping is carried over from the app list.
+        let pinning = pinFavoritesFirst && mode == .apps && !favoriteBundleIDs.isEmpty
+        let favoriteOrder = pinning ? favoriteBundleIDs : []
+        let bundleIDsByPID = pinning
+            ? Dictionary(
+                apps.compactMap { app in app.bundleID.map { (app.pid, $0) } },
+                uniquingKeysWith: { first, _ in first })
+            : [:]
 
         axQueue.async { [weak self] in
             // On the background queue: reading the Dock is Accessibility IPC to another process.
@@ -234,10 +250,19 @@ final class TargetProvider {
                         apps, order: order, sortOrder: sortOrder,
                         windowMRU: windowMRU, screenFrames: screenFrames, badges: badges))
             }
-            // Launchable favourites go last in both modes. A favourite has no windows to list, but
-            // it was pinned precisely so it stays reachable — dropping it in window mode would make
-            // a user's pin vanish on a setting they changed for an unrelated reason.
-            targets += launchTargets
+            if pinning {
+                // The favourites take the front of the list, each running one bringing its own
+                // tiles with it and each one that isn't running contributing its launch tile, so
+                // the block reads the same either way.
+                targets = Self.pinningFavorites(
+                    targets, order: favoriteOrder, bundleIDs: bundleIDsByPID,
+                    launchTiles: Dictionary(launchTargets, uniquingKeysWith: { first, _ in first }))
+            } else {
+                // Launchable favourites go last otherwise. A favourite has no windows to list, but
+                // it was starred precisely so it stays reachable — dropping it in window mode would
+                // make a user's pin vanish on a setting they changed for an unrelated reason.
+                targets += launchTargets.map(\.1)
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.cache = targets
@@ -420,7 +445,10 @@ final class TargetProvider {
     /// user's favourites order. Runs on the main thread — `NSWorkspace` app lookups want it, which
     /// is exactly why the resolved metadata is cached in `appInfoCache` rather than re-derived from
     /// LaunchServices and disk on every pass.
-    private func launchFavorites() -> [SwitchTarget] {
+    ///
+    /// Paired with the bundle identifier each tile came from: pinning has to slot a tile in at its
+    /// favourite's position, and a `SwitchTarget` carries no bundle id of its own.
+    private func launchFavorites() -> [(String, SwitchTarget)] {
         guard !favoriteBundleIDs.isEmpty else { return [] }
         let excluded = excludedBundleIDs
         let running = Set(
@@ -428,14 +456,75 @@ final class TargetProvider {
         return favoriteBundleIDs.compactMap { id in
             guard !running.contains(id), !excluded.contains(id) else { return nil }
             if let cached = appInfoCache[id] {
-                return Self.launchTarget(id: id, info: cached)
+                return (id, Self.launchTarget(id: id, info: cached))
             }
             // A failure is deliberately not cached: an app that isn't installed yet should be picked
             // up when it arrives, rather than being remembered as missing for the whole session.
             guard let info = FavoritesStore.appInfo(for: id) else { return nil }
             appInfoCache[id] = info
-            return Self.launchTarget(id: id, info: info)
+            return (id, Self.launchTarget(id: id, info: info))
         }
+    }
+
+    /// Moves the favourites to the front of a built list, in the user's order.
+    ///
+    /// A favourite contributes whatever tiles it already has — one for the app, or several if it is
+    /// an app the user has asked to see window-by-window — and its launch tile if it is not running
+    /// at all. Everything else keeps the order the sort gave it, behind them.
+    ///
+    /// Slots stay put across launches and quits for the common case of one tile per favourite, which
+    /// is the point: the number keys and the eye both learn where an app lives.
+    static func pinningFavorites(
+        _ targets: [SwitchTarget], order: [String], bundleIDs: [pid_t: String],
+        launchTiles: [String: SwitchTarget]
+    ) -> [SwitchTarget] {
+        var pinned: [SwitchTarget] = []
+        var hoisted = Set<String>()
+        for bundleID in order {
+            let owned = targets.filter { bundleIDs[$0.pid] == bundleID }
+            if owned.isEmpty {
+                // Not running, uninstalled, or excluded — only the first of those has a tile.
+                if let tile = launchTiles[bundleID] { pinned.append(tile) }
+                continue
+            }
+            pinned += owned
+            hoisted.formUnion(owned.map(\.id))
+        }
+        return pinned + targets.filter { !hoisted.contains($0.id) }
+    }
+
+    /// Where a plain tap — press and release the trigger without waiting for the panel — should
+    /// land in a list this provider built.
+    ///
+    /// Normally the second tile: the frontmost app is first, so the one behind it is the one a tap
+    /// means. Pinning breaks that arithmetic, since the front app can be anywhere in the list and
+    /// the second tile is whichever favourite the user put there. The previous app is then found
+    /// through the MRU instead, which keeps ⌘-Tab's oldest habit working — tap to go back, tap
+    /// again to come back — while the slots stay fixed for everything else.
+    func tapIndex(in targets: [SwitchTarget], mode: SwitcherMode) -> Int {
+        guard !targets.isEmpty else { return 0 }
+        let natural = min(1, targets.count - 1)
+        guard pinFavoritesFirst, mode == .apps, !favoriteBundleIDs.isEmpty else { return natural }
+        return Self.previousAppIndex(in: targets, mru: mru) ?? natural
+    }
+
+    /// The tile for the app used before the current one, by MRU. Launch tiles are skipped: they all
+    /// share a placeholder pid, and an app that is not running was not used before this one either.
+    static func previousAppIndex(in targets: [SwitchTarget], mru: [pid_t]) -> Int? {
+        var seenFront = false
+        for pid in mru {
+            guard let index = targets.firstIndex(where: { !$0.isLaunchable && $0.pid == pid })
+            else { continue }
+            // The first hit is the front app, or — when the front app is not in the list at all,
+            // having been excluded or hidden as empty — the most recent one that is. Either way the
+            // tap goes to the one behind it, which is exactly where an unpinned list would put it.
+            guard seenFront else {
+                seenFront = true
+                continue
+            }
+            return index
+        }
+        return nil
     }
 
     private static func launchTarget(

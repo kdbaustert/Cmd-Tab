@@ -322,8 +322,8 @@ question — should this app be in the switcher — so they share a row rather t
 the same apps twice.
 
 **Favorite** (the star) pins an app. In app mode a favourite that isn't running still appears as a
-launchable tile (dimmed, with an ↗ badge) at the end of the list; picking it launches the app
-instead of switching.
+launchable tile (dimmed, with an ↗ badge) — in its own slot with pinning on, at the end of the list
+without it; picking it launches the app instead of switching.
 
 **Exclude** (the switch) keeps an app out of the switcher in either mode — excluding an app also
 removes all of its windows from window mode.
@@ -339,9 +339,34 @@ Nothing has to reconcile the two keys, then — settings written before they sha
 imported from a file that sets each one on its own, can contradict each other and still display
 honestly, with no rewriting of anything the user did not ask to change.
 
-Both are keyed by bundle identifier, not pid, so they survive the app quitting, relaunching under a
-new pid, and Cmd-Tab restarting. They persist in `UserDefaults` under `favoriteBundleIDs` (an array,
-in the order added — that is the order the launch tiles appear in) and `excludedBundleIDs`.
+**Favorite order** is the list of starred apps in the order they are used, which the alphabetical
+list below cannot show. Drag a row onto another and it takes that place — a whole row is a target
+you can hit, where the 2pt gap an insertion line asks for is not. Excluded favourites are left out
+of it, since their star is masked below and a row here would have the pane arguing with itself; they
+keep their stored place regardless, so a drag across one steps over it rather than displacing it.
+New favourites land at the end, which is what "add" has always meant here.
+
+**Pin favorites to the front** (on by default) is what makes that order worth having for an app that
+is always running. The favourites take the first slots of the switcher in application mode, in the
+user's order, *whether or not they are running* — a running one brings its own tile, one that isn't
+brings its launch tile, and an app that is neither running nor installed brings nothing rather than
+leaving a gap. So Finder is in the same place every time, ⌘-Tab then `1` always reaches it, and the
+sort decides only what comes after the block. With nothing starred it changes nothing at all, which
+is why it can be on by default.
+
+Application mode only: a window list has as many tiles per app as the app has windows, so no app can
+hold a slot in it, and favourites that aren't running go back to being appended at the end there.
+
+Pinning breaks one piece of arithmetic. ⌘-Tab's oldest habit — tap to go back, tap again to return —
+works because the frontmost app is tile 0 and a tap therefore lands on tile 1. With favourites at
+the front the previous app can be anywhere, so `tapIndex` looks it up in the MRU instead of counting
+to one. The slots stay fixed and the tap still goes back to the app you just left. Switching the
+setting off puts the tap back on tile 1, which by then is the same tile the lookup would have found.
+
+Both settings are keyed by bundle identifier, not pid, so they survive the app quitting, relaunching
+under a new pid, and Cmd-Tab restarting. They persist in `UserDefaults` under `favoriteBundleIDs`
+(an array, in the user's order — that is the order the launch tiles appear in) and
+`excludedBundleIDs`.
 
 An app with either setting stays in the list once it quits, so the setting can always be undone; an
 app that has since been uninstalled shows its raw bundle id and a placeholder icon rather than
@@ -494,7 +519,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | --- | --- |
 | `SystemSwitcher.swift` | The private SkyLight shim that disables the Dock's switcher |
 | `SpaceMover.swift` | Private SkyLight shim for reading a window's Space and switching to it |
-| `FavoritesStore.swift` | Pinned apps that appear as launchable tiles when not running |
+| `FavoritesStore.swift` | Pinned apps, in the user's order, shown as launchable tiles when not running |
 | `EventTap.swift` | Session event tap; swallows keys, self-heals if the system disables it |
 | `SwitcherController.swift` | State machine — decides what to swallow and when to commit |
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |

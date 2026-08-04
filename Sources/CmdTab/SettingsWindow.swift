@@ -98,6 +98,7 @@ enum SettingsAnchor {
     static let markers = "appearance.markers"
 
     static let appRules = "apps.rules"
+    static let favorites = "apps.favorites"
     static let directActivation = "apps.directActivation"
     static let overrides = "apps.overrides"
 
@@ -257,6 +258,14 @@ enum SettingsIndex {
 
         item("apps", .apps, SettingsAnchor.appRules, "App rules", "Favorites and exclusions",
              ["exclude", "hide app", "favorite", "star", "pin", "blacklist", "rules"]),
+        item("favoriteOrder", .apps, SettingsAnchor.favorites, "Favorite order",
+             "Order of the favorites",
+             ["favorite", "favourite", "order", "reorder", "sort", "drag", "rearrange", "position",
+              "first", "launch tiles", "star"]),
+        item("pinFavoritesFirst", .apps, SettingsAnchor.favorites, "Favorite order",
+             "Pin favorites to the front",
+             ["favorite", "favourite", "pin", "first", "front", "fixed", "slot", "always same "
+              + "place", "number keys", "order"]),
 
         item("accessibility", .about, SettingsAnchor.permissions, "Permissions",
              "Accessibility access",

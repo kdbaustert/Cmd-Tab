@@ -41,6 +41,34 @@ final class FavoritesStore: ObservableObject {
         persist()
     }
 
+    /// Moves a favourite into the slot another one holds — what dropping a row onto another row in
+    /// settings means. Positions are resolved against the whole list rather than against what the
+    /// pane is showing, so a drag past an excluded favourite (whose star is masked, so it has no
+    /// row) still lands where the user aimed.
+    func move(_ bundleID: String, toPositionOf target: String) {
+        let reordered = Self.reordered(favorites, moving: bundleID, toPositionOf: target)
+        guard reordered != favorites else { return }
+        favorites = reordered
+        persist()
+    }
+
+    /// The reorder itself, kept out of the store so it can be tested without `UserDefaults`.
+    ///
+    /// The moved app *takes* the target's index — dragging the last row onto the first makes it
+    /// first, and dragging the first onto the last makes it last — rather than being inserted
+    /// before or after depending on the direction of travel.
+    nonisolated static func reordered(
+        _ list: [String], moving bundleID: String, toPositionOf target: String
+    ) -> [String] {
+        guard bundleID != target,
+              let from = list.firstIndex(of: bundleID),
+              let to = list.firstIndex(of: target) else { return list }
+        var moved = list
+        moved.remove(at: from)
+        moved.insert(bundleID, at: to)
+        return moved
+    }
+
     /// Re-reads the set after an import or reset and notifies so the switcher rebuilds.
     func reload() {
         favorites = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []

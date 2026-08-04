@@ -79,11 +79,13 @@ final class AppListModel: ObservableObject {
         }
     }
 
-    /// The display name for an app that is not in `entries` — a direct-activation target that is
-    /// not running and is neither favourited nor excluded. Shares `installedCache`, so a settings
-    /// pane that asks on every render pays the LaunchServices lookup once.
-    func installedName(for bundleID: String) -> String {
-        installedEntry(for: bundleID).name
+    /// The row for a bundle identifier whether or not it is in `entries` — a direct-activation
+    /// target that is not running and is neither favourited nor excluded, or a favourite being
+    /// listed a second time in its own order. Shares `installedCache`, so a settings pane that asks
+    /// on every render pays the LaunchServices lookup once.
+    func entry(for bundleID: String) -> AppEntry {
+        if let listed = entries.first(where: { $0.id == bundleID }) { return listed }
+        return installedEntry(for: bundleID)
     }
 
     /// Resolves a bundle identifier to something displayable. Falls back to the raw identifier
@@ -112,6 +114,7 @@ struct AppsSettings: View {
     @StateObject private var apps = AppListModel()
     @ObservedObject private var globals = GlobalActionsStore.shared
     @ObservedObject private var rules = AppRulesStore.shared
+    @ObservedObject private var behavior = BehaviorStore.shared
     @State private var query = ""
 
     private var filtered: [AppEntry] {
@@ -209,6 +212,22 @@ struct AppsSettings: View {
                 }
             }
 
+            SettingsSection(
+                title: "Favorite order", anchor: SettingsAnchor.favorites, footer: favoriteFooter
+            ) {
+                SettingsRow(
+                    title: "Pin favorites to the front",
+                    subtitle: "Application mode only — a window list has as many tiles per app as "
+                        + "the app has windows, so no app can hold a slot in it."
+                ) {
+                    Toggle("", isOn: $behavior.pinFavoritesFirst)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                favoriteOrderList
+            }
+
             SettingsSection(title: "App rules", anchor: SettingsAnchor.appRules, footer: summary) {
                 SettingsWideRow {
                     HStack(spacing: 8) {
@@ -250,6 +269,47 @@ struct AppsSettings: View {
                         isExcluded: Binding(
                             get: { store.isExcluded(entry.id) },
                             set: { setExcluded($0, for: entry.id) }))
+                }
+            }
+        }
+    }
+
+    /// What the order actually decides depends on the switch above it, so the footer says which of
+    /// the two it is rather than describing a behaviour that is currently off.
+    private var favoriteFooter: String {
+        let common = "Drag a row onto another to put it in that place."
+        guard behavior.pinFavoritesFirst else {
+            return "Favourites that aren't running appear as launch tiles at the end of the "
+                + "switcher, in this order. \(common)"
+        }
+        return "These take the first slots of the switcher in application mode, in this order, "
+            + "running or not — so a favourite is in the same place every time, and \u{2318}-Tab "
+            + "then a number reaches it. A tap still goes back to your last app wherever it now "
+            + "sits. \(common)"
+    }
+
+    /// The favourites in the order the launch tiles use them, which is the one thing the
+    /// alphabetical rules list below cannot show. Excluded favourites are left out: their star is
+    /// masked there, so a row here would be the pane contradicting itself about whether the app is
+    /// a favourite at all. They keep their place in the stored list regardless — a drag across one
+    /// steps over it rather than dropping it.
+    @ViewBuilder
+    private var favoriteOrderList: some View {
+        let ordered = favorites.favorites.filter { !store.isExcluded($0) }
+        if ordered.isEmpty {
+            SettingsWideRow {
+                Text("No favorites yet — star an app below.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(ordered.enumerated()), id: \.element) { position, id in
+                    FavoriteOrderRow(
+                        position: position + 1,
+                        entry: apps.entry(for: id),
+                        unstar: { setFavorite(false, for: id) },
+                        accept: { dragged in favorites.move(dragged, toPositionOf: id) })
                 }
             }
         }
@@ -316,8 +376,7 @@ struct AppsSettings: View {
     /// render, including every keystroke into the search field above it. `AppListModel` caches the
     /// same lookup for exactly this reason.
     private func name(for bundleID: String) -> String {
-        if let entry = apps.entries.first(where: { $0.id == bundleID }) { return entry.name }
-        return apps.installedName(for: bundleID)
+        apps.entry(for: bundleID).name
     }
 
     private func activationSubtitle(for entry: DirectActivation) -> String? {
@@ -427,6 +486,83 @@ struct AppsSettings: View {
             } else {
                 setFavorite(true, for: id)
             }
+        }
+    }
+}
+
+/// One favourite in the ordered list, draggable onto any other row.
+///
+/// Drop-on-a-row rather than drop-between-rows: an insertion line asks the user to hit a 2pt gap,
+/// and the answer they want — "this app goes where that one is" — is a whole row wide.
+private struct FavoriteOrderRow: View {
+    let position: Int
+    let entry: AppEntry
+    let unstar: () -> Void
+    /// Called with the dragged app's bundle identifier when it is dropped on this row.
+    let accept: (String) -> Void
+
+    @State private var isTargeted = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("\(position)")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .trailing)
+
+            Group {
+                if let icon = entry.icon {
+                    Image(nsImage: icon).resizable().interpolation(.high)
+                } else {
+                    Image(systemName: "app.dashed").resizable().foregroundStyle(.secondary)
+                }
+            }
+            .scaledToFit()
+            .frame(width: 22, height: 22)
+
+            Text(entry.name).font(.system(size: 12)).lineLimit(1)
+            if !entry.isRunning {
+                Text("not running")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button(action: unstar) {
+                Image(systemName: "star.slash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove this app from favorites")
+
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+                .help("Drag to reorder")
+        }
+        .padding(.horizontal, SettingsChrome.rowInset)
+        .padding(.vertical, 6)
+        // The whole row is the drag handle and the drop target, so it has to be hit anywhere on it
+        // and not just where the text happens to be.
+        .contentShape(Rectangle())
+        .background(isTargeted ? Color.accentColor.opacity(0.18) : .clear)
+        .draggable(entry.id)
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first else { return false }
+            accept(dragged)
+            return true
+        } isTargeted: { targeted in
+            isTargeted = targeted
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.07))
+                .frame(height: SettingsChrome.hairline)
+                .padding(.leading, 44)
         }
     }
 }

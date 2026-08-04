@@ -123,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.layout = behavior.layout
         controller.mode = behavior.mode
         controller.hideEmptyApps = behavior.hideEmptyApps
+        controller.pinFavoritesFirst = behavior.pinFavoritesFirst
         controller.panelAppearance = behavior.panelAppearance
         controller.panelPosition = behavior.panelPosition
         controller.highlightColor = behavior.highlightColor
