@@ -108,9 +108,21 @@ actor WindowCapture {
                 && !($0.title ?? "").isEmpty
         }
 
-        // Minimized windows have no shareable surface, so SC cannot see them at all — Accessibility
-        // is the only source. It supplements the list rather than driving it: an app whose tree is
-        // asleep contributes none, which costs a minimized thumbnail instead of the entire strip.
+        // Which of those are actually in the Dock.
+        //
+        // SC does list minimized windows — the comment that used to sit here said it could not see
+        // them at all, and that is wrong: they arrive in `live` with a title and a full-size frame,
+        // just with nothing to capture. So they were tiled as ordinary windows, and the only reason
+        // they looked right was that the capture came back blank and fell through to the icon.
+        //
+        // A window in the Dock is on no Space and on no screen; a window on another Desktop is off
+        // screen but still has a Space. Both reads are one window-server call each for the whole
+        // strip, rather than a question per tile.
+        let dockedIDs = await Task.detached { Self.dockedWindowIDs() }.value
+
+        // Accessibility supplements the list for anything SC missed entirely. It does not drive it:
+        // an app whose tree is asleep contributes none, which costs a minimized thumbnail instead of
+        // the entire strip.
         let minimized = await minimizedWindows(for: pid, excluding: Set(live.map(\.windowID)))
         guard !live.isEmpty || !minimized.isEmpty, !Task.isCancelled else { return [] }
 
@@ -123,10 +135,17 @@ actor WindowCapture {
 
         // SC hands back its windows front to back, which is the order the strip wants; whatever is
         // sitting in the Dock follows the windows that are actually on screen.
-        var entries = live.map {
-            Entry(
-                id: $0.windowID, title: $0.title ?? "", window: $0, isMinimized: false,
-                displayIndex: Self.displayIndex(of: $0.frame, in: screenFrames))
+        var entries = live.map { window -> Entry in
+            let isDocked = dockedIDs.contains(window.windowID)
+            return Entry(
+                // No capture source for a docked window: its surface is gone, and asking for one
+                // costs a failed SC round-trip per tile to arrive at the icon fallback anyway.
+                id: window.windowID, title: window.title ?? "",
+                window: isDocked ? nil : window, isMinimized: isDocked,
+                // A docked window's frame is where it *was*, which on a multi-display setup is not
+                // where clicking it will take you. Badge nothing rather than the wrong monitor.
+                displayIndex: isDocked
+                    ? nil : Self.displayIndex(of: window.frame, in: screenFrames))
         }
         entries += minimized.map {
             Entry(
@@ -227,7 +246,36 @@ actor WindowCapture {
         return fresh
     }
 
-    /// The app's minimized windows, which SC cannot see — cached for `ttl`.
+    /// The windows that are sitting in the Dock: on no Space, and on no screen.
+    ///
+    /// Both halves are load-bearing. "On no Space" alone would also swallow a window whose Space
+    /// read came back short, and "off screen" alone would swallow every window on another Desktop —
+    /// which are exactly the ones the strip must keep offering as ordinary, capturable tiles.
+    ///
+    /// Empty when the Space read is unavailable at all, so a machine without the private symbols
+    /// degrades to the old behaviour (docked windows tiled as live ones) rather than to labelling
+    /// every window minimized.
+    private static func dockedWindowIDs() -> Set<CGWindowID> {
+        let placed = SpaceMover.windowSpaces()
+        guard !placed.isEmpty else { return [] }
+        guard
+            let list = CGWindowListCopyWindowInfo(
+                [.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return [] }
+        var out: Set<CGWindowID> = []
+        for window in list {
+            guard (window[kCGWindowLayer as String] as? Int) == 0,
+                let id = window[kCGWindowNumber as String] as? CGWindowID, id != 0,
+                placed[id] == nil,
+                // Absent rather than false when the window is not being displayed.
+                (window[kCGWindowIsOnscreen as String] as? Bool) != true
+            else { continue }
+            out.insert(id)
+        }
+        return out
+    }
+
+    /// The app's minimized windows that SC did not already report — cached for `ttl`.
     ///
     /// Best-effort by design: this is the one thing Accessibility is still asked for, and it answers
     /// with an empty list for any app whose tree is not live. Losing a minimized thumbnail for such

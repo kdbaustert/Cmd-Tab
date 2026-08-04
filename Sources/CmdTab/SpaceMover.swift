@@ -14,8 +14,10 @@ import Foundation
 enum SpaceMover {
     private typealias MainConnectionFn = @convention(c) () -> Int32
     private typealias CopyManagedFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
-    private typealias CopySpacesForWindowsFn =
-        @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    private typealias CopyWindowsForSpacesFn = @convention(c) (
+        Int32, UInt32, CFArray, UInt32,
+        UnsafeMutablePointer<UInt64>, UnsafeMutablePointer<UInt64>
+    ) -> Unmanaged<CFArray>?
     private typealias SetCurrentSpaceFn = @convention(c) (Int32, CFString, UInt64) -> Void
 
     private static let handle = dlopen(
@@ -28,13 +30,18 @@ enum SpaceMover {
 
     private static let mainConnection = symbol("CGSMainConnectionID", MainConnectionFn.self)
     private static let copyManaged = symbol("CGSCopyManagedDisplaySpaces", CopyManagedFn.self)
-    private static let copySpacesForWindows =
-        symbol("CGSCopySpacesForWindows", CopySpacesForWindowsFn.self)
+    private static let copyWindowsForSpaces =
+        symbol("CGSCopyWindowsWithOptionsAndTags", CopyWindowsForSpacesFn.self)
     private static let setCurrentSpace =
         symbol("CGSManagedDisplaySetCurrentSpace", SetCurrentSpaceFn.self)
 
+    /// Breadth of the per-Space window query. `0x0` misses a window or two per Space and `0x7` pulls
+    /// in shadow and helper surfaces that name no switchable window; `0x2` is the setting that
+    /// returned exactly the real windows when checked against `CGWindowListCopyWindowInfo`.
+    private static let spaceWindowOptions: UInt32 = 0x2
+
     static var isAvailable: Bool {
-        mainConnection != nil && copyManaged != nil && copySpacesForWindows != nil
+        mainConnection != nil && copyManaged != nil && copyWindowsForSpaces != nil
     }
 
     /// Where a window lives and what is currently in front on that window's display.
@@ -64,35 +71,66 @@ enum SpaceMover {
     /// Read-only, unlike `reveal` — callers that only need to *know* where a window is must not pay
     /// a Space animation to find out.
     static func spaceState(of window: CGWindowID) -> SpaceState? {
-        guard window != 0, let mainConnection, let copyManaged, let copySpacesForWindows else {
-            return nil
-        }
+        guard window != 0 else { return nil }
+        return windowSpaces()[window]
+    }
+
+    /// Every window the window server currently places on a Space, and where it is.
+    ///
+    /// Built by asking each Space which windows it holds rather than asking each window which Space
+    /// it is on. `CGSCopySpacesForWindows` is the natural call for the latter and on macOS 26 it no
+    /// longer answers: it reports only the Space that is currently in front, and it returns the
+    /// *union* over the window array it is handed rather than one entry per window. Measured against
+    /// six real windows of one app spread over five Desktops, it returned `[1]` — the Desktop in
+    /// front — and nothing at all for the other five, so every off-Desktop lookup came back empty
+    /// and `reveal` had no Space to switch to.
+    ///
+    /// The reverse direction has no such problem, and it is per-display for free: the Space list
+    /// arrives grouped by display, so each window carries the display its Space belongs to and
+    /// `reveal` switches the monitor that actually holds it. A second monitor keeps its own Space
+    /// list and its own "current", which is exactly what a per-window query could not express.
+    ///
+    /// A window on no Space at all is simply absent, which is the answer callers need rather than a
+    /// failure: a minimized window sits in the Dock and occupies no Space, so there is nothing for a
+    /// Space switch to reach and the caller must restore it instead.
+    ///
+    /// One window-server round trip per Space. Callers that need many windows placed should take the
+    /// whole map once rather than calling `spaceState` in a loop.
+    static func windowSpaces() -> [CGWindowID: SpaceState] {
+        guard let mainConnection, let copyManaged, let copyWindowsForSpaces else { return [:] }
         let cid = mainConnection()
-        guard
-            let raw = copySpacesForWindows(cid, 0x7, [NSNumber(value: window)] as CFArray)?
-                .takeRetainedValue(),
-            let occupied = (raw as? [NSNumber])?.map({ $0.uint64Value }).filter({ $0 != 0 }),
-            !occupied.isEmpty,
-            let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]]
-        else { return nil }
-        // A window can sit on several Spaces at once — an app set to "All Desktops" in the Dock's
-        // options being the everyday case. Whichever of them is already in front is the answer:
-        // taking the first would report a window the user is looking at as living elsewhere, and
-        // `reveal` would then animate them off the Desktop they are on to "reach" it.
-        var elsewhere: SpaceState?
+        guard let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]] else {
+            return [:]
+        }
+        var out: [CGWindowID: SpaceState] = [:]
         for display in displays {
             guard let spaces = display["Spaces"] as? [[String: Any]],
                 let identifier = display["Display Identifier"] as? String
             else { continue }
             let current = (display["Current Space"] as? [String: Any]).flatMap(spaceID(from:)) ?? 0
-            for space in spaces.compactMap(spaceID(from:)) where occupied.contains(space) {
+            for space in spaces.compactMap(spaceID(from:)) {
+                var setTags: UInt64 = 0
+                var clearTags: UInt64 = 0
+                guard
+                    let raw = copyWindowsForSpaces(
+                        cid, 0, [NSNumber(value: space)] as CFArray, spaceWindowOptions,
+                        &setTags, &clearTags)?.takeRetainedValue(),
+                    let ids = raw as? [NSNumber]
+                else { continue }
                 let state = SpaceState(
                     windowSpace: space, currentSpace: current, display: identifier)
-                if space == current { return state }
-                if elsewhere == nil { elsewhere = state }
+                for number in ids {
+                    // A window can sit on several Spaces at once — an app set to "All Desktops" in
+                    // the Dock's options being the everyday case, and it is then listed by each of
+                    // them. Whichever copy is on the Space already in front wins: reporting a window
+                    // the user is looking at as living elsewhere would have `reveal` animate them
+                    // off the Desktop they are on to "reach" it.
+                    let id = number.uint32Value
+                    if out[id] == nil || space == current { out[id] = state }
+                }
             }
         }
-        return elsewhere
+        return out
     }
 
     /// Switches whichever display holds `window` to the Space that window is on.
@@ -105,9 +143,14 @@ enum SpaceMover {
     ///
     /// Works per display, so it covers both halves of the same problem: the target Space may be on
     /// another monitor, in which case that monitor is the one switched.
+    ///
+    /// Takes the placement rather than looking it up, and a nil one is the answer, not a cue to go
+    /// and ask: the read behind it walks every Space on every display, and the caller has already
+    /// paid for it — it has to know whether the window is on a Desktop or in the Dock before it can
+    /// decide to come here at all. `nil` therefore means "on no Space", which is what it reports.
     @discardableResult
-    static func reveal(window: CGWindowID) -> Reveal {
-        guard let state = spaceState(of: window) else {
+    static func reveal(window: CGWindowID, state: SpaceState?) -> Reveal {
+        guard let state else {
             Log.general.notice("space reveal: no Space for window \(window, privacy: .public)")
             return Reveal(state: nil, switched: false)
         }
@@ -145,21 +188,22 @@ enum SpaceMover {
     /// The 0-based user-Space index each window sits on, for the Space badge.
     ///
     /// Returns empty when there is only one Space, which is both a cost saving and the right
-    /// display behaviour — a badge reading "1" on every tile is pure noise. Costs one cheap CGS
-    /// call per window and no Accessibility round-trips, but is still meant for the background
-    /// refresh rather than anything on the key path.
+    /// display behaviour — a badge reading "1" on every tile is pure noise. Costs no Accessibility
+    /// round-trips, but is still meant for the background refresh rather than anything on the key
+    /// path.
+    ///
+    /// Placed from one `windowSpaces()` map rather than a query per window: the per-window call this
+    /// used to make reported nothing for any window that was not on the Desktop in front, so the
+    /// badge went missing on precisely the windows it exists to label.
     static func spaceIndices(of windows: [CGWindowID]) -> [CGWindowID: Int] {
-        guard !windows.isEmpty, let mainConnection, let copySpacesForWindows else { return [:] }
+        guard !windows.isEmpty else { return [:] }
         let ordered = userSpaceIDs()
         guard ordered.count > 1 else { return [:] }
 
-        let cid = mainConnection()
+        let placed = windowSpaces()
         var out: [CGWindowID: Int] = [:]
         for window in windows {
-            guard
-                let raw = copySpacesForWindows(cid, 0x7, [NSNumber(value: window)] as CFArray)?
-                    .takeRetainedValue(),
-                let space = (raw as? [NSNumber])?.first?.uint64Value,
+            guard let space = placed[window]?.windowSpace,
                 let index = ordered.firstIndex(of: space)
             else { continue }
             out[window] = index
