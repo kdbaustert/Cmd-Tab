@@ -1,16 +1,21 @@
 import AppKit
 import Foundation
 
-/// Keeps every preference in a plain JSON file at `~/.config/cmdtab/config.json`, so a settings
-/// setup can live in a dotfiles repo and be symlinked onto a new machine.
+/// Keeps every preference in a plain JSON file — under `~/.config/cmdtab` so a settings setup can
+/// live in a dotfiles repo, or in iCloud Drive so it follows you between Macs.
 ///
 /// Two-way and live: edits made in the file are applied without a relaunch, and changes made in
 /// Settings are written back, so the file never goes stale against the app. `UserDefaults` remains
 /// the source the app actually reads at runtime — this mirrors it rather than replacing it, which
 /// is what keeps every existing store and the export/import path working untouched.
 ///
-/// Opt-in. A file appearing under `~/.config` unasked is exactly the kind of thing that makes a
-/// dotfiles repo noisy, and someone who does not want this should not have to clean up after us.
+/// The two switches are independent and pick between the same machinery — see `resolve`. Syncing is
+/// therefore the same feature pointed at a different directory: a change arriving from another Mac
+/// reaches the app by exactly the path an edit made in an editor does.
+///
+/// Opt-in, both of them. A file appearing under `~/.config` unasked is exactly the kind of thing
+/// that makes a dotfiles repo noisy, and someone who does not want this should not have to clean up
+/// after us.
 @MainActor
 final class ConfigFile: ObservableObject {
     static let shared = ConfigFile()
@@ -69,13 +74,6 @@ final class ConfigFile: ObservableObject {
         case local
         /// Inside iCloud Drive, where every Mac signed into the same account sees the same file.
         case iCloud
-
-        var title: String {
-            switch self {
-            case .local: return "This Mac"
-            case .iCloud: return "iCloud Drive"
-            }
-        }
     }
 
     /// The file, wherever it currently lives.
@@ -149,6 +147,14 @@ final class ConfigFile: ObservableObject {
     /// the stale copy the file is meant to replace.
     func start() {
         guard isEnabled else { return }
+        // Sync was switched on, on a Mac where iCloud Drive since went away — signed out, or turned
+        // off in System Settings. `url(for:)` falls back to the local path so the settings are still
+        // mirrored somewhere, but it is the one state where the app is doing something other than
+        // what the switch says, and it should not have to be deduced from the path in Settings.
+        if isICloudSyncEnabled, !Self.isICloudAvailable {
+            Log.general.error(
+                "config file: iCloud sync is on but iCloud Drive is unavailable; mirroring to \(Self.displayPath, privacy: .public) instead")
+        }
         let waiting = requestDownload()
         if FileManager.default.fileExists(atPath: Self.url.path) {
             readFromDisk()
@@ -235,11 +241,29 @@ final class ConfigFile: ObservableObject {
         guard !before.enabled || before.location != location else { return }
         stopWatching()
         lastSynced = nil  // a different file entirely; nothing about the old one's bytes applies
-        adopt(
-            destination: Self.url,
-            seedingFrom: before.enabled ? Self.url(for: before.location) : Self.url)
+        if Self.destinationWins(wasMirroring: before.enabled, leaving: before.location) {
+            adopt(
+                destination: Self.url,
+                seedingFrom: before.enabled ? Self.url(for: before.location) : Self.url)
+        } else {
+            writeToDisk()
+        }
         beginWatching()
         observeSettingsChanges()
+    }
+
+    /// Whether the file already sitting at the destination is the authority, or the settings in
+    /// front of the user are.
+    ///
+    /// It is the file in every case but one — at launch, at a dotfiles checkout, and at an iCloud
+    /// folder another Mac has already published to, adopting what is there is the whole point.
+    ///
+    /// The exception is *leaving* iCloud. The file under `~/.config` is then a leftover from before
+    /// sync was turned on, and can be arbitrarily old; adopting it would revert every setting the
+    /// moment sync was switched off. That is a silent loss rather than a move, so the live settings
+    /// are published over it instead.
+    static func destinationWins(wasMirroring: Bool, leaving previous: Location) -> Bool {
+        !(wasMirroring && previous == .iCloud)
     }
 
     /// What the file at a newly chosen location means. Three cases, and getting them the wrong way
@@ -285,7 +309,6 @@ final class ConfigFile: ObservableObject {
         Log.general.notice("config file: waiting for iCloud to send the file down")
         return true
     }
-
 
     /// Reveals the file in Finder, creating it first if it is somehow missing.
     func revealInFinder() {

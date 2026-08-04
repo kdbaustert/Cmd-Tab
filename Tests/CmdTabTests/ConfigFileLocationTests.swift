@@ -101,4 +101,27 @@ final class ConfigFileLocationTests: XCTestCase {
     func testTurningOffTheFileSwitchLeavesSyncRunning() {
         XCTAssertTrue(ConfigFile.resolve(file: false, sync: true).enabled)
     }
+
+    // MARK: - Which copy wins when the mirror moves
+
+    /// Starting to mirror adopts whatever is already there. This is the dotfiles case — a fresh
+    /// checkout has to come up configured — and it is the same rule launch follows.
+    func testStartingToMirrorLetsAnExistingFileWin() {
+        XCTAssertTrue(ConfigFile.destinationWins(wasMirroring: false, leaving: .local))
+        XCTAssertTrue(ConfigFile.destinationWins(wasMirroring: false, leaving: .iCloud))
+    }
+
+    /// Joining a sync set adopts the copy already in iCloud: another Mac published it, and it is
+    /// the shared state this one is opting into.
+    func testTurningSyncOnLetsTheCloudCopyWin() {
+        XCTAssertTrue(ConfigFile.destinationWins(wasMirroring: true, leaving: .local))
+    }
+
+    /// Turning sync **off** must not adopt the local file. It is a leftover from before sync was
+    /// turned on and can be arbitrarily old, so letting it win reverts every setting the moment the
+    /// switch is flipped — a silent loss rather than a move. The live settings are published over
+    /// it instead.
+    func testTurningSyncOffPublishesTheLiveSettingsRatherThanRevertingToAStaleFile() {
+        XCTAssertFalse(ConfigFile.destinationWins(wasMirroring: true, leaving: .iCloud))
+    }
 }

@@ -664,6 +664,9 @@ final class BehaviorStore: ObservableObject {
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
         "alwaysShowTitles", "panelOpacity", "windowSnapHighlightColorHex", "showBadges",
+        // Saved layouts, removed with the feature. `Migration.dropSavedLayouts` deletes it once;
+        // listed here too so a reset sweeps it on any install that migration has not reached.
+        "windowLayouts", "configFileLocation",
     ]
 
     /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,

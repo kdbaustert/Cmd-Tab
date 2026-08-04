@@ -44,8 +44,6 @@ struct WindowSettings: View {
         Binding(get: { store.mouseDrag.isEnabled }, set: { store.mouseDragEnabled = $0 })
     }
 
-
-
     var body: some View {
         SettingsPage(
             title: "Windows",

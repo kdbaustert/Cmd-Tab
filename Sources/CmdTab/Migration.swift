@@ -15,8 +15,28 @@ enum Migration {
     /// Must run before anything reads a setting.
     static func run() {
         splitBadgeToggle()
+        dropSavedLayouts()
         renameFromOvertab()
     }
+
+    /// Saved layouts were removed, and the stored list went with the feature.
+    ///
+    /// Deleted outright rather than left for the next reset to sweep, which is what the retired keys
+    /// get: those are settings whose *meaning* moved somewhere else, and leaving them keeps their
+    /// migration repeatable. This one has nowhere to move to — no code reads `windowLayouts` any
+    /// more — so it is a list of window frames sitting in the preferences of every user who ever
+    /// saved one, and it can be arbitrarily large.
+    private static func dropSavedLayouts() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: layoutsDroppedKey) else { return }
+        defaults.set(true, forKey: layoutsDroppedKey)
+        guard defaults.object(forKey: layoutsKey) != nil else { return }
+        defaults.removeObject(forKey: layoutsKey)
+        Log.general.notice("migrated: dropped the saved-layouts list, the feature is gone")
+    }
+
+    private static let layoutsDroppedKey = "migratedDroppedSavedLayouts"
+    private static let layoutsKey = "windowLayouts"
 
     /// `showBadges` was one switch over both the display and the Space marker; it is now two.
     ///

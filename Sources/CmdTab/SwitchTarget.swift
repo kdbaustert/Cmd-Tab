@@ -590,7 +590,11 @@ extension SwitchTarget {
         // siblings stay where the user left them. False means the private symbols are gone — plain
         // activation is wrong about Spaces, but a pick that does nothing at all is worse.
         let fronted = FrontProcess.focus(window: id, pid: pid)
-        if !fronted { activate(pid: pid) }
+        if !fronted {
+            activate(pid: pid)
+        } else {
+            verifyFront(window: id, pid: pid, generation: generation)
+        }
         // Where things actually ended up, half a second after the dust settles. The difference that
         // matters: `window == current` on the Desktop we switched *to* means the pick worked, while
         // the window having moved to the Desktop we came *from* means something relocated it.
@@ -609,13 +613,46 @@ extension SwitchTarget {
                 """)
         }
         // Apps that build their accessibility tree lazily (Chromium, Electron) report *no* windows
-        // until they are active, so the raise above found nothing and the activation surfaced
-        // whichever window happened to be frontmost rather than the picked one. Retry now that the
-        // app is coming up — the only thing that makes the pick land for those apps.
+        // until they are fronted, so the raise above found nothing to raise. Retry now that the app
+        // is coming up — the only thing that makes the pick land for those apps.
+        //
+        // The fronting that wakes them is `FrontProcess` rather than the activation this used to
+        // rely on, which suits this case better than the old order did: it names the window by id,
+        // so the *right* window is already in front even while AX cannot see it, where activating
+        // surfaced whichever window the app itself thought was frontmost.
         guard !raised else { return }
         focusQueue.asyncAfter(deadline: .now() + 0.15) {
             guard generation == focusGeneration else { return }
             raise(window: id, pid: pid)
+        }
+    }
+
+    /// Checks that the private front-process call actually brought the app forward, and falls back
+    /// to ordinary activation when it did not.
+    ///
+    /// `_SLPSSetFrontProcessWithOptions` returning success means the window server accepted the
+    /// request, not that the app came up: a wedged process, or one that re-fronts a window of its
+    /// own in response, leaves a pick that reported success and did nothing. Since this is the only
+    /// path that fronts the window now, an unnoticed failure here is a pick that silently no-ops.
+    ///
+    /// The fallback is safe by this point in a way it is not earlier: the Space gate has already
+    /// been passed, so the window is on the Desktop in front of us, and `FrontProcess` has already
+    /// made it the app's front window — so there is nothing left elsewhere for a plain activation to
+    /// drag over. That is exactly what makes it usable as a backstop rather than a reintroduction of
+    /// the bug the fronting exists to avoid.
+    private static func verifyFront(window id: CGWindowID, pid: pid_t, generation: UInt64) {
+        focusQueue.asyncAfter(deadline: .now() + 0.2) {
+            guard generation == focusGeneration else { return }
+            // `frontmostApplication` is AppKit state, so it is asked for on the main thread.
+            DispatchQueue.main.async {
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier != pid else {
+                    return
+                }
+                Log.general.notice(
+                    "focus window \(id, privacy: .public): front did not take, activating pid \(pid, privacy: .public)"
+                )
+                activate(pid: pid)
+            }
         }
     }
 

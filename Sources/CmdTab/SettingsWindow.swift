@@ -452,6 +452,14 @@ struct GeneralSettings: View {
     /// where turning this on moves a file the other switch put somewhere else.
     private var iCloudSyncSubtitle: String {
         guard ConfigFile.isICloudAvailable else {
+            // On but unavailable is its own state, and saying only "not set up" would leave the
+            // switch reading as on with no hint that nothing is syncing and the settings have
+            // quietly stayed on this Mac.
+            if config.isICloudSyncEnabled {
+                return "iCloud Drive is no longer available on this Mac, so nothing is syncing — "
+                    + "your settings are being kept in \(ConfigFile.displayPath(for: .local)) "
+                    + "instead. Turn iCloud Drive back on in System Settings to resume."
+            }
             return "iCloud Drive is not set up on this Mac. Turn it on in System Settings to share "
                 + "one set of settings between your Macs."
         }
@@ -941,19 +949,93 @@ struct BehaviorSettings: View {
 /// full-size-content with a hidden title, which is what lets the sidebar run the full height with
 /// the traffic lights sitting over it — the shape System Settings has.
 @MainActor
-final class SettingsPresenter {
+final class SettingsPresenter: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
     func show() {
         let window = self.window ?? Self.makeWindow()
         self.window = window
+        window.delegate = self
+        // A Dock tile needs a menu bar to go with it — see `makeMainMenu`. Installed before the
+        // policy change so the bar is never momentarily empty.
+        if NSApp.mainMenu == nil { NSApp.mainMenu = Self.makeMainMenu() }
+        // Ordinary app for as long as the window is up: a Dock tile to click back to, an entry in
+        // the system's own window management, and a menu bar. The app spends the rest of its life
+        // as `.accessory` — see `windowWillClose`.
+        NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         // `NSApp.activate()` on macOS 14+ asks the system to hand over activation rather than
-        // taking it. That is the right default for an ordinary app, but we are `.accessory`: no
-        // Dock tile, and nothing else that would let the user bring the window forward if the
-        // request is declined. The blunt form is what guarantees the window arrives with the
-        // keyboard.
+        // taking it. That is the right default for an ordinary app, but the request can still be
+        // declined in the moment the policy changes, and the blunt form is what guarantees the
+        // window arrives with the keyboard.
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Back to an agent when Settings goes away. Without this the Dock tile would outlive the only
+    /// window it stands for, and the app would sit in ⌘-Tab and the Dock for the rest of the session
+    /// with nothing to show for it.
+    func windowWillClose(_ notification: Notification) {
+        // Next turn of the run loop: at `willClose` the window is still on screen, and pulling the
+        // Dock tile out from under a window that is still closing can leave the tile behind.
+        DispatchQueue.main.async {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// The menu bar that a Dock tile implies.
+    ///
+    /// `NSApp.mainMenu` is nil here — an accessory app that only ever showed a panel never needed
+    /// one. Left that way, Settings would come up under an empty menu bar, and, worse, with no Edit
+    /// menu: cut, copy, paste, undo and select-all are *menu* commands on macOS, so every text field
+    /// in Settings would quietly stop answering ⌘C and ⌘V. The responder-based selectors below go to
+    /// whichever field is first responder, which is what makes them work without any code of ours.
+    private static func makeMainMenu() -> NSMenu {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "Hide Cmd-Tab", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(
+            withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(
+            withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "Quit Cmd-Tab", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(
+            withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(
+            withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m")
+        windowMenu.addItem(
+            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowItem.submenu = windowMenu
+        main.addItem(windowItem)
+
+        return main
     }
 
     /// Built on first show rather than at launch. `AppsSettings` constructs an `AppListModel`, which
