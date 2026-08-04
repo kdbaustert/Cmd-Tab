@@ -41,9 +41,10 @@ final class TargetProvider {
         didSet { appInfoCache = appInfoCache.filter { favoriteBundleIDs.contains($0.key) } }
     }
 
-    /// Give the favourites the first slots of the app list, in the user's order, whether or not they
-    /// are running — so a favourite is at the same place every time and can be reached by its
-    /// number. Off leaves them to the sort, with the ones that aren't running appended at the end.
+    /// Give the favourites the first slots of the app list, in the user's order: the running ones,
+    /// then the ones that are only launchable. A favourite is then in the same place every time
+    /// bar the apps you have opened or quit since, and is reachable by its number. Off leaves them
+    /// to the sort, with the ones that aren't running appended at the end.
     ///
     /// App mode only. A window list has as many tiles per app as the app has windows, so no app can
     /// hold a slot in it.
@@ -466,31 +467,36 @@ final class TargetProvider {
         }
     }
 
-    /// Moves the favourites to the front of a built list, in the user's order.
+    /// Moves the running favourites to the front of a built list, in the user's order, and leaves
+    /// the launchable ones at the very end — behind every app that is actually open.
+    ///
+    /// Two blocks with the whole list between them, because the two kinds of tile are answers to
+    /// different questions. Every open app is something to switch to, which is what a ⌘-Tab press
+    /// almost always wants; a launch tile is a favourite that would have to start first, and no
+    /// press that means "switch" should have to walk past one. Being starred orders an app among
+    /// the open ones — it does not promote an app that isn't open over one that is.
     ///
     /// A favourite contributes whatever tiles it already has — one for the app, or several if it is
-    /// an app the user has asked to see window-by-window — and its launch tile if it is not running
-    /// at all. Everything else keeps the order the sort gave it, behind them.
-    ///
-    /// Slots stay put across launches and quits for the common case of one tile per favourite, which
-    /// is the point: the number keys and the eye both learn where an app lives.
+    /// an app the user has asked to see window-by-window. Everything else keeps the order the sort
+    /// gave it, between the two blocks.
     static func pinningFavorites(
         _ targets: [SwitchTarget], order: [String], bundleIDs: [pid_t: String],
         launchTiles: [String: SwitchTarget]
     ) -> [SwitchTarget] {
-        var pinned: [SwitchTarget] = []
+        var running: [SwitchTarget] = []
+        var launchable: [SwitchTarget] = []
         var hoisted = Set<String>()
         for bundleID in order {
             let owned = targets.filter { bundleIDs[$0.pid] == bundleID }
-            if owned.isEmpty {
-                // Not running, uninstalled, or excluded — only the first of those has a tile.
-                if let tile = launchTiles[bundleID] { pinned.append(tile) }
+            guard owned.isEmpty else {
+                running += owned
+                hoisted.formUnion(owned.map(\.id))
                 continue
             }
-            pinned += owned
-            hoisted.formUnion(owned.map(\.id))
+            // Not running, uninstalled, or excluded — only the first of those has a tile.
+            if let tile = launchTiles[bundleID] { launchable.append(tile) }
         }
-        return pinned + targets.filter { !hoisted.contains($0.id) }
+        return running + targets.filter { !hoisted.contains($0.id) } + launchable
     }
 
     /// Where a plain tap — press and release the trigger without waiting for the panel — should
@@ -500,7 +506,7 @@ final class TargetProvider {
     /// means. Pinning breaks that arithmetic, since the front app can be anywhere in the list and
     /// the second tile is whichever favourite the user put there. The previous app is then found
     /// through the MRU instead, which keeps ⌘-Tab's oldest habit working — tap to go back, tap
-    /// again to come back — while the slots stay fixed for everything else.
+    /// again to come back — while the pinned block keeps the front of the list.
     func tapIndex(in targets: [SwitchTarget], mode: SwitcherMode) -> Int {
         guard !targets.isEmpty else { return 0 }
         let natural = min(1, targets.count - 1)

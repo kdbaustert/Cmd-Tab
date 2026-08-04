@@ -36,16 +36,35 @@ final class FavoritePinningTests: XCTestCase {
         XCTAssertEqual(pinned.map(\.title), ["Finder", "Code", "Safari"])
     }
 
-    /// The slot is the point: whether the app is running decides which *kind* of tile fills the
-    /// position, never where the position is.
-    func testAFavouriteThatIsNotRunningHoldsItsSlotWithALaunchTile() {
-        let targets = [appTarget(1, "Safari"), appTarget(2, "Finder")]
+    /// Every open app comes before the launchable favourites — including apps that were never
+    /// starred. Being a favourite orders an app among the open ones; it does not promote one that
+    /// is not open over one that is.
+    func testLaunchableFavouritesComeAfterEveryOpenApp() {
+        let targets = [appTarget(1, "Safari"), appTarget(2, "Finder"), appTarget(3, "Mail")]
         let pinned = TargetProvider.pinningFavorites(
-            targets, order: ["com.apple.finder", "md.obsidian", "com.apple.Safari"],
-            bundleIDs: [1: "com.apple.Safari", 2: "com.apple.finder"],
-            launchTiles: ["md.obsidian": launchTile("md.obsidian", "Obsidian")])
-        XCTAssertEqual(pinned.map(\.title), ["Finder", "Obsidian", "Safari"])
-        XCTAssertTrue(pinned[1].isLaunchable)
+            targets,
+            order: ["com.apple.finder", "md.obsidian", "com.apple.Safari", "com.github.GitHubClient"],
+            bundleIDs: [1: "com.apple.Safari", 2: "com.apple.finder", 3: "com.apple.mail"],
+            launchTiles: [
+                "md.obsidian": launchTile("md.obsidian", "Obsidian"),
+                "com.github.GitHubClient": launchTile("com.github.GitHubClient", "GitHub"),
+            ])
+        XCTAssertEqual(pinned.map(\.title), ["Finder", "Safari", "Mail", "Obsidian", "GitHub"])
+        XCTAssertTrue(pinned[3].isLaunchable)
+        XCTAssertTrue(pinned[4].isLaunchable)
+    }
+
+    /// The launchable block keeps the user's order among itself, which is the order the settings
+    /// list shows and the only thing that decides which launcher tile comes first.
+    func testTheLaunchableBlockKeepsTheUsersOrder() {
+        let pinned = TargetProvider.pinningFavorites(
+            [appTarget(1, "Safari")], order: ["com.github.GitHubClient", "md.obsidian"],
+            bundleIDs: [1: "com.apple.Safari"],
+            launchTiles: [
+                "md.obsidian": launchTile("md.obsidian", "Obsidian"),
+                "com.github.GitHubClient": launchTile("com.github.GitHubClient", "GitHub"),
+            ])
+        XCTAssertEqual(pinned.map(\.title), ["Safari", "GitHub", "Obsidian"])
     }
 
     /// An app whose rule expands it window-by-window contributes several tiles. They travel

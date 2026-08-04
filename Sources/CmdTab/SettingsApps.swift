@@ -282,10 +282,10 @@ struct AppsSettings: View {
             return "Favourites that aren't running appear as launch tiles at the end of the "
                 + "switcher, in this order. \(common)"
         }
-        return "These take the first slots of the switcher in application mode, in this order, "
-            + "running or not — so a favourite is in the same place every time, and \u{2318}-Tab "
-            + "then a number reaches it. A tap still goes back to your last app wherever it now "
-            + "sits. \(common)"
+        return "The ones that are running take the first slots of the switcher in application mode, "
+            + "in this order, so \u{2318}-Tab then a number reaches them. The ones that aren't go "
+            + "last, in this order too — behind every app that is actually open. A tap still goes "
+            + "back to your last app wherever it now sits. \(common)"
     }
 
     /// The favourites in the order the launch tiles use them, which is the one thing the

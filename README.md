@@ -347,12 +347,19 @@ keep their stored place regardless, so a drag across one steps over it rather th
 New favourites land at the end, which is what "add" has always meant here.
 
 **Pin favorites to the front** (on by default) is what makes that order worth having for an app that
-is always running. The favourites take the first slots of the switcher in application mode, in the
-user's order, *whether or not they are running* — a running one brings its own tile, one that isn't
-brings its launch tile, and an app that is neither running nor installed brings nothing rather than
-leaving a gap. So Finder is in the same place every time, ⌘-Tab then `1` always reaches it, and the
-sort decides only what comes after the block. With nothing starred it changes nothing at all, which
-is why it can be on by default.
+is always running. The favourites *that are running* take the first slots of the switcher in
+application mode, in the user's order, and the sort decides only what follows them. So Finder is in
+the same place every time bar the apps opened or quit since, and ⌘-Tab then `1` reaches it. With
+nothing starred it changes nothing at all, which is why it can be on by default.
+
+The favourites that are **not** running stay at the very end of the list, in the same order, behind
+every app that is actually open — a launch tile is a favourite that would have to start first, and
+no press that means "switch" should have to walk past one. Starring an app orders it among the open
+apps; it does not promote an app that isn't open over one that is. An app that is neither running
+nor installed contributes nothing rather than leaving a gap.
+
+Turning the setting off drops the first block too: every app falls wherever the sort puts it, and
+the favourites are only the launcher tiles at the end.
 
 Application mode only: a window list has as many tiles per app as the app has windows, so no app can
 hold a slot in it, and favourites that aren't running go back to being appended at the end there.
