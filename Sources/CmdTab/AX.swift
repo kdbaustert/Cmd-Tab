@@ -182,6 +182,27 @@ enum AX {
         return candidates.first ?? windows(of: app).first(where: isWindow)
     }
 
+    /// The app's window whose frame matches `bounds`, within a couple of points.
+    ///
+    /// Frame identity rather than "the app's front window": a mouse gesture acts on the window it was
+    /// pointed at, which for an app with several windows open is routinely not the focused one — and
+    /// neither gesture that uses this ever focuses it, so the two come apart in exactly the case that
+    /// matters. nil when nothing matches, which is the honest answer for hosts whose Accessibility
+    /// frames drift from the window server's (Electron, Catalyst); the caller picks the fallback.
+    ///
+    /// Accessibility IPC per window, so it belongs on a background queue like everything else here.
+    static func window(ofApplication pid: pid_t, matching bounds: CGRect, tolerance: CGFloat = 4)
+        -> AXUIElement?
+    {
+        windows(of: application(pid)).first { window in
+            guard let origin = AX.position(window), let size = AX.size(window) else { return false }
+            return abs(origin.x - bounds.minX) < tolerance
+                && abs(origin.y - bounds.minY) < tolerance
+                && abs(size.width - bounds.width) < tolerance
+                && abs(size.height - bounds.height) < tolerance
+        }
+    }
+
     private static func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
         onOwningThread(element) {
             var value: CFTypeRef?

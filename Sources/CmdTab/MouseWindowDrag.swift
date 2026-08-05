@@ -492,12 +492,24 @@ final class MouseWindowDrag: @unchecked Sendable {
                 Log.general.notice(
                     "mouse drag: dropped in \(zone.rawValue, privacy: .public)")
                 let gap = self.gap
-                // Off the tap thread: this reads screens on the main actor and then does the same
-                // Accessibility write the keyboard chords do.
-                Task { @MainActor in
-                    WindowTiler.apply(
-                        zone, pid: session.pid, areas: WindowTiler.visibleAreas(),
-                        cycleWidths: false, gap: gap)
+                // The window this gesture has been dragging, named explicitly rather than left for
+                // the tiler to re-resolve. The press was swallowed, so the dragged window was never
+                // focused — handed only a pid, `WindowTiler` fell back to `AX.frontWindow` and
+                // snapped whichever window the app *did* have focused, which for any app with two
+                // windows open is routinely not the one under the cursor.
+                //
+                // Read on the queue that owns `draggedWindow`, and enqueued before `end()`'s own hop
+                // clears it — the queue is serial, so the ordering holds.
+                queue.async {
+                    let dragged = Self.draggedWindow
+                    // Off the tap thread: this reads screens on the main actor and then does the
+                    // same Accessibility write the keyboard chords do.
+                    Task { @MainActor in
+                        WindowTiler.apply(
+                            zone, pid: session.pid, areas: WindowTiler.visibleAreas(),
+                            cycleWidths: false, gap: gap,
+                            target: dragged.map(WindowTiler.Target.element))
+                    }
                 }
             }
             end()
@@ -687,15 +699,7 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// with focus. Falls back to the front window when nothing matches, which covers the hosts whose
     /// AX frames drift a point from the window list's (Electron, Catalyst).
     private static func axWindow(pid: pid_t, bounds: CGRect) -> AXUIElement? {
-        let windows = AX.windows(of: AX.application(pid))
-        let tolerance: CGFloat = 4
-        let match = windows.first { window in
-            guard let origin = AX.position(window), let size = AX.size(window) else { return false }
-            return abs(origin.x - bounds.minX) < tolerance && abs(origin.y - bounds.minY) < tolerance
-                && abs(size.width - bounds.width) < tolerance
-                && abs(size.height - bounds.height) < tolerance
-        }
-        return match ?? AX.frontWindow(ofApplication: pid)
+        AX.window(ofApplication: pid, matching: bounds) ?? AX.frontWindow(ofApplication: pid)
     }
 }
 
@@ -872,8 +876,15 @@ final class ModifierTargetHighlight {
             \(zone.rawValue, privacy: .public)
             """)
         let gap = self.gap
+        // By its frame, not by its pid. This gesture never touches the window — no click, no focus,
+        // nothing raised — which is exactly what the type's own doc comment promises, and handing
+        // the tiler a bare pid quietly broke that promise: it re-resolved to `AX.frontWindow` and
+        // snapped the app's *focused* window while the outline was drawn around a different one.
+        // The bounds were fixed at chord-down and the window has not moved since, so they still
+        // name it.
         WindowTiler.apply(
-            zone, pid: target.pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap)
+            zone, pid: target.pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
+            target: .bounds(target.bounds))
     }
 
     private func cancel() {

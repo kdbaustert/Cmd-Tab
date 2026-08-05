@@ -249,7 +249,14 @@ extension SwitchTarget {
 
             // It owns a window that is off screen, which is either the Dock or another Desktop.
             // A minimized window occupies no Space at all, so a nil state here means the Dock.
-            let state = SpaceMover.spaceState(of: front)
+            //
+            // One placement read, shared by both questions below. Each of them used to take its own
+            // — and `ownsWindowOnAnotherSpace` took one *per window* — where a read walks every Space
+            // on every display at a window-server round-trip each. Measured on a six-Space machine:
+            // thirty-six round-trips to answer a single pick, all of them on the queue the switch is
+            // waiting on.
+            let placement = SpaceMover.windowSpaces()
+            let state = placement[front]
             guard let state, state.windowSpace != state.currentSpace else {
                 // Minimized, or on this Desktop but not visible. Activate first — that is what makes
                 // Chromium and Electron build the accessibility tree the restore needs — then raise
@@ -258,9 +265,14 @@ extension SwitchTarget {
                 // `front` being minimized says nothing about the app's *other* windows: the one in
                 // the Dock is simply first in z-order, and siblings can still be sitting on Desktops
                 // of their own for `allWindows` to gather. Same guard as the on-screen path.
-                activate(
-                    pid: pid,
-                    allWindows: !ownsWindowOnAnotherSpace(pid: pid, onScreen: onScreen))
+                let elsewhere = ownsWindowOnAnotherSpace(
+                    pid: pid, onScreen: onScreen, placement: placement)
+                Log.general.notice(
+                    """
+                    app pick: pid \(pid, privacy: .public) has nothing on screen, \
+                    front=\(front, privacy: .public) elsewhere=\(elsewhere, privacy: .public)
+                    """)
+                activate(pid: pid, allWindows: !elsewhere)
                 restoreMinimized(pid: pid, attempts: 4)
                 return
             }
@@ -337,14 +349,39 @@ extension SwitchTarget {
     ///
     /// Free on the common case: an app with everything on this Desktop has no off-screen windows to
     /// look up, and only the off-screen ones are ever asked about.
-    private static func ownsWindowOnAnotherSpace(pid: pid_t, onScreen: Set<CGWindowID>) -> Bool {
+    ///
+    /// `placement` is a `SpaceMover.windowSpaces()` map the caller has already paid for; passing nil
+    /// builds one here, and only once the common case above has been ruled out. It used to call
+    /// `SpaceMover.spaceState` inside the loop below, which rebuilds the whole map per window —
+    /// precisely what that function's own documentation warns callers not to do. On a six-Space
+    /// machine with five off-screen windows that was thirty round-trips to the window server for one
+    /// pick, where one map answers every window at six.
+    private static func ownsWindowOnAnotherSpace(
+        pid: pid_t, onScreen: Set<CGWindowID>,
+        placement: [CGWindowID: SpaceMover.SpaceState]? = nil
+    ) -> Bool {
         let offScreen = ownedWindows(pid: pid, options: [.excludeDesktopElements])
             .filter { !onScreen.contains($0) }
         guard !offScreen.isEmpty else { return false }
-        // A minimized window sits in the Dock on no Space at all, which is what a nil state means
-        // here — and activation cannot drag it anywhere, so it is no reason to give up `allWindows`.
+        // Say yes when we cannot tell. `allWindows` is the one call in this file that can drag a
+        // window off the Desktop it lives on, so it has to be earned by a positive answer, never
+        // fall out of a lookup that failed: a missing private symbol on a future macOS, or a
+        // window-server read that came back empty across a Space switch or on wake, would otherwise
+        // report every window as safely absent and gather the lot. That is the "windows keep
+        // switching Desktops by themselves" bug reappearing exactly when the Space lookup breaks —
+        // the failure mode this function exists to prevent, arriving through its own back door.
+        //
+        // Costs nothing but the whole-window-group raise, and only on an app that has windows off
+        // screen at all.
+        guard SpaceMover.isAvailable else { return true }
+        let placed = placement ?? SpaceMover.windowSpaces()
+        guard !placed.isEmpty else { return true }
+        // A minimized window sits in the Dock on no Space at all, which is what a missing entry in a
+        // *healthy* map means — and activation cannot drag it anywhere, so it is no reason to give
+        // up `allWindows`. The health check above is what separates that from a map that simply
+        // could not be read; without it the two were the same answer.
         return offScreen.contains { window in
-            guard let state = SpaceMover.spaceState(of: window) else { return false }
+            guard let state = placed[window] else { return false }
             return state.windowSpace != state.currentSpace
         }
     }

@@ -684,13 +684,49 @@ enum WindowTiler {
     /// Well past any plausible working set; this is a backstop, not a policy.
     private static let restoreLimit = 128
 
+    /// Which window an arrangement acts on.
+    ///
+    /// Absent means the app's frontmost window, which is right for the keyboard chords and for the
+    /// titlebar drag: both act on whatever the user is looking at, and a titlebar drag has focused
+    /// the window by grabbing it. The two modifier-driven mouse gestures are the exception — each is
+    /// pointed at one specific window and *neither focuses it*. The modifier-drag swallows its own
+    /// mouse-down so the click never reaches the app, and the hold-and-point gesture involves no
+    /// click at all. Handed a pid alone, the tiler re-resolved to the focused window and snapped the
+    /// wrong one on any app with more than one window open.
+    enum Target {
+        /// A window already resolved over Accessibility — the modifier-drag, which has been writing
+        /// frames to this very element for the length of the gesture.
+        case element(AXUIElement)
+        /// The window whose frame matches these bounds. For a gesture that never moved the window,
+        /// the frame it was pointed at is still its frame, and resolving here rather than at the call
+        /// site keeps the Accessibility walk on this queue instead of the main thread.
+        case bounds(CGRect)
+    }
+
+    /// The window `apply` should act on.
+    ///
+    /// Falls back to the frontmost window whenever there is nothing better: a bounds match can miss
+    /// on hosts whose Accessibility frames drift from the window server's (Electron, Catalyst), and
+    /// snapping nothing at all there would be a worse failure than the imprecision it replaces.
+    private static func resolve(_ target: Target?, pid: pid_t) -> AXUIElement? {
+        switch target {
+        case .element(let window):
+            return window
+        case .bounds(let bounds):
+            return AX.window(ofApplication: pid, matching: bounds)
+                ?? AX.frontWindow(ofApplication: pid)
+        case nil:
+            return AX.frontWindow(ofApplication: pid)
+        }
+    }
+
     static func apply(
         _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
-        gap: CGFloat = 0
+        gap: CGFloat = 0, target: Target? = nil
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
-            guard let window = AX.frontWindow(ofApplication: pid),
+            guard let window = resolve(target, pid: pid),
                 let origin = AX.position(window), let size = AX.size(window)
             else { return }
             let current = CGRect(origin: origin, size: size)
