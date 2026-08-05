@@ -207,14 +207,32 @@ extension SwitchTarget {
     ///
     /// Runs off the main thread: `focus()` is reached from inside the event tap callback, and every
     /// Accessibility call below is IPC that can block on a wedged app.
-    private static func focusApp(pid: pid_t, bundleURL: URL?) {
+    ///
+    /// Not private, because a tile pick is not the only way to ask for an app: the direct-activation
+    /// shortcuts in `GlobalActions` mean the same thing and used to spell it `activate(options:
+    /// .activateAllWindows)`, which is precisely the call that rearranges Desktops.
+    static func focusApp(pid: pid_t, bundleURL: URL?) {
         focusQueue.async {
             // An app pick supersedes any window pick still waiting for its Desktop.
-            beginFocus()
+            let generation = beginFocus()
 
-            // Something of this app's is already on the Desktop in front of us. The plain activation
-            // is right, and this is the case nearly every pick takes — nothing below may slow it
-            // down or change its behaviour.
+            // One placement read, shared by every question below. Each of them used to take its own
+            // — and the whole-window-group check took one *per window* — where a read walks every
+            // Space on every display at a window-server round-trip each. Measured on a six-Space
+            // machine: thirty-six round-trips to answer a single pick, all of them on the queue the
+            // switch is waiting on.
+            let placement = SpaceMover.windowSpaces()
+
+            // Something of this app's is already in front of us, which is the case nearly every pick
+            // takes. What it does *not* license is `activate`: that call is app-level, and an app
+            // whose front window lives on another Desktop has that window dragged onto this one as
+            // its side effect — see `FrontProcess`. So an app with one window here and one on
+            // Desktop 1 had the Desktop 1 window hauled over every time it was picked from
+            // elsewhere, which is the "Ghostty and VS Code follow me between Desktops" report: the
+            // window came over, and macOS put it back the next time its own Desktop came up.
+            //
+            // Fronting the window that is already here, by id, is the same outcome for the user with
+            // no app-level activation to have that effect. Its siblings stay where they were left.
             //
             // "Is anything of this app's up?" is a question for the window server, not `AXWindows`.
             // Finder keeps the desktop in its accessibility window list, and it arrives as a window
@@ -224,79 +242,76 @@ extension SwitchTarget {
             // happened to: nothing else owns the desktop. `.excludeDesktopElements` drops the
             // desktop by request, minimized windows are absent from the on-screen list by
             // definition, and layer 0 keeps panels and menus from counting.
-            let onScreen = onScreenWindows(pid: pid)
-            guard onScreen.isEmpty else {
-                // `allWindows` only when there is nothing elsewhere to drag over — see
-                // `ownsWindowOnAnotherSpace`. The set is already in hand, so the check costs one
-                // more window-server read on the rare app that has windows off screen and nothing
-                // at all on the common path.
-                let elsewhere = ownsWindowOnAnotherSpace(pid: pid, onScreen: onScreen)
+            if let here = frontWindowHere(pid: pid, placement: placement) {
                 Log.general.notice(
                     """
-                    app pick: pid \(pid, privacy: .public) has \(onScreen.count, privacy: .public) \
-                    on screen, elsewhere=\(elsewhere, privacy: .public)
+                    app pick: pid \(pid, privacy: .public) fronting window \
+                    \(here, privacy: .public), already on this Desktop
                     """)
-                activate(pid: pid, allWindows: !elsewhere)
+                focusAndActivate(window: here, pid: pid, generation: generation)
                 return
             }
 
-            // Nothing anywhere: not minimized, not on another Desktop. `activate` cannot make a
-            // window, so only a reopen produces one — see `reopen`.
-            guard let front = frontOwnedWindow(pid: pid) else {
-                reopen(pid: pid, bundleURL: bundleURL)
-                return
-            }
-
-            // It owns a window that is off screen, which is either the Dock or another Desktop.
-            // A minimized window occupies no Space at all, so a nil state here means the Dock.
+            // Nothing on this Desktop and nothing on any other: its windows are in the Dock, or it
+            // owns none at all. `restoreMinimized` tells those two apart — the Dock is the only
+            // place left to look — and reopens when there turns out to be nothing to restore.
             //
-            // One placement read, shared by both questions below. Each of them used to take its own
-            // — and `ownsWindowOnAnotherSpace` took one *per window* — where a read walks every Space
-            // on every display at a window-server round-trip each. Measured on a six-Space machine:
-            // thirty-six round-trips to answer a single pick, all of them on the queue the switch is
-            // waiting on.
-            let placement = SpaceMover.windowSpaces()
-            let state = placement[front]
-            guard let state, state.windowSpace != state.currentSpace else {
-                // Minimized, or on this Desktop but not visible. Activate first — that is what makes
-                // Chromium and Electron build the accessibility tree the restore needs — then raise
-                // whatever comes back minimized.
-                //
-                // `front` being minimized says nothing about the app's *other* windows: the one in
-                // the Dock is simply first in z-order, and siblings can still be sitting on Desktops
-                // of their own for `allWindows` to gather. Same guard as the on-screen path.
-                let elsewhere = ownsWindowOnAnotherSpace(
-                    pid: pid, onScreen: onScreen, placement: placement)
+            // The window list cannot answer this on its own, which is what the old
+            // `frontOwnedWindow` here assumed it could: see `placedFrontWindow` for the five
+            // phantoms a windowless Finder owns. Trusting them meant `reopen` was unreachable for
+            // the one app whose name is on the bug it exists to fix.
+            guard let front = placedFrontWindow(pid: pid, placement: placement) else {
                 Log.general.notice(
-                    """
-                    app pick: pid \(pid, privacy: .public) has nothing on screen, \
-                    front=\(front, privacy: .public) elsewhere=\(elsewhere, privacy: .public)
-                    """)
-                activate(pid: pid, allWindows: !elsewhere)
-                restoreMinimized(pid: pid, attempts: 4)
+                    "app pick: pid \(pid, privacy: .public) has nothing on any Desktop")
+                activate(pid: pid)
+                restoreMinimized(pid: pid, attempts: 4, bundleURL: bundleURL)
                 return
             }
 
-            // On another Desktop. Activating here would *gather* the window onto the Desktop we are
+            // Either on another Desktop, or on this one but hidden or wholly covered. Both are
+            // `focusWindow`'s job: it switches Spaces when there is one to switch to, unhides when
+            // that is what is in the way, and waits for the arrival before it touches the window.
+            //
+            // Activating here instead would *gather* an off-Desktop window onto the Desktop we are
             // looking at rather than taking us to it — the measured behaviour `settle` documents —
-            // which is how switching to an app quietly moved its window off the Desktop the user
-            // had left it on. `focusWindow` switches Spaces first and waits for the arrival, so app
-            // mode reuses it rather than activating blind.
+            // which is how switching to an app quietly moved its window off the Desktop the user had
+            // left it on.
+            let state = placement[front]
+            Log.general.notice(
+                """
+                app pick: pid \(pid, privacy: .public) has nothing on this Desktop, going to \
+                front=\(front, privacy: .public) on space \(state?.windowSpace ?? 0, privacy: .public) \
+                (current \(state?.currentSpace ?? 0, privacy: .public))
+                """)
             focusWindow(id: front, pid: pid)
         }
     }
 
-    /// Raises a minimized window of `pid`, retrying while the app's accessibility tree is empty.
+    /// Raises a minimized window of `pid`, retrying while the app's accessibility tree is empty, and
+    /// reopens the app when the retries prove it has no window anywhere.
     ///
     /// Chromium and Electron hosts report no windows until they are active. The caller activates
     /// first, so an empty list here means "not yet", not "none" — without the retry a minimized-only
     /// Chrome was never restored and the pick looked like it did nothing.
-    private static func restoreMinimized(pid: pid_t, attempts: Int) {
+    ///
+    /// Reached only once the window server has said the app has nothing on any Desktop, so the Dock
+    /// is the last place a window could be. Running out of retries therefore settles the question
+    /// the caller could not: the app owns none, and a pick that lands here has to *make* one or it
+    /// does nothing at all. That silent nothing was the "Finder won't open" report — Finder's
+    /// accessibility list holds only the desktop, an `AXScrollArea` that `isWindow` drops, so the
+    /// list is empty forever and every retry expired against a `return`.
+    private static func restoreMinimized(pid: pid_t, attempts: Int, bundleURL: URL?) {
         let windows = AX.windows(of: AX.application(pid)).filter(AX.isWindow)
         guard let target = windows.first(where: AX.isMinimized) else {
-            guard windows.isEmpty, attempts > 1 else { return }
+            // It has windows, just none in the Dock. Nothing to restore, and nothing to reopen for
+            // either — the activation the caller already issued is the whole of the answer.
+            guard windows.isEmpty else { return }
+            guard attempts > 1 else {
+                reopen(pid: pid, bundleURL: bundleURL)
+                return
+            }
             focusQueue.asyncAfter(deadline: .now() + 0.1) {
-                restoreMinimized(pid: pid, attempts: attempts - 1)
+                restoreMinimized(pid: pid, attempts: attempts - 1, bundleURL: bundleURL)
             }
             return
         }
@@ -317,7 +332,7 @@ extension SwitchTarget {
     /// running app is that same event, so this is the Dock's behaviour, not a new invention.
     private static func reopen(pid: pid_t, bundleURL: URL?) {
         guard let bundleURL else {
-            activate(pid: pid, allWindows: true)  // Nothing to reopen with; at least come forward.
+            activate(pid: pid, allWindows: mayRaiseWholeWindowGroup)  // Nothing to reopen with; at least come forward.
             return
         }
         Log.targets.notice("pid \(pid, privacy: .public) owns no window; reopening to make one")
@@ -328,68 +343,56 @@ extension SwitchTarget {
         }
     }
 
-    /// The ordinary windows of `pid` actually displayed right now — empty when its windows are all
-    /// minimized, and empty when they are all on another Space.
-    private static func onScreenWindows(pid: pid_t) -> Set<CGWindowID> {
-        Set(ownedWindows(pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]))
-    }
-
-    /// Whether `pid` owns a window living on a Desktop other than the one in front.
+    /// The app's frontmost window that is genuinely in front of the user right now: displayed, and
+    /// on the Space its display is currently showing. nil when everything it owns is minimized,
+    /// hidden, or on another Desktop.
     ///
-    /// `.activateAllWindows` brings *every* window of an app forward, and the only way macOS can
-    /// bring a window on another Space forward is to drag it onto the Space you are looking at. So
-    /// on an app whose windows are spread across Desktops — or one the user pinned to a Desktop with
-    /// the Dock's "Assign To" — the activation meant merely to surface what was already here
-    /// silently gathered the rest of its windows off the Desktops they were left on. That is the
-    /// "windows keep switching Desktops by themselves" report.
+    /// Both halves are needed, and the Space one is what this bug turned on. `.optionOnScreenOnly`
+    /// answers "is this window composited", which is *not* the same question: an incoming Desktop's
+    /// windows begin compositing as a transition opens — the measured behaviour `spaceChanges`
+    /// documents — so a pick that lands in that gap sees a window as on screen while it still
+    /// belongs to the Desktop being left. Acting on that reading is what pulled the window over.
+    /// Asking the window server which Space actually holds it settles it either way.
     ///
-    /// Answering yes costs the pick nothing but the whole-window-group raise, which is only
-    /// meaningful for windows that are already here; answering no keeps ⌘-Tab's traditional
-    /// behaviour on the apps where it is safe.
-    ///
-    /// Free on the common case: an app with everything on this Desktop has no off-screen windows to
-    /// look up, and only the off-screen ones are ever asked about.
-    ///
-    /// `placement` is a `SpaceMover.windowSpaces()` map the caller has already paid for; passing nil
-    /// builds one here, and only once the common case above has been ruled out. It used to call
-    /// `SpaceMover.spaceState` inside the loop below, which rebuilds the whole map per window —
-    /// precisely what that function's own documentation warns callers not to do. On a six-Space
-    /// machine with five off-screen windows that was thirty round-trips to the window server for one
-    /// pick, where one map answers every window at six.
-    private static func ownsWindowOnAnotherSpace(
-        pid: pid_t, onScreen: Set<CGWindowID>,
-        placement: [CGWindowID: SpaceMover.SpaceState]? = nil
-    ) -> Bool {
-        let offScreen = ownedWindows(pid: pid, options: [.excludeDesktopElements])
-            .filter { !onScreen.contains($0) }
-        guard !offScreen.isEmpty else { return false }
-        // Say yes when we cannot tell. `allWindows` is the one call in this file that can drag a
-        // window off the Desktop it lives on, so it has to be earned by a positive answer, never
-        // fall out of a lookup that failed: a missing private symbol on a future macOS, or a
-        // window-server read that came back empty across a Space switch or on wake, would otherwise
-        // report every window as safely absent and gather the lot. That is the "windows keep
-        // switching Desktops by themselves" bug reappearing exactly when the Space lookup breaks —
-        // the failure mode this function exists to prevent, arriving through its own back door.
-        //
-        // Costs nothing but the whole-window-group raise, and only on an app that has windows off
-        // screen at all.
-        guard SpaceMover.isAvailable else { return true }
-        let placed = placement ?? SpaceMover.windowSpaces()
-        guard !placed.isEmpty else { return true }
-        // A minimized window sits in the Dock on no Space at all, which is what a missing entry in a
-        // *healthy* map means — and activation cannot drag it anywhere, so it is no reason to give
-        // up `allWindows`. The health check above is what separates that from a map that simply
-        // could not be read; without it the two were the same answer.
-        return offScreen.contains { window in
-            guard let state = placed[window] else { return false }
-            return state.windowSpace != state.currentSpace
+    /// Returns the on-screen list's first entry when the placement map could not be read at all: it
+    /// is then the only evidence there is, and on-screen membership on its own is still enough to
+    /// say the window is here. Unlike the whole-window-group raise this replaces, a blind answer
+    /// costs nothing — the window fronted is one specific window of the app's, never its siblings on
+    /// Desktops the user is not looking at.
+    private static func frontWindowHere(
+        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState]
+    ) -> CGWindowID? {
+        // In z-order, so the first match is the one the app considers in front.
+        let onScreen = ownedWindows(
+            pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements])
+        guard !placement.isEmpty else { return onScreen.first }
+        return onScreen.first { window in
+            guard let state = placement[window] else { return false }
+            return state.windowSpace == state.currentSpace
         }
     }
 
-    /// The app's frontmost window on any Desktop, minimized ones included. The window list is in
-    /// z-order, so the first match is the one the app itself considers in front.
-    private static func frontOwnedWindow(pid: pid_t) -> CGWindowID? {
-        ownedWindows(pid: pid, options: [.excludeDesktopElements]).first
+    /// The app's frontmost window that the window server actually places on a Desktop.
+    ///
+    /// The raw window list is not a list of an app's windows. Every app that draws a menu bar owns
+    /// one full-width menu-bar backing window per display, and apps leave 1×1, 64×64 and 500×500
+    /// helper surfaces behind them; all are layer 0, all survive `.excludeDesktopElements`, and none
+    /// is anything the user could switch to. Closed windows linger in the list too, after the app
+    /// itself has forgotten them. Measured on a Finder with no windows open: five entries, every one
+    /// of them a phantom — which is why the old `frontOwnedWindow` never returned nil for Finder and
+    /// `reopen` was unreachable for the very app whose name is on the bug it exists to fix.
+    ///
+    /// A window the window server puts on a Space is a real one: the `0x2` query behind this map is
+    /// the one `SpaceMover` documents as returning exactly the real windows. Minimized windows are
+    /// on no Space and so are absent here as well, which is why the caller goes on to search the
+    /// Dock through the accessibility tree rather than concluding anything from a nil.
+    ///
+    /// The list is in z-order, so the first match is the one the app considers in front.
+    private static func placedFrontWindow(
+        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState]
+    ) -> CGWindowID? {
+        ownedWindows(pid: pid, options: [.excludeDesktopElements])
+            .first { placement[$0] != nil }
     }
 
     /// The ordinary windows `pid` owns, front to back.
@@ -428,6 +431,41 @@ extension SwitchTarget {
         guard id != 0 else { return nil }
         return AX.windows(of: AX.application(pid))
             .first(where: { TargetProvider.windowID($0) == id })
+    }
+
+    /// Whether an app pick may raise the app's *whole* window group rather than just bringing it
+    /// forward.
+    ///
+    /// ⌘-Tab has traditionally done this, and `.activateAllWindows` is the only call that does — but
+    /// it is also the loudest of the calls in this file that can pull a window off the Desktop it
+    /// lives on, and no amount of gating made that trade-off worth defending: a check on where the
+    /// app's windows are cannot make the underlying call safe, because what the window server does
+    /// with a pinned or reassigned window is not ours to predict.
+    ///
+    /// So it is off, and the picks that used to weigh it now front one specific window instead. The
+    /// group raise is a nicety — it surfaces siblings that were already on the Desktop in front of
+    /// you — while gathering rearranges Desktops the user was not even looking at. Set to `true` to
+    /// restore the traditional behaviour on the one path that still consults it.
+    private static let mayRaiseWholeWindowGroup = false
+
+    /// Brings `pid` forward by naming one of its windows, rather than by activating the app.
+    ///
+    /// The difference is the whole subject of `FrontProcess`: an app-level activation gathers the
+    /// app's windows from other Desktops onto the one in front of you, and naming a window does not.
+    /// Callers that have *not* established the window is on the current Desktop must use this one.
+    ///
+    /// Falls back to activation when the private symbols are gone — wrong about Spaces, but a pick
+    /// that does nothing at all is worse, and it is the same trade `focusAndActivate` makes.
+    private static func front(window id: CGWindowID, pid: pid_t) {
+        guard FrontProcess.focus(window: id, pid: pid) else {
+            Log.general.notice(
+                """
+                focus window \(id, privacy: .public): cannot front a single window, \
+                activating pid \(pid, privacy: .public) instead
+                """)
+            activate(pid: pid)
+            return
+        }
     }
 
     /// Brings `pid` forward, unhiding it first if it is hidden. `NSRunningApplication` is
@@ -532,6 +570,30 @@ extension SwitchTarget {
             // Read *before* the switch is issued: the notification it waits on can land while the
             // reveal call is still returning, and a count taken afterwards would miss it and then
             // wait for a second transition that never comes.
+            // Ask macOS to travel there before doing it ourselves.
+            //
+            // `CGSManagedDisplaySetCurrentSpace` changes which Desktop is current without running
+            // the transition macOS runs for a real switch, and the difference is visible: captured
+            // one Desktop at a time across a private-call sweep, every screenshot came back with two
+            // or three apps' menu bars drawn on top of each other, and a Chrome window belonging to
+            // Desktop 4 rendered along the bottom edge of Desktop 6. The windows had not moved —
+            // their Space assignment never changed — they were simply still being drawn. A genuine
+            // Desktop change re-composites and clears them, which is exactly the "as soon as you
+            // move to a new desktop they go back where they belong" report.
+            //
+            // Activating the app is the one way to get the *system's* switch, animation and all, and
+            // on the default Mission Control setting that is precisely what it does: travel to the
+            // window rather than drag it over. Only worth trying under that setting — with the
+            // checkbox off the same call does the opposite, which is the behaviour every "gathering"
+            // note in this file describes. `settleBySystemSwitch` polls for the arrival and reports
+            // whether it got one; the private switch below is the fallback when it did not.
+            if let state = placement, state.windowSpace != state.currentSpace,
+                SpaceMover.systemSwitchesSpaceOnActivate,
+                settleBySystemSwitch(window: id, pid: pid, state: state, generation: generation)
+            {
+                return
+            }
+
             let changesBefore = spaceChanges.value
             let reveal = SpaceMover.reveal(window: id, state: placement)
             Log.general.notice(
@@ -549,8 +611,67 @@ extension SwitchTarget {
                 // Only a pick that actually issued a switch has a transition to wait on. Without a
                 // switch there is nothing in flight and no Desktop to drag the window off, so the
                 // common same-Desktop pick keeps its two-hundredths of a second.
-                awaitingSpaceChange: reveal.switched ? changesBefore : nil)
+                awaitingSpaceChange: reveal.switched ? changesBefore : nil,
+                notBefore: reveal.switched ? .now() + spaceSettleDelay : .now())
         }
+    }
+
+    /// Activates `pid` and waits to see whether macOS travels to the window's Desktop by itself.
+    ///
+    /// True once it has arrived *and* the window is still on the Desktop it started on — the pick is
+    /// then finished and the caller must not switch Spaces itself. False means the system declined,
+    /// and the caller falls back to the private switch.
+    ///
+    /// The window's own Space is what makes this safe to try. Activation has two possible outcomes
+    /// and they are opposites: travel to the window, or drag the window here. Both are visible in
+    /// the same reading — after arrival the window's Space equals the Desktop we are now on either
+    /// way, so the two are told apart by *which* Desktop that is. Landing on the window's original
+    /// Space is a switch; the window turning up on the Space we started from is a drag, and it is
+    /// reported as a failure with a line in the log rather than quietly accepted.
+    ///
+    /// Polls rather than waiting a fixed interval: the system's own transition is what is being
+    /// waited on, and it has no completion signal we can read (see `spaceSettleDelay`). Gives up at
+    /// roughly a second, which is far longer than a transition takes and still short enough that a
+    /// pick the system ignored is not left hanging.
+    private static func settleBySystemSwitch(
+        window id: CGWindowID, pid: pid_t, state: SpaceMover.SpaceState, generation: UInt64
+    ) -> Bool {
+        Log.general.notice(
+            """
+            focus window \(id, privacy: .public): asking macOS to travel to space \
+            \(state.windowSpace, privacy: .public) from \(state.currentSpace, privacy: .public)
+            """)
+        activate(pid: pid)
+
+        // Blocks `focusQueue` while it waits, which is why the cap is 700ms rather than the couple of
+        // seconds the rest of this file allows itself: a pick that lands during the wait queues
+        // behind it, and a switcher that stutters under fast repeated picks would be its own bug.
+        for _ in 0..<14 {
+            usleep(50_000)
+            guard generation == focusGeneration else { return true }  // superseded; do not fall back
+            guard let now = SpaceMover.spaceState(of: id) else { continue }
+            guard now.windowSpace == now.currentSpace else { continue }
+            if now.windowSpace == state.windowSpace {
+                Log.general.notice(
+                    """
+                    focus window \(id, privacy: .public): macOS switched to space \
+                    \(now.windowSpace, privacy: .public) on its own
+                    """)
+                // The app is up and on the right Desktop; this puts the *picked* window in front of
+                // its siblings. Safe here in a way it is not before arrival — see `focusAndActivate`.
+                focusAndActivate(window: id, pid: pid, generation: generation)
+                return true
+            }
+            Log.general.notice(
+                """
+                focus window \(id, privacy: .public): activation dragged it to space \
+                \(now.windowSpace, privacy: .public) instead of travelling — falling back
+                """)
+            return false
+        }
+        Log.general.notice(
+            "focus window \(id, privacy: .public): macOS did not travel; using the private switch")
+        return false
     }
 
     /// Brings a minimized window back out of the Dock.
@@ -564,14 +685,23 @@ extension SwitchTarget {
     ///
     /// The last branch logs instead of returning quietly. A pick that cannot be honoured is worth a
     /// line: silence here is indistinguishable from the bug this replaced.
+    ///
+    /// Neither bring-forward here is an `activate`, and that is not caution — it is the correctness
+    /// of this branch's *entry* condition. "On no Space and not on screen" is meant to name the
+    /// Dock, but it also names a window the window server declined to place, and it declines often:
+    /// measured on macOS 26, `CGSCopyWindowsWithOptionsAndTags` places exactly *one* window per app
+    /// — the frontmost — for Ghostty and VS Code, at every one of `0x0`, `0x2` and `0x7`. So a
+    /// perfectly ordinary window sitting on Desktop 4 arrives here looking minimized, and an
+    /// app-level activation would have hauled it onto the Desktop in front of the user. Fronting one
+    /// named window cannot do that, and it still wakes the lazy accessibility trees below.
     private static func restoreFromDock(window id: CGWindowID, pid: pid_t, generation: UInt64) {
         if let element = axWindow(id: id, pid: pid) {
             raise(element: element)
-            activate(pid: pid)
+            front(window: id, pid: pid)
             Log.general.notice("focus window \(id, privacy: .public): restored from the Dock")
             return
         }
-        activate(pid: pid)
+        front(window: id, pid: pid)
         focusQueue.asyncAfter(deadline: .now() + 0.15) {
             guard generation == focusGeneration else { return }
             guard let element = axWindow(id: id, pid: pid) else {
@@ -608,9 +738,30 @@ extension SwitchTarget {
     ///
     /// `actWhenUnreached` says what to do if it never arrives, and is the difference between the two
     /// ways a pick can fail. See the give-up branch.
+    /// How long after a Space switch is issued before anything may touch the window.
+    ///
+    /// A measured number standing in for a signal macOS does not offer. There is no "the transition
+    /// has finished" call — `CGSGetSpaceTransitionState` and its siblings do not exist on macOS 26 —
+    /// and every cheap proxy was measured lying:
+    ///
+    /// * the window server's `Current Space` field flips **0.2ms** after the switch is issued, long
+    ///   before anything moves on screen;
+    /// * `activeSpaceDidChange` posts within the first frame or two;
+    /// * on-screen membership does not track Spaces at all. Sampled every 25ms across a switch, the
+    ///   count of the *outgoing* Desktop's windows in `.optionOnScreenOnly` never changed — 16 of 18
+    ///   before, 16 of 18 a second later, with the incoming Desktop's windows listed the whole time.
+    ///   That is why `isOnScreen` opened the gate on the first poll of every pick ever logged.
+    ///
+    /// So the gate that was meant to keep a raise out of the transition never closed once, and the
+    /// window-relocation it exists to prevent had a clear run. Waiting a fixed interval is the only
+    /// honest option left; it costs a cross-Desktop pick a fraction of a second and costs the common
+    /// same-Desktop pick nothing at all.
+    private static let spaceSettleDelay: TimeInterval = 0.45
+
     private static func settle(
         window id: CGWindowID, pid: pid_t, attempts: Int, delay: TimeInterval,
-        generation: UInt64, actWhenUnreached: Bool, awaitingSpaceChange: UInt64?
+        generation: UInt64, actWhenUnreached: Bool, awaitingSpaceChange: UInt64?,
+        notBefore: DispatchTime
     ) {
         guard generation == focusGeneration else { return }  // superseded by a later pick
         guard attempts > 0 else {
@@ -633,32 +784,34 @@ extension SwitchTarget {
         }
         focusQueue.asyncAfter(deadline: .now() + delay) {
             guard generation == focusGeneration else { return }
-            // Both gates, and the Space one first: on-screen membership opens during the animation,
-            // so on its own it lets the activation through in exactly the window where it still
-            // relocates the window. See `spaceChanges`.
-            //
-            // Each read once and reused below. `isOnScreen` is a window-server round-trip on the
-            // pick's critical path, and it runs up to fourteen times per switch as it is.
+            // Two gates. The notification says a transition began and landed; `notBefore` says
+            // enough of the clock has run for it to be over. Neither is sufficient alone — see
+            // `spaceSettleDelay` for what each one was measured to be worth.
             let arrived = awaitingSpaceChange.map { spaceChanges.value > $0 } ?? true
+            let waited = DispatchTime.now() >= notBefore
+            // On-screen membership is *not* a gate any more, only a note in the log. It was one, and
+            // it never held: measured across a switch, the outgoing Desktop's windows stay in
+            // `.optionOnScreenOnly` throughout and the incoming Desktop's are in it before the
+            // switch is even issued. Kept in the line below because a pick that misbehaves is worth
+            // knowing the on-screen reading for — just never again worth trusting.
             let onScreen = isOnScreen(window: id)
             // Only the switched path has anything to say: a same-Desktop pick opens both gates on
             // its first attempt. Which gate is holding is the whole question this logging exists to
-            // answer — "transition still in flight" and "transition landed, window not composited
-            // yet" are different problems, and the combined test cannot tell them apart.
+            // answer.
             if awaitingSpaceChange != nil {
                 Log.general.notice(
                     """
                     focus window \(id, privacy: .public): \
                     transition=\(arrived ? "landed" : "in flight", privacy: .public) \
-                    onScreen=\(onScreen, privacy: .public), \
+                    waited=\(waited, privacy: .public) onScreen=\(onScreen, privacy: .public), \
                     \(attempts, privacy: .public) attempts left
                     """)
             }
-            guard arrived, onScreen else {
+            guard arrived, waited else {
                 settle(
                     window: id, pid: pid, attempts: attempts - 1, delay: delay,
                     generation: generation, actWhenUnreached: actWhenUnreached,
-                    awaitingSpaceChange: awaitingSpaceChange)
+                    awaitingSpaceChange: awaitingSpaceChange, notBefore: notBefore)
                 return
             }
             focusAndActivate(window: id, pid: pid, generation: generation)

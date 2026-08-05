@@ -261,15 +261,24 @@ final class GlobalActionsStore: ObservableObject {
 enum GlobalActions {
     /// Brings an app forward, launching it if it is not running.
     ///
-    /// Activation goes through `NSRunningApplication` where possible rather than re-opening the
-    /// bundle: `openApplication` on a running app works, but it also asks LaunchServices to resolve
-    /// and open the bundle, which is a disk hit on the path where the app is already right there.
+    /// A running app goes through `SwitchTarget.focusApp`, the same path a tile pick takes, rather
+    /// than being activated here. This used to call `activate(options: .activateAllWindows)`, which
+    /// is the one call that drags an app's windows off the Desktops they live on and onto the one in
+    /// front of you — so a shortcut meant to bring Ghostty up gathered the Ghostty window from
+    /// Desktop 1 instead of taking you to it. `focusApp` fronts a single window and travels to its
+    /// Desktop when that is where it is.
+    ///
+    /// Re-opening the bundle is still avoided for a running app: `openApplication` works on one, but
+    /// it also asks LaunchServices to resolve and open the bundle, which is a disk hit on the path
+    /// where the app is already right there.
     static func activate(bundleID: String) {
         DispatchQueue.main.async {
             if let running = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == bundleID && !$0.isTerminated
             }) {
-                running.activate(options: [.activateAllWindows])
+                if running.isHidden { running.unhide() }
+                SwitchTarget.focusApp(
+                    pid: running.processIdentifier, bundleURL: running.bundleURL)
                 return
             }
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)

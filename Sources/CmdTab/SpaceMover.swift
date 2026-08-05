@@ -170,6 +170,26 @@ enum SpaceMover {
         return Reveal(state: state, switched: true)
     }
 
+    /// Whether macOS is set to travel to a window's Desktop when its app is activated — the Mission
+    /// Control checkbox "When switching to an application, switch to a Space with open windows for
+    /// that application".
+    ///
+    /// It decides which of two opposite things an ordinary activation does to a window on another
+    /// Desktop: with it on, macOS switches Desktops and leaves the window alone; with it off, macOS
+    /// drags the window to the Desktop in front of you. Every warning in `SwitchTarget` about
+    /// activation "gathering" a window describes the *off* behaviour, so a caller that wants to lean
+    /// on the system's own switch has to establish which regime it is in first.
+    ///
+    /// Absent means on: that is the macOS default, and the key is only written once the user has
+    /// touched the checkbox.
+    static var systemSwitchesSpaceOnActivate: Bool {
+        guard
+            let value = CFPreferencesCopyAppValue(
+                "workspaces-auto-swoosh" as CFString, "com.apple.dock" as CFString)
+        else { return true }
+        return (value as? Bool) ?? true
+    }
+
     /// Every user Space in order, flattened across displays.
     ///
     /// Flattened deliberately: the badge numbers Spaces the way the user counts them ("Desktop 3"),
