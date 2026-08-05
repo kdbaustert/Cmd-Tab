@@ -170,6 +170,25 @@ enum SpaceMover {
         return Reveal(state: state, switched: true)
     }
 
+    /// Which Space `display` is showing right now, and nothing else.
+    ///
+    /// One window-server round trip, where `windowSpaces` costs one *per Space* because it asks each
+    /// one for its windows. That difference is the whole reason this exists: a poll waiting for a
+    /// Desktop transition wants only this number, and calling `spaceState` in a loop to get it —
+    /// which `spaceState` itself warns against — turned a single pick into a hundred round trips on
+    /// the queue the pick is waiting on.
+    ///
+    /// nil when the layout cannot be read, which a caller must not confuse with "not there yet".
+    static func currentSpace(ofDisplay display: String) -> UInt64? {
+        guard let mainConnection, let copyManaged,
+            let displays = copyManaged(mainConnection())?.takeRetainedValue() as? [[String: Any]]
+        else { return nil }
+        for entry in displays where (entry["Display Identifier"] as? String) == display {
+            return (entry["Current Space"] as? [String: Any]).flatMap(spaceID(from:))
+        }
+        return nil
+    }
+
     /// Whether macOS is set to travel to a window's Desktop when its app is activated — the Mission
     /// Control checkbox "When switching to an application, switch to a Space with open windows for
     /// that application".

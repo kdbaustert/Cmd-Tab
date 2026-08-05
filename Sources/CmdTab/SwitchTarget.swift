@@ -540,7 +540,9 @@ extension SwitchTarget {
             // while routing a docked window through the reveal path merely takes the slower way to
             // the same raise. So anything hidden goes below and unhides first.
             let isHidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
-            let placement = SpaceMover.spaceState(of: id)
+            // `var` because the system-switch attempt below can move the window and hand back a
+            // fresher reading; everything after that point must use the new one.
+            var placement = SpaceMover.spaceState(of: id)
             if SpaceMover.isAvailable, !isHidden, placement == nil, !isOnScreen(window: id) {
                 restoreFromDock(window: id, pid: pid, generation: generation)
                 return
@@ -588,10 +590,19 @@ extension SwitchTarget {
             // note in this file describes. `settleBySystemSwitch` polls for the arrival and reports
             // whether it got one; the private switch below is the fallback when it did not.
             if let state = placement, state.windowSpace != state.currentSpace,
-                SpaceMover.systemSwitchesSpaceOnActivate,
-                settleBySystemSwitch(window: id, pid: pid, state: state, generation: generation)
+                SpaceMover.systemSwitchesSpaceOnActivate
             {
-                return
+                switch settleBySystemSwitch(
+                    window: id, pid: pid, state: state, generation: generation)
+                {
+                case .arrived, .superseded:
+                    return
+                case .declined(let refreshed):
+                    // Where the window is *now*, which is not necessarily where it was: the
+                    // activation above may have moved it. `reveal` below acts on this, and acting on
+                    // the pre-activation reading would send the user to a Desktop it had just left.
+                    placement = refreshed
+                }
             }
 
             let changesBefore = spaceChanges.value
@@ -618,24 +629,36 @@ extension SwitchTarget {
 
     /// Activates `pid` and waits to see whether macOS travels to the window's Desktop by itself.
     ///
-    /// True once it has arrived *and* the window is still on the Desktop it started on — the pick is
-    /// then finished and the caller must not switch Spaces itself. False means the system declined,
-    /// and the caller falls back to the private switch.
+    /// What the attempt to let macOS travel came to.
+    private enum SystemSwitch {
+        /// Arrived on the window's Desktop and the window was fronted there. The pick is over.
+        case arrived
+        /// The system did not travel. The caller falls back to the private switch — and must
+        /// re-read the window's placement first, since `refreshed` says where it is *now*.
+        case declined(refreshed: SpaceMover.SpaceState?)
+        /// A later pick replaced this one. Do nothing at all; the pick that superseded it owns the
+        /// screen now, and falling back would drag the user off whatever they picked instead.
+        case superseded
+    }
+
+    /// Activates `pid` and waits to see whether macOS travels to the window's Desktop by itself.
     ///
-    /// The window's own Space is what makes this safe to try. Activation has two possible outcomes
-    /// and they are opposites: travel to the window, or drag the window here. Both are visible in
-    /// the same reading — after arrival the window's Space equals the Desktop we are now on either
-    /// way, so the two are told apart by *which* Desktop that is. Landing on the window's original
-    /// Space is a switch; the window turning up on the Space we started from is a drag, and it is
-    /// reported as a failure with a line in the log rather than quietly accepted.
+    /// Activation has two possible outcomes and they are opposites: travel to the window, or drag
+    /// the window here. Which one you get is the Mission Control setting the caller checks. The
+    /// setting is a statement of intent, though, not a guarantee — so this verifies, and the verdict
+    /// is which Desktop we ended up on. Landing on the window's original Space is a switch; the
+    /// window turning up on the Space we started from is a drag.
     ///
-    /// Polls rather than waiting a fixed interval: the system's own transition is what is being
-    /// waited on, and it has no completion signal we can read (see `spaceSettleDelay`). Gives up at
-    /// roughly a second, which is far longer than a transition takes and still short enough that a
-    /// pick the system ignored is not left hanging.
+    /// A drag is reported as `declined` *with a fresh placement*, and that pairing is the point. The
+    /// window is no longer where the caller's map says it is, and a fallback that trusted the stale
+    /// reading would issue a private switch to the Desktop the window just left — travelling the
+    /// user to an empty Desktop while the window sat behind them on the one they started from.
+    ///
+    /// Polls rather than waiting a fixed interval: the system's transition has no completion signal
+    /// we can read (see `spaceSettleDelay`), and stopping the moment it lands keeps the pick quick.
     private static func settleBySystemSwitch(
         window id: CGWindowID, pid: pid_t, state: SpaceMover.SpaceState, generation: UInt64
-    ) -> Bool {
+    ) -> SystemSwitch {
         Log.general.notice(
             """
             focus window \(id, privacy: .public): asking macOS to travel to space \
@@ -646,32 +669,43 @@ extension SwitchTarget {
         // Blocks `focusQueue` while it waits, which is why the cap is 700ms rather than the couple of
         // seconds the rest of this file allows itself: a pick that lands during the wait queues
         // behind it, and a switcher that stutters under fast repeated picks would be its own bug.
+        //
+        // Only the display's current Space is read per turn — see `SpaceMover.currentSpace`. Asking
+        // for the *window's* placement here instead would rebuild the whole display/Space map on
+        // every one of these turns, which is the loop `spaceState` documents as the thing not to do.
         for _ in 0..<14 {
             usleep(50_000)
-            guard generation == focusGeneration else { return true }  // superseded; do not fall back
-            guard let now = SpaceMover.spaceState(of: id) else { continue }
-            guard now.windowSpace == now.currentSpace else { continue }
-            if now.windowSpace == state.windowSpace {
-                Log.general.notice(
-                    """
-                    focus window \(id, privacy: .public): macOS switched to space \
-                    \(now.windowSpace, privacy: .public) on its own
-                    """)
-                // The app is up and on the right Desktop; this puts the *picked* window in front of
-                // its siblings. Safe here in a way it is not before arrival — see `focusAndActivate`.
-                focusAndActivate(window: id, pid: pid, generation: generation)
-                return true
+            guard generation == focusGeneration else { return .superseded }
+            guard SpaceMover.currentSpace(ofDisplay: state.display) == state.windowSpace else {
+                continue
             }
             Log.general.notice(
                 """
-                focus window \(id, privacy: .public): activation dragged it to space \
-                \(now.windowSpace, privacy: .public) instead of travelling — falling back
+                focus window \(id, privacy: .public): macOS switched to space \
+                \(state.windowSpace, privacy: .public) on its own
                 """)
-            return false
+            // The app is up and on the right Desktop; this puts the *picked* window in front of its
+            // siblings. Safe here in a way it is not before arrival — see `focusAndActivate`.
+            focusAndActivate(window: id, pid: pid, generation: generation)
+            return .arrived
         }
-        Log.general.notice(
-            "focus window \(id, privacy: .public): macOS did not travel; using the private switch")
-        return false
+
+        // It did not travel. One full placement read now — the only one this function takes — both
+        // to say in the log which way it went and to hand the caller a map it can act on.
+        let refreshed = SpaceMover.spaceState(of: id)
+        if let refreshed, refreshed.windowSpace != state.windowSpace {
+            Log.general.notice(
+                """
+                focus window \(id, privacy: .public): activation dragged it from space \
+                \(state.windowSpace, privacy: .public) to \(refreshed.windowSpace, privacy: .public) \
+                instead of travelling
+                """)
+        } else {
+            Log.general.notice(
+                "focus window \(id, privacy: .public): macOS did not travel; using the private switch"
+            )
+        }
+        return .declined(refreshed: refreshed)
     }
 
     /// Brings a minimized window back out of the Dock.
@@ -704,17 +738,41 @@ extension SwitchTarget {
         front(window: id, pid: pid)
         focusQueue.asyncAfter(deadline: .now() + 0.15) {
             guard generation == focusGeneration else { return }
-            guard let element = axWindow(id: id, pid: pid) else {
+            if let element = axWindow(id: id, pid: pid) {
+                raise(element: element)
                 Log.general.notice(
-                    """
-                    focus window \(id, privacy: .public): minimized, and pid \(pid, privacy: .public) \
-                    does not list it over Accessibility — cannot restore
-                    """)
+                    "focus window \(id, privacy: .public): restored from the Dock after fronting")
                 return
             }
-            raise(element: element)
+            // Fronting a single window is what wakes most lazily-built accessibility trees, but it
+            // is a weaker signal than activation and a Chromium or Electron host can sleep through
+            // it — and this is the branch where the window really is in the Dock, since nothing else
+            // has produced it. So the app-level activation comes back for one last try rather than
+            // leaving a minimized Chrome unrestorable, which is the bug the retry was written for.
+            //
+            // Its cost is the one this file spends the rest of its length avoiding: activation can
+            // drag the app's *other* windows off the Desktops they live on. Paid only here, only
+            // after fronting has already failed, and only to turn a dead pick into a live one.
             Log.general.notice(
-                "focus window \(id, privacy: .public): restored from the Dock after activating")
+                """
+                focus window \(id, privacy: .public): fronting did not wake pid \
+                \(pid, privacy: .public); activating to reach its window list
+                """)
+            activate(pid: pid)
+            focusQueue.asyncAfter(deadline: .now() + 0.2) {
+                guard generation == focusGeneration else { return }
+                guard let element = axWindow(id: id, pid: pid) else {
+                    Log.general.notice(
+                        """
+                        focus window \(id, privacy: .public): minimized, and pid \
+                        \(pid, privacy: .public) does not list it over Accessibility — cannot restore
+                        """)
+                    return
+                }
+                raise(element: element)
+                Log.general.notice(
+                    "focus window \(id, privacy: .public): restored from the Dock after activating")
+            }
         }
     }
 
