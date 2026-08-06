@@ -89,7 +89,8 @@ final class TargetProvider {
         case NSWorkspace.didActivateApplicationNotification:
             if let pid = app?.processIdentifier {
                 touch(pid)
-                touchFocusedWindow(of: pid)
+                activationGeneration &+= 1
+                touchFocusedWindow(of: pid, generation: activationGeneration)
             }
         case NSWorkspace.didTerminateApplicationNotification:
             // Drop the pid outright. Nothing else ever removed one, so the list only grew — see
@@ -107,21 +108,76 @@ final class TargetProvider {
         if mru.count > Self.mruLimit { mru.removeLast(mru.count - Self.mruLimit) }
     }
 
+    /// How many times to re-ask a just-launched app for its focused window, and how long to wait
+    /// between tries.
+    ///
+    /// An app that activates on *launch* has no focused window to report yet: the process is up well
+    /// before it has drawn, which is the same timing `LaunchArrangementWatcher` polls around. The
+    /// read fails, and without a retry the window the user just opened never enters `windowMRU` —
+    /// so window mode ranks it last (`Int.max`) and falls back to AX z-order until they switch away
+    /// and back. Five seconds covers a cold launch; it costs nothing on the ordinary case, because
+    /// an app that is already up answers on the first try and never reaches the retry at all.
+    private static let focusedWindowAttempts = 25
+    private static let focusedWindowRetryDelay: TimeInterval = 0.2
+
+    /// How recently an app must have launched for "no focused window" to mean "has not drawn one
+    /// yet" rather than "has none".
+    ///
+    /// Without this the poll is not confined to the launch it was written for. An app that is merely
+    /// open with nothing on screen — Finder with every window closed is the standing example —
+    /// answers nothing on every activation for as long as it runs, and each one would buy a
+    /// five-second Accessibility poll on `axQueue`, the same serial queue a refresh and the same-app
+    /// cycle run on. Generous, because it has to cover the whole poll plus however long the app took
+    /// to get from process start to the activation that starts it.
+    private static let focusedWindowLaunchGrace: TimeInterval = 30
+
+    /// Bumped on every activation. A poll carries the value it started under and stops as soon as a
+    /// newer activation supersedes it.
+    ///
+    /// Two things, both of which the frontmost check alone got wrong. Re-activating the same app
+    /// used to leave the running poll in place and start a second one beside it, so flipping between
+    /// two window-less apps stacked chains on a serial queue. And the frontmost check happens before
+    /// the Accessibility read, which can block for `AX.timeout` — long enough for the user to switch
+    /// away and the new app to record its own window first, leaving the stale answer to land on top
+    /// of it. The generation is checked again at the insert, which is the only place that matters.
+    private var activationGeneration = 0
+
     /// Records the just-activated app's focused window as most-recently-used, so window mode can
     /// order an app's windows by real recency rather than raw AX z-order. Clicking a background app's
     /// window activates it and fires this too, so the MRU tracks external switches, not just ours.
     /// Runs the Accessibility read off the main thread — the same event-tap constraint as elsewhere.
-    private func touchFocusedWindow(of pid: pid_t) {
+    private func touchFocusedWindow(
+        of pid: pid_t, generation: Int, remaining: Int = TargetProvider.focusedWindowAttempts
+    ) {
+        // Our own activation — opening Settings switches the policy to `.regular` and takes focus —
+        // is not a window anyone can switch to: `switchableApps()` drops this process from the list,
+        // so the id would sit at the head of `windowMRU` where nothing can ever match it. It also
+        // keeps the read below aimed at another process, which is what makes it IPC and therefore
+        // safe to run off the main thread at all.
+        guard pid != ProcessInfo.processInfo.processIdentifier else { return }
         axQueue.async { [weak self] in
-            var value: CFTypeRef?
-            guard
-                AXUIElementCopyAttributeValue(
-                    AX.application(pid), kAXFocusedWindowAttribute as CFString, &value) == .success,
-                let value, CFGetTypeID(value) == AXUIElementGetTypeID(),
-                let id = Self.windowID(value as! AXUIElement)
-            else { return }
+            // Only a failure to read the attribute means "ask again". An app that answered with a
+            // window whose `CGWindowID` will not resolve has given its final answer — that is the
+            // documented Electron/Catalyst case in `windowID(matching:pid:)`, and it does not
+            // improve with time. Retrying it would put a five-second poll on every activation of
+            // the apps most likely to hit it.
+            let (window, error) = AX.readElement(
+                AX.application(pid), kAXFocusedWindowAttribute as String)
+            guard let window else {
+                self?.retryFocusedWindow(
+                    of: pid, generation: generation, remaining: remaining, after: error)
+                return
+            }
+            guard let id = Self.windowID(window) else { return }
+            Log.targets.log(
+                level: Log.traceLevel,
+                "focused window: pid \(pid, privacy: .public) -> win \(id, privacy: .public) on try \(TargetProvider.focusedWindowAttempts - remaining + 1, privacy: .public)"
+            )
             DispatchQueue.main.async {
-                guard let self else { return }
+                // `windowMRU`'s head is meant to be the window in focus now, so an answer the user
+                // has already switched away from must not insert itself there — however long the
+                // read above took to come back.
+                guard let self, generation == self.activationGeneration else { return }
                 self.windowMRU.removeAll { $0 == id }
                 self.windowMRU.insert(id, at: 0)
                 if self.windowMRU.count > Self.mruLimit {
@@ -129,6 +185,58 @@ final class TargetProvider {
                 }
             }
         }
+    }
+
+    /// Schedules another attempt at `pid`'s focused window, if one is still worth making.
+    ///
+    /// Three things have to hold. The failure has to be the retryable kind — see `isRetryable`. The
+    /// app has to still be frontmost under the generation the poll started with, which ends it the
+    /// moment attention moves on and covers an app quit mid-poll, since a dead pid is not frontmost
+    /// either. And the app has to have launched recently enough for a missing window to be a window
+    /// that has not arrived yet rather than one that does not exist — see `focusedWindowLaunchGrace`.
+    private func retryFocusedWindow(
+        of pid: pid_t, generation: Int, remaining: Int, after error: AXError
+    ) {
+        guard remaining > 1, Self.isRetryable(error) else {
+            Log.targets.log(
+                level: Log.traceLevel,
+                "focused window: pid \(pid, privacy: .public) never reported one; giving up (AXError \(error.rawValue, privacy: .public))"
+            )
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusedWindowRetryDelay) {
+            [weak self] in
+            guard let self, generation == self.activationGeneration,
+                let app = NSWorkspace.shared.frontmostApplication,
+                app.processIdentifier == pid,
+                Self.isJustLaunched(app)
+            else { return }
+            self.touchFocusedWindow(of: pid, generation: generation, remaining: remaining - 1)
+        }
+    }
+
+    /// Whether a failed read is worth repeating.
+    ///
+    /// `.apiDisabled` is Accessibility switched off for *us*, not a slow app: this provider observes
+    /// activations from the moment it is constructed, which is before `AppDelegate` has even checked
+    /// trust, so an ungranted user would otherwise buy a five-second poll behind every app switch on
+    /// the machine for as long as they left the prompt unanswered. `.notImplemented` is an app that
+    /// does not answer the Accessibility API at all. Neither changes inside five seconds.
+    private static func isRetryable(_ error: AXError) -> Bool {
+        switch error {
+        case .apiDisabled, .notImplemented: return false
+        default: return true
+        }
+    }
+
+    /// Whether `app` is new enough that a missing focused window is a launch still in progress.
+    ///
+    /// An unknown launch date is treated as recent: the date is missing rarely and only for
+    /// processes that could not be read, and losing the retry there would quietly reintroduce the
+    /// ordering bug it exists to fix. The bounded attempt count is the backstop.
+    private static func isJustLaunched(_ app: NSRunningApplication) -> Bool {
+        guard let launched = app.launchDate else { return true }
+        return Date().timeIntervalSince(launched) < focusedWindowLaunchGrace
     }
 
     /// Whatever we last computed. Never blocks.

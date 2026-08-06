@@ -283,7 +283,9 @@ extension SwitchTarget {
                 front=\(front, privacy: .public) on space \(state?.windowSpace ?? 0, privacy: .public) \
                 (current \(state?.currentSpace ?? 0, privacy: .public))
                 """)
-            focusWindow(id: front, pid: pid)
+            // With the placement already in hand: `placedFrontWindow` picked `front` *because* the
+            // map places it, so re-reading it there could only lose the answer, never improve it.
+            focusWindow(id: front, pid: pid, placement: state)
         }
     }
 
@@ -513,7 +515,15 @@ extension SwitchTarget {
     /// is clicked, so app mode can jump straight to that window. Raises and mains the matching AX
     /// window when it can be found; for apps whose AX window list is empty (Electron/Catalyst) it
     /// falls back to just activating the app.
-    static func focusWindow(id: CGWindowID, pid: pid_t) {
+    ///
+    /// `placement` is for a caller that has already read one — `focusApp` builds the whole map to
+    /// choose this window in the first place. Handing it over is not only the round trips saved: a
+    /// re-read here can come back nil for a window that is demonstrably on a Desktop, and a nil is
+    /// read below as "no Space to switch to", which ends in the blind raise that gathers the window
+    /// onto the Desktop in front of the user.
+    static func focusWindow(
+        id: CGWindowID, pid: pid_t, placement known: SpaceMover.SpaceState? = nil
+    ) {
         focusQueue.async {
             let generation = beginFocus()
 
@@ -542,7 +552,7 @@ extension SwitchTarget {
             let isHidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
             // `var` because the system-switch attempt below can move the window and hand back a
             // fresher reading; everything after that point must use the new one.
-            var placement = SpaceMover.spaceState(of: id)
+            var placement = known ?? SpaceMover.spaceState(of: id)
             if SpaceMover.isAvailable, !isHidden, placement == nil, !isOnScreen(window: id) {
                 restoreFromDock(window: id, pid: pid, generation: generation)
                 return
@@ -601,7 +611,16 @@ extension SwitchTarget {
                     // Where the window is *now*, which is not necessarily where it was: the
                     // activation above may have moved it. `reveal` below acts on this, and acting on
                     // the pre-activation reading would send the user to a Desktop it had just left.
-                    placement = refreshed
+                    //
+                    // Only when there *is* a reading. A placement read that failed is not a
+                    // statement that the window has no Desktop, and adopting its nil turned it into
+                    // one: `reveal` then reports nothing to switch to, `settle` is told nothing is
+                    // in flight and may act blind, and the raise it makes gathers the window onto
+                    // the Desktop in front of the user — the one outcome this whole path exists to
+                    // prevent, and the "I picked a window on Desktop 2 and it came to Desktop 1,
+                    // then went back when I switched Desktops" report. Keeping the last good reading
+                    // falls back to the private switch instead, which is what the fallback is for.
+                    placement = refreshed ?? placement
                 }
             }
 

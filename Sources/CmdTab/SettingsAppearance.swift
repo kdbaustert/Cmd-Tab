@@ -103,13 +103,13 @@ struct AppearanceSettings: View {
                         + "icon, and follow in step.",
                     value: $appearance.iconSize,
                     range: Metrics.iconSizeRange,
-                    step: 8)
+                    step: 1)
                 SettingsSlider(
                     title: "Icon spacing",
                     subtitle: "Slack around each icon, inside its highlight.",
                     value: $appearance.iconSpacing,
                     range: Metrics.iconSpacingRange,
-                    step: 2)
+                    step: 1)
                 SettingsSlider(
                     title: "Title spacing",
                     subtitle: "Gap between an icon and its name.",

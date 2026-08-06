@@ -109,12 +109,26 @@ enum AX {
 
     /// Reads an attribute that is itself an element — e.g. an app's `AXMainWindow`/`AXFocusedWindow`.
     static func copyElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
+        readElement(element, attribute).element
+    }
+
+    /// The same read with the failure kept.
+    ///
+    /// A caller that means to ask again has to tell "this app has not drawn a window yet" from
+    /// "Accessibility is switched off for us", and the error code is the only thing carrying the
+    /// difference — both arrive here as a nil element. An answer that is not an element at all is
+    /// reported as `.noValue`, since it is the same nothing from the caller's side.
+    static func readElement(
+        _ element: AXUIElement, _ attribute: String
+    ) -> (element: AXUIElement?, error: AXError) {
         onOwningThread(element) {
             var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
-                let value, CFGetTypeID(value) == AXUIElementGetTypeID()
-            else { return nil }
-            return (value as! AXUIElement)
+            let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+            guard error == .success else { return (nil, error) }
+            guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+                return (nil, .noValue)
+            }
+            return ((value as! AXUIElement), .success)
         }
     }
 
