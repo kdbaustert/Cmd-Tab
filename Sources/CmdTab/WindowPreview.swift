@@ -65,9 +65,20 @@ actor WindowCapture {
     /// Windows narrower or shorter than this are helper surfaces, not something to switch to.
     private static let minWindowSide: CGFloat = 40
 
+    /// What Accessibility says an app's windows are.
+    private struct AXWindows {
+        /// Every window the app reports, by `CGWindowID`.
+        let ids: Set<CGWindowID>
+        /// The subset sitting in the Dock, with titles, so SC's list can be supplemented.
+        let minimized: [(id: CGWindowID, title: String)]
+        /// Whether this is a complete answer — a non-empty list in which every window resolved to a
+        /// real id. Only then can it be used to *remove* windows SC reported; see `thumbnails`.
+        let isComplete: Bool
+    }
+
     private var content: SCShareableContent?
     private var contentFetchedAt: Date?
-    private var minimizedCache: [pid_t: (windows: [(id: CGWindowID, title: String)], at: Date)] = [:]
+    private var axCache: [pid_t: (windows: AXWindows, at: Date)] = [:]
 
     /// How long a fetched window list may be reused. Sub-second: long enough that sweeping the
     /// cursor back across a tile doesn't re-enumerate every window on the system, short enough that
@@ -102,7 +113,7 @@ actor WindowCapture {
         // amount of layer-0 debris — several 2056x39 strips, 1x1 and 64x64 stubs, and for Chrome a
         // couple of full-width dropdown surfaces — and every one of them is untitled, while every
         // window a user could actually switch to has a title. Size alone let the dropdowns through.
-        let live = content.windows.filter {
+        var live = content.windows.filter {
             $0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.windowID != 0
                 && $0.frame.width > Self.minWindowSide && $0.frame.height > Self.minWindowSide
                 && !($0.title ?? "").isEmpty
@@ -120,10 +131,29 @@ actor WindowCapture {
         // strip, rather than a question per tile.
         let dockedIDs = await Task.detached { Self.dockedWindowIDs() }.value
 
-        // Accessibility supplements the list for anything SC missed entirely. It does not drive it:
-        // an app whose tree is asleep contributes none, which costs a minimized thumbnail instead of
-        // the entire strip.
-        let minimized = await minimizedWindows(for: pid, excluding: Set(live.map(\.windowID)))
+        // Accessibility supplements the list for anything SC missed entirely, and — where it gives a
+        // complete answer — vetoes what SC reports but the app does not actually have. It still does
+        // not *drive* the list: an app whose tree is asleep answers nothing, and that has to cost a
+        // minimized thumbnail rather than the entire strip.
+        let ax = await axWindows(for: pid)
+
+        // The window server keeps a layer-0 surface, with its last title and full-size frame, for
+        // windows an app has already closed. Ghostty is the standing case: a session with one window
+        // open had twenty of them, so the strip filled with icon tiles captioned with the titles of
+        // long-gone tabs. They look exactly like minimized windows from the window server's side —
+        // on no Space and on no screen — so `dockedWindowIDs` cannot tell them apart, and only the
+        // app itself can say which of its windows still exist.
+        //
+        // Confined to the docked set: a window that is on a Space is one SC can actually capture,
+        // and dropping it on an Accessibility disagreement would cost a real thumbnail. And skipped
+        // entirely unless AX gave a complete answer, so an app whose tree is asleep or whose windows
+        // resolve to no id keeps every tile it has now.
+        if ax.isComplete {
+            live.removeAll { dockedIDs.contains($0.windowID) && !ax.ids.contains($0.windowID) }
+        }
+
+        let liveIDs = Set(live.map(\.windowID))
+        let minimized = ax.minimized.filter { !liveIDs.contains($0.id) }
         guard !live.isEmpty || !minimized.isEmpty, !Task.isCancelled else { return [] }
 
         // `NSScreen` is main-thread-only. Empty with a single display, which is what keeps the
@@ -196,13 +226,13 @@ actor WindowCapture {
     /// Drops the caches when a session ends.
     ///
     /// Both TTLs are sub-second, so nothing would legitimately reuse these across sessions — but
-    /// `content` holds an `SCWindow` for every window on the system and `windowCache` gains an entry
+    /// `content` holds an `SCWindow` for every window on the system and `axCache` gains an entry
     /// per app hovered. Left alone they stay resident for the life of the process, which for a
     /// menu-bar agent is the life of the login.
     func clearCaches() {
         content = nil
         contentFetchedAt = nil
-        minimizedCache.removeAll()
+        axCache.removeAll()
     }
 
     /// One window's thumbnail: a live capture when there is one to be had, the app icon when there
@@ -275,42 +305,41 @@ actor WindowCapture {
         return out
     }
 
-    /// The app's minimized windows that SC did not already report — cached for `ttl`.
+    /// What the app itself says its windows are — cached for `ttl`.
     ///
     /// Best-effort by design: this is the one thing Accessibility is still asked for, and it answers
     /// with an empty list for any app whose tree is not live. Losing a minimized thumbnail for such
-    /// an app is a far smaller failure than letting AX decide the whole strip, which is what it used
-    /// to do.
+    /// an app — or keeping a stale tile it could have vetoed — is a far smaller failure than letting
+    /// AX decide the whole strip, which is what it used to do. `isComplete` is what keeps the veto
+    /// off those apps: an empty list is no answer, and a window that resolves to no `CGWindowID`
+    /// (the Electron/Catalyst case) cannot be matched against SC's list either way, so a list
+    /// carrying one is treated as unusable for removal rather than as proof the rest are gone.
     ///
     /// The AX work runs off the actor, on a detached task. Those calls are synchronous and do
     /// several `AXUIElementCopyAttributeValue` round-trips per window, each of which can burn the
     /// full AX timeout against a beach-balling app. Run inline there is no suspension point, so
     /// every other hover would queue behind the one wedged app and previews would stop appearing
     /// entirely until it cleared.
-    private func minimizedWindows(for pid: pid_t, excluding known: Set<CGWindowID>) async
-        -> [(id: CGWindowID, title: String)]
-    {
+    private func axWindows(for pid: pid_t) async -> AXWindows {
         let now = Date()
-        let cached: [(id: CGWindowID, title: String)]
-        if let entry = minimizedCache[pid], now.timeIntervalSince(entry.at) < ttl {
-            cached = entry.windows
-        } else {
-            // Shed everything else that has aged out while we are here.
-            minimizedCache = minimizedCache.filter { now.timeIntervalSince($0.value.at) < ttl }
-            cached = await Task.detached {
-                AX.windows(of: AX.application(pid))
-                    .compactMap { window -> (id: CGWindowID, title: String)? in
-                        guard AX.isWindow(window), AX.isMinimized(window) else { return nil }
-                        return (
-                            TargetProvider.windowID(window) ?? 0,
-                            AX.copyString(window, kAXTitleAttribute) ?? ""
-                        )
-                    }
-            }.value
-            minimizedCache[pid] = (cached, now)
-        }
-        // Filtered after caching, so the cache stays a plain answer to "what is minimized".
-        return cached.filter { !known.contains($0.id) }
+        if let entry = axCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.windows }
+        // Shed everything else that has aged out while we are here.
+        axCache = axCache.filter { now.timeIntervalSince($0.value.at) < ttl }
+        let windows = await Task.detached { () -> AXWindows in
+            let elements = AX.windows(of: AX.application(pid)).filter(AX.isWindow)
+            var ids: Set<CGWindowID> = []
+            var minimized: [(id: CGWindowID, title: String)] = []
+            var resolvedEvery = !elements.isEmpty
+            for element in elements {
+                let id = TargetProvider.windowID(element) ?? 0
+                if id == 0 { resolvedEvery = false } else { ids.insert(id) }
+                guard AX.isMinimized(element) else { continue }
+                minimized.append((id, AX.copyString(element, kAXTitleAttribute) ?? ""))
+            }
+            return AXWindows(ids: ids, minimized: minimized, isComplete: resolvedEvery)
+        }.value
+        axCache[pid] = (windows, now)
+        return windows
     }
 
     private static func capture(_ window: SCWindow, maxHeight: CGFloat) async throws -> CGImage? {

@@ -232,21 +232,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
-        // Opens a session that stays up without a held chord — the only way in for anyone who can't
-        // comfortably hold one, and useful for browsing the list with the mouse.
-        if controller.isRunning {
-            menu.addItem(action("Open Switcher", #selector(openSwitcher)))
-            menu.addItem(.separator())
-        }
-
         // No About item: the version, the permissions and the description all live in Settings →
         // About now, which is one place to look rather than a menu item and a modal panel.
         menu.addItem(action("Settings…", #selector(openSettingsWindow)))
         menu.addItem(action("Quit Cmd-Tab", #selector(quit)))
-    }
-
-    @objc private func openSwitcher() {
-        controller.openSticky()
     }
 
     private func disabled(_ title: String) -> NSMenuItem {

@@ -389,8 +389,8 @@ Version and build, the two permissions with their live status, and a link to the
 This replaced the menu bar's **About Cmd-Tab** item and the standard AppKit about panel it opened.
 That panel can show a name, an icon and a version and nothing else — the permission state, which is
 the thing anyone actually opens About to check when the switcher has stopped responding, had no
-place in it. The menu is now just **Open Switcher**, **Settings…** and **Quit**, plus whichever
-status line applies when something is wrong.
+place in it. The menu is now just **Settings…** and **Quit**, plus whichever status line applies
+when something is wrong.
 
 Both permission rows are re-read every time the tab appears rather than cached at launch, since the
 usual reason to be looking at them is that you have just granted something in System Settings.

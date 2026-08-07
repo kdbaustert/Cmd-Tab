@@ -443,28 +443,6 @@ final class SwitcherController {
         return true
     }
 
-    /// Opens a sticky session from outside the keyboard — the menu bar item. Always sticky, since
-    /// there is no held modifier that could end it.
-    func openSticky() {
-        guard !isVisible else { return }
-        let targets = provider.snapshot()
-        guard !targets.isEmpty else { return }
-        // An armed quick-switch is not "visible", so the guard above lets it through — and the arm
-        // would then fire into `showWith` a second time, resetting the model under the panel the
-        // user is already looking at.
-        armed = false
-        armWorkItem?.cancel()
-        armWorkItem = nil
-        // The arm we just cancelled had started a watchdog, and nothing below re-owns it: `showWith`
-        // skips `startWatchdog` for an empty `activeHeld`. Left alone it ticks 5×/s for the whole
-        // sticky session with no session to watch.
-        stopWatchdog()
-        beginSession()
-        activeHeld = []
-        isSticky = true
-        showWith(targets: targets, backwards: false)
-    }
-
     func stop() {
         cancel()
         tap?.stop()
