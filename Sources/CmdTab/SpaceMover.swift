@@ -19,6 +19,7 @@ enum SpaceMover {
         UnsafeMutablePointer<UInt64>, UnsafeMutablePointer<UInt64>
     ) -> Unmanaged<CFArray>?
     private typealias SetCurrentSpaceFn = @convention(c) (Int32, CFString, UInt64) -> Void
+    private typealias ShowHideSpacesFn = @convention(c) (Int32, CFArray) -> Void
 
     private static let handle = dlopen(
         "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight", RTLD_LAZY)
@@ -34,6 +35,8 @@ enum SpaceMover {
         symbol("CGSCopyWindowsWithOptionsAndTags", CopyWindowsForSpacesFn.self)
     private static let setCurrentSpace =
         symbol("CGSManagedDisplaySetCurrentSpace", SetCurrentSpaceFn.self)
+    private static let showSpaces = symbol("CGSShowSpaces", ShowHideSpacesFn.self)
+    private static let hideSpaces = symbol("CGSHideSpaces", ShowHideSpacesFn.self)
 
     /// Breadth of the per-Space window query. `0x0` misses a window or two per Space and `0x7` pulls
     /// in shadow and helper surfaces that name no switchable window; `0x2` is the setting that
@@ -166,7 +169,36 @@ enum SpaceMover {
         Log.general.notice(
             "space reveal: window \(window, privacy: .public) space \(state.currentSpace, privacy: .public) -> \(state.windowSpace, privacy: .public)"
         )
-        setCurrentSpace(mainConnection(), state.display as CFString, state.windowSpace)
+        let cid = mainConnection()
+        // Show the destination and hide the origin *around* the current-Space write, rather than
+        // making that write the whole of the switch.
+        //
+        // `CGSManagedDisplaySetCurrentSpace` on its own only re-points the window server's "which
+        // Space is current" field. It does not swap what is composited, and the two then disagree
+        // for as long as nothing forces a redraw: every query in this file reports the new Space and
+        // the screen keeps drawing the old one, with the window that was just raised painted on top
+        // of it. That is precisely the reported bug — "the app I picked jumped onto the Desktop I
+        // was already on, and went back to its own Desktop as soon as I switched Desktops manually."
+        // Nothing had moved either time. `windowSpace` is identical before and after in every log of
+        // it; the first half was a stale composite, and the second half was the next genuine
+        // transition finally re-compositing and revealing where the window had been all along.
+        //
+        // `CGSShowSpaces`/`CGSHideSpaces` are the calls that move the Space contents, and pairing
+        // them with the write is what turns this from a bookkeeping change into a switch the display
+        // actually performs. Show before hide: the reverse order takes the outgoing Desktop down
+        // first and flashes the empty desktop picture in between.
+        //
+        // Kept optional rather than required. This is the fallback path — it runs when macOS has
+        // already declined to travel on its own — and a future macOS that drops these two symbols is
+        // better served by the old bookkeeping-only switch than by no switch at all.
+        if let showSpaces, let hideSpaces {
+            showSpaces(cid, [NSNumber(value: state.windowSpace)] as CFArray)
+            hideSpaces(cid, [NSNumber(value: state.currentSpace)] as CFArray)
+        } else {
+            Log.general.notice(
+                "space reveal: no show/hide symbols; the switch may not re-composite the display")
+        }
+        setCurrentSpace(cid, state.display as CFString, state.windowSpace)
         return Reveal(state: state, switched: true)
     }
 
