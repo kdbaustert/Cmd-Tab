@@ -1200,9 +1200,10 @@ final class SwitcherController {
     /// are what replace it: a click anywhere outside the panel, and a hard inactivity ceiling.
     /// Escape stays the immediate manual exit, as everywhere else.
     private func startStickyGuards() {
-        // Idempotent. `showWith` can run twice for one visible panel (a menu-bar open racing an
-        // in-flight arm), and assigning straight over `stickyOutsideMonitor` orphaned the previous
-        // one — a global mouse monitor that outlived every later session and cancelled them.
+        // Idempotent. `showWith` can run twice for one visible panel — the case that first showed it
+        // was a menu-bar open racing an in-flight arm, and that entry point is gone, but assigning
+        // straight over `stickyOutsideMonitor` orphaned the previous one: a global mouse monitor
+        // that outlived every later session and cancelled them. Cheap insurance to keep.
         stopStickyGuards()
         // A global monitor only sees events bound for *other* apps. Our panels are non-activating
         // and receive their clicks through `sendEvent`, so anything arriving here is by definition

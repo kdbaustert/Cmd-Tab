@@ -71,9 +71,13 @@ actor WindowCapture {
         let ids: Set<CGWindowID>
         /// The subset sitting in the Dock, with titles, so SC's list can be supplemented.
         let minimized: [(id: CGWindowID, title: String)]
-        /// Whether this is a complete answer — a non-empty list in which every window resolved to a
-        /// real id. Only then can it be used to *remove* windows SC reported; see `thumbnails`.
-        let isComplete: Bool
+        /// Whether every window in a non-empty list resolved to a real `CGWindowID`, so the ids can
+        /// be matched against SC's list at all. Only then may this be used to *remove* what SC
+        /// reported; see `thumbnails`.
+        ///
+        /// Emphatically not "AX enumerated every window the app owns" — it cannot tell us that, and
+        /// `AXWindows` is known to under-report. See the veto in `thumbnails` for what that costs.
+        let resolvedEveryWindow: Bool
     }
 
     private var content: SCShareableContent?
@@ -137,18 +141,31 @@ actor WindowCapture {
         // minimized thumbnail rather than the entire strip.
         let ax = await axWindows(for: pid)
 
-        // The window server keeps a layer-0 surface, with its last title and full-size frame, for
-        // windows an app has already closed. Ghostty is the standing case: a session with one window
-        // open had twenty of them, so the strip filled with icon tiles captioned with the titles of
-        // long-gone tabs. They look exactly like minimized windows from the window server's side —
-        // on no Space and on no screen — so `dockedWindowIDs` cannot tell them apart, and only the
-        // app itself can say which of its windows still exist.
+        // The window server keeps a layer-0 surface — last title, full-size frame, still capturable —
+        // long after the app has closed the window. Ghostty is the standing case: measured with two
+        // tabs open it owned *twenty* such surfaces, accumulated over two days, so the strip filled
+        // with icon tiles captioned with the titles of long-gone tabs.
         //
-        // Confined to the docked set: a window that is on a Space is one SC can actually capture,
-        // and dropping it on an Accessibility disagreement would cost a real thumbnail. And skipped
-        // entirely unless AX gave a complete answer, so an app whose tree is asleep or whose windows
-        // resolve to no id keeps every tile it has now.
-        if ax.isComplete {
+        // Nothing the window server knows separates those from a live window. Measured across every
+        // field of `CGWindowListCopyWindowInfo` (alpha, store type, sharing state, memory usage) the
+        // twenty were byte-for-byte identical; all twenty captured real pixels; and no
+        // `CGSCopyWindowsWithOptionsAndTags` option value lists any of them, live or dead. Only the
+        // app itself can say, which is why this is the one veto Accessibility gets over SC's list.
+        //
+        // What it costs, and why that is the right trade anyway. `AXWindows` under-reports for an app
+        // using native window tabbing: it publishes the *active* tab's window and hides its siblings,
+        // so a background tab is dropped here with the dead surfaces. That is not a loss against what
+        // the strip did before — the dead surfaces outnumbered the real tab so heavily that
+        // `maxCount` cut the real one off anyway — and it leaves the strip agreeing with window mode,
+        // which builds its list from the same `AXWindows` and has always shown one tile per app here.
+        // Reaching background tabs means reading the window's `AXTabGroup`, which is a feature (they
+        // would have to appear in the switcher too), not a fix for this.
+        //
+        // Confined to the docked set: a window on a Space is one SC can capture, and dropping it on
+        // an Accessibility disagreement would cost a live thumbnail. And skipped unless every AX
+        // window resolved to an id, so an app whose tree is asleep — Chrome, Electron, Catalyst —
+        // keeps every tile it has now.
+        if ax.resolvedEveryWindow {
             live.removeAll { dockedIDs.contains($0.windowID) && !ax.ids.contains($0.windowID) }
         }
 
@@ -310,10 +327,10 @@ actor WindowCapture {
     /// Best-effort by design: this is the one thing Accessibility is still asked for, and it answers
     /// with an empty list for any app whose tree is not live. Losing a minimized thumbnail for such
     /// an app — or keeping a stale tile it could have vetoed — is a far smaller failure than letting
-    /// AX decide the whole strip, which is what it used to do. `isComplete` is what keeps the veto
-    /// off those apps: an empty list is no answer, and a window that resolves to no `CGWindowID`
-    /// (the Electron/Catalyst case) cannot be matched against SC's list either way, so a list
-    /// carrying one is treated as unusable for removal rather than as proof the rest are gone.
+    /// AX decide the whole strip, which is what it used to do. `resolvedEveryWindow` is what keeps
+    /// the veto off those apps: an empty list is no answer, and a window that resolves to no
+    /// `CGWindowID` (the Electron/Catalyst case) cannot be matched against SC's list either way, so
+    /// a list carrying one is treated as unusable for removal rather than as proof the rest are gone.
     ///
     /// The AX work runs off the actor, on a detached task. Those calls are synchronous and do
     /// several `AXUIElementCopyAttributeValue` round-trips per window, each of which can burn the
@@ -336,7 +353,8 @@ actor WindowCapture {
                 guard AX.isMinimized(element) else { continue }
                 minimized.append((id, AX.copyString(element, kAXTitleAttribute) ?? ""))
             }
-            return AXWindows(ids: ids, minimized: minimized, isComplete: resolvedEvery)
+            return AXWindows(
+                ids: ids, minimized: minimized, resolvedEveryWindow: resolvedEvery)
         }.value
         axCache[pid] = (windows, now)
         return windows
