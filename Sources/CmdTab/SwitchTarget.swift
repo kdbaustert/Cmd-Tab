@@ -778,20 +778,49 @@ extension SwitchTarget {
                 \(pid, privacy: .public); activating to reach its window list
                 """)
             activate(pid: pid)
-            focusQueue.asyncAfter(deadline: .now() + 0.2) {
-                guard generation == focusGeneration else { return }
-                guard let element = axWindow(id: id, pid: pid) else {
-                    Log.general.notice(
-                        """
-                        focus window \(id, privacy: .public): minimized, and pid \
-                        \(pid, privacy: .public) does not list it over Accessibility — cannot restore
-                        """)
-                    return
-                }
-                raise(element: element)
-                Log.general.notice(
-                    "focus window \(id, privacy: .public): restored from the Dock after activating")
+            restoreWhenListed(window: id, pid: pid, attempts: 8, generation: generation)
+        }
+    }
+
+    /// Polls `pid`'s Accessibility list for `window` after an activation, and unminimizes it the
+    /// moment it turns up.
+    ///
+    /// A single wait cannot do this job, and the log says so: a lone 200ms shot at the list is what
+    /// produced "does not list it over Accessibility — cannot restore" on a pick that had nothing
+    /// wrong with it but its timing. Both halves of the wait are unbounded from here. `activate` is
+    /// itself a hop to the main thread before the app is even asked to come up, and a lazily-built
+    /// accessibility tree (Chromium, Electron) is published some time after that — with no signal to
+    /// wait on for either. This is the same reasoning, and the same shape, as `settle`.
+    ///
+    /// Polling costs nothing while it waits: `asyncAfter` leaves `focusQueue` free between turns,
+    /// unlike the blocking wait in `settleBySystemSwitch` whose cap is tight for exactly that
+    /// reason. So the budget here is set by how long an app may reasonably take to answer rather
+    /// than by what a later pick can afford to queue behind — and a later pick does not queue behind
+    /// it at all, since the generation guard drops this the moment one arrives.
+    ///
+    /// Giving up is still a real outcome and still logged: the window is in the Dock and the only
+    /// call that can bring it out needs an `AXUIElement` the app will not hand over.
+    private static func restoreWhenListed(
+        window id: CGWindowID, pid: pid_t, attempts: Int, generation: UInt64
+    ) {
+        guard attempts > 0 else {
+            Log.general.notice(
+                """
+                focus window \(id, privacy: .public): minimized, and pid \
+                \(pid, privacy: .public) does not list it over Accessibility — cannot restore
+                """)
+            return
+        }
+        focusQueue.asyncAfter(deadline: .now() + 0.1) {
+            guard generation == focusGeneration else { return }
+            guard let element = axWindow(id: id, pid: pid) else {
+                restoreWhenListed(
+                    window: id, pid: pid, attempts: attempts - 1, generation: generation)
+                return
             }
+            raise(element: element)
+            Log.general.notice(
+                "focus window \(id, privacy: .public): restored from the Dock after activating")
         }
     }
 
