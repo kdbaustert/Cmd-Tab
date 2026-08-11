@@ -18,7 +18,10 @@ struct AppEntry: Identifiable {
 final class AppListModel: ObservableObject {
     @Published private(set) var entries: [AppEntry] = []
 
-    private var observers: [NSObjectProtocol] = []
+    /// `nonisolated(unsafe)` so `deinit` can unregister them. A `deinit` is nonisolated by
+    /// construction and `NSObjectProtocol` is not `Sendable`; the array is only ever appended to
+    /// during `init` and read once during `deinit`, which cannot overlap with anything.
+    private nonisolated(unsafe) var observers: [NSObjectProtocol] = []
     private var reloadPending = false
     /// Name and icon for apps that are not running, which cost a LaunchServices lookup and two disk
     /// reads each. A reload runs on every launch and quit anywhere on the system, and an installed
@@ -149,6 +152,7 @@ struct AppsSettings: View {
                         SettingsRow(
                             title: name(for: entry.bundleID),
                             subtitle: activationSubtitle(for: entry),
+                            isTitleVerbatim: true,
                             controlWidth: 210
                         ) {
                             HStack(spacing: 6) {
@@ -198,6 +202,7 @@ struct AppsSettings: View {
                         SettingsRow(
                             title: name(for: bundleID),
                             subtitle: overrideSubtitle(for: bundleID),
+                            isTitleVerbatim: true,
                             controlWidth: 300
                         ) {
                             AppOverrideControls(bundleID: bundleID, rules: rules)

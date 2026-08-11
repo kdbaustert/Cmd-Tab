@@ -37,7 +37,10 @@ enum FrontProcess {
     /// itself. Anything else and the front change is not treated as a real activation.
     private static let userGenerated: UInt32 = 0x2
 
-    private static let handle = dlopen(
+    /// `nonisolated(unsafe)` because a dyld handle is an opaque pointer and so not `Sendable`.
+    /// Safe: it is a `let`, initialised once by the runtime's thread-safe lazy-static machinery and
+    /// never written again, and `dlsym` against it is itself thread-safe.
+    private nonisolated(unsafe) static let handle = dlopen(
         "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight", RTLD_LAZY)
 
     private static func symbol<T>(_ name: String, _ type: T.Type) -> T? {

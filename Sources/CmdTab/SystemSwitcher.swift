@@ -31,7 +31,11 @@ enum SystemSwitcher {
     /// False when the private symbol could not be resolved, which means we cannot take over ⌘-Tab.
     static var isAvailable: Bool { setEnabled != nil }
 
-    private(set) static var isNativeDisabled = false
+    /// `nonisolated(unsafe)` for the same reason as `Log.isVerbose`: it is written from the main
+    /// thread and read from teardown paths that may run on a signal handler's thread. A `Bool`
+    /// cannot tear, and the worst a race can do is attempt a restore that is already done — which
+    /// `setNativeEnabled` treats as a no-op.
+    private(set) nonisolated(unsafe) static var isNativeDisabled = false
 
     @discardableResult
     static func setNativeEnabled(_ enabled: Bool) -> Bool {

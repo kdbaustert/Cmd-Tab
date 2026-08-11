@@ -1,0 +1,82 @@
+name: CI
+
+# The test suite is 221 pure-logic tests that run in about 30 milliseconds — no window server, no
+# Accessibility grant, no running apps. That is precisely why it is worth running on every push:
+# it costs nothing, and the parts of this app that *cannot* be tested that way (the event tap, the
+# Accessibility walk) are the parts where a silent regression is most expensive.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  # Lets a failing run be re-tried without an empty commit.
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    # Matched to the OS the app is developed and shipped against. `macos-latest` drifts, and this
+    # project reaches for private SkyLight symbols and a `#available(macOS 26.0, *)` branch whose
+    # behaviour is version-dependent — a runner a major version behind would be testing something
+    # subtly different from what ships.
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Recorded in the log because "works on my machine" for this project is usually a toolchain
+      # difference, and the answer should be in the run rather than reconstructed afterwards.
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # Keyed on Package.resolved: the only dependency is pinned there, so a cache miss means the
+      # pin actually changed rather than that the cache expired.
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Test
+        run: swift test --skip-build
+
+      # The thing users actually install. `swift build` proves the code compiles; this proves the
+      # bundle still assembles — the Info.plist copy, the menu-bar PNG flattening and the icon are
+      # all steps that can break without the compiler noticing.
+      #
+      # No signing identity exists on a runner, so build.sh falls back to ad-hoc, which is fine
+      # here: nothing launches this bundle. Release signing is release.yml's job.
+      - name: Assemble app bundle
+        run: ./build.sh
+
+      - name: Check the bundle came out whole
+        run: |
+          set -euo pipefail
+          APP=build/Cmd-Tab.app
+          for path in \
+            "$APP/Contents/MacOS/CmdTab" \
+            "$APP/Contents/Info.plist" \
+            "$APP/Contents/Resources/AppIcon.icns"
+          do
+            [[ -e "$path" ]] || { echo "missing: $path" >&2; exit 1; }
+          done
+          # NSImage(named:) only searches the top level of the resource directory, so a menu-bar
+          # glyph left in a subfolder is a blank menu bar at runtime and nothing else catches it.
+          count=$(find "$APP/Contents/Resources" -maxdepth 1 -name '*.png' | wc -l | tr -d ' ')
+          [[ "$count" -gt 0 ]] || { echo "no menu-bar glyphs at the top level" >&2; exit 1; }
+          # The compiled String Catalog. Its absence is invisible at runtime — a missing key renders
+          # as the key, and the keys are the English text — so nothing but this check would notice.
+          [[ -f "$APP/Contents/Resources/en.lproj/Localizable.strings" ]] \
+            || { echo "strings were not compiled into the bundle" >&2; exit 1; }
+          echo "bundle OK — $count menu-bar glyph(s), strings compiled"

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CoreGraphics
 import SwiftUI
 
@@ -43,6 +44,15 @@ final class SwitcherController {
     private lazy var preview = PreviewCoordinator(switcher: panels) { [weak self] in
         self?.isVisible ?? false
     }
+    /// Live window thumbnails drawn as tile artwork in window mode. Off by default; see the type.
+    private let thumbnails = TileThumbnails()
+    /// Republishes captures into the model as they land.
+    ///
+    /// A subscription rather than sampling `thumbnails.images` at the call site: the captures arrive
+    /// in batches over the life of the session, long after `beginThumbnails` returned, and the whole
+    /// design is that the panel does not wait for them. Sampling once would show only whatever had
+    /// happened to complete before the panel drew, which on a cold list is nothing.
+    private var thumbnailSubscription: AnyCancellable?
     private var tap: EventTap?
     private var isVisible = false
     /// Second source of truth for "is the trigger still down". See `startWatchdog`.
@@ -110,17 +120,6 @@ final class SwitcherController {
         }
     }
 
-    /// Grid or list. Relayouts a visible panel, like the metrics do — it changes the panel's whole
-    /// shape, so leaving an open switcher on the old one would be the odd behaviour.
-    var layout: SwitcherLayout {
-        get { model.layout }
-        set {
-            guard newValue != model.layout else { return }
-            model.layout = newValue
-            if isVisible { panels.layout() }
-        }
-    }
-
     /// The window-tiling bindings, as a snapshot the tap callback can read without touching a store.
     /// Pushed by `AppDelegate` whenever they change.
     var tiling: WindowTilingBindings = .defaults {
@@ -177,16 +176,8 @@ final class SwitcherController {
     /// Snaps an app's first window as it opens, for the apps that ask for it.
     private let launchArrangements = LaunchArrangementWatcher()
 
-    /// Applications or individual windows. Rebuilds the list, since it changes what a target *is*.
-    var mode: SwitcherMode {
-        get { provider.mode }
-        set {
-            guard newValue != provider.mode else { return }
-            provider.mode = newValue
-            provider.refresh()
-        }
-    }
-
+    /// Kept as a property rather than folded into `SwitcherSettings`: `ExclusionStore` pushes this
+    /// on its own change notification, independently of the behaviour block.
     var excludedBundleIDs: Set<String> {
         get { provider.excludedBundleIDs }
         set {
@@ -196,6 +187,7 @@ final class SwitcherController {
         }
     }
 
+    /// As above, from `FavoritesStore`.
     var favoriteBundleIDs: [String] {
         get { provider.favoriteBundleIDs }
         set {
@@ -205,152 +197,82 @@ final class SwitcherController {
         }
     }
 
-    // Both guarded on an actual change, like every other setter here. `AppDelegate.applyBehavior`
-    // re-pushes the whole settings block on every `BehaviorStore` notification — which an unstepped
-    // slider posts once per drag tick — so an unguarded setter turned a slider drag into a stream of
-    // full list rebuilds, each with its main-thread prelude on the thread that services the tap.
-    var sortOrder: SortOrder {
-        get { provider.sortOrder }
-        set {
-            guard newValue != provider.sortOrder else { return }
-            provider.sortOrder = newValue
-            provider.refresh()
+    // MARK: - Settings
+
+    /// Applies a whole settings block, rebuilding the target list at most once and laying the panel
+    /// out at most once however many values changed.
+    ///
+    /// This is the point of `SwitcherSettings`. As twenty-six separate setters, each guarding and
+    /// acting on its own, a single pass through `AppDelegate.applyBehavior` could run seven full
+    /// enumerations and five layouts — and `BehaviorStore` posts its change notification once per
+    /// slider tick during a drag, so that arithmetic ran on the thread servicing the event tap.
+    /// Seeing the settings together is what makes the coalescing possible.
+    func apply(_ settings: SwitcherSettings) {
+        // --- the list itself ---
+        var needsRefresh = false
+        func setProvider<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<TargetProvider, T>, _ value: T) {
+            guard provider[keyPath: keyPath] != value else { return }
+            provider[keyPath: keyPath] = value
+            needsRefresh = true
         }
-    }
+        setProvider(\.mode, settings.mode)
+        setProvider(\.sortOrder, settings.sortOrder)
+        setProvider(\.hideEmptyApps, settings.hideEmptyApps)
+        setProvider(\.pinFavoritesFirst, settings.pinFavoritesFirst)
+        setProvider(\.notificationBadges, settings.notificationBadges)
 
-    var hideEmptyApps: Bool {
-        get { provider.hideEmptyApps }
-        set {
-            guard newValue != provider.hideEmptyApps else { return }
-            provider.hideEmptyApps = newValue
-            provider.refresh()
+        // --- the panel's shape ---
+        var needsLayout = false
+        func setPanels<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<PanelGroup, T>, _ value: T) {
+            guard panels[keyPath: keyPath] != value else { return }
+            panels[keyPath: keyPath] = value
+            needsLayout = true
         }
-    }
-
-    var pinFavoritesFirst: Bool {
-        get { provider.pinFavoritesFirst }
-        set {
-            guard newValue != provider.pinFavoritesFirst else { return }
-            provider.pinFavoritesFirst = newValue
-            provider.refresh()
+        func setModel<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<SwitcherModel, T>, _ value: T, relayout: Bool) {
+            guard model[keyPath: keyPath] != value else { return }
+            model[keyPath: keyPath] = value
+            if relayout { needsLayout = true }
         }
-    }
+        setPanels(\.appearanceMode, settings.panelAppearance)
+        setPanels(\.positionMode, settings.panelPosition)
+        setPanels(\.maxColumns, settings.maxColumns)
+        setModel(\.layout, settings.layout, relayout: true)
+        setModel(\.titleFontName, settings.titleFontName, relayout: true)
+        setModel(\.titleFontSize, settings.titleFontSize, relayout: true)
+        setModel(\.blurRadius, settings.panelBlur, relayout: true)
 
-    var panelAppearance: PanelAppearance {
-        get { panels.appearanceMode }
-        set {
-            panels.appearanceMode = newValue
-            if isVisible { panels.layout() }
-        }
-    }
+        // Values a live panel picks up on its next draw without being laid out again.
+        setModel(\.highlightColor, settings.highlightColor, relayout: false)
+        setModel(\.showNumbers, settings.showNumbers, relayout: false)
+        setModel(\.showDisplayBadges, settings.showDisplayBadges, relayout: false)
+        setModel(\.showSpaceBadges, settings.showSpaceBadges, relayout: false)
+        setModel(\.tileCorner, settings.tileCorner, relayout: false)
+        setModel(\.material, settings.panelMaterial, relayout: false)
 
-    var panelPosition: PanelPosition {
-        get { panels.positionMode }
-        set {
-            panels.positionMode = newValue
-            if isVisible { panels.layout() }
-        }
-    }
+        // Neither rebuilds nor relayouts: read at the start of the next session.
+        panels.screens = settings.panelScreens
+        panels.fade = settings.fade
+        panels.windowPreviewEnabled = settings.windowPreview
+        // Turning it off clears whatever was captured, so a later session cannot show a photograph
+        // of a window as it looked before the feature was switched off.
+        thumbnails.isEnabled = settings.windowThumbnailTiles
+        if !settings.windowThumbnailTiles { model.thumbnails = [:] }
 
-    /// Which displays the switcher occupies. Takes effect on the next session — changing the number
-    /// of panels under a live selection would mean tearing windows out from under the user.
-    var panelScreens: PanelScreens {
-        get { panels.screens }
-        set { panels.screens = newValue }
-    }
+        // --- session behaviour, held here ---
+        showDelay = settings.showDelay
+        launchFromSearch = settings.launchFromSearch
+        stickyMode = settings.stickyMode
+        sameAppHotkey = settings.sameAppHotkey
+        // Last, and a plain assignment so its `didSet` still re-syncs the system ⌘-Tab.
+        hotkey = settings.hotkey
 
-    var highlightColor: Color {
-        get { model.highlightColor }
-        set { model.highlightColor = newValue }
-    }
-
-    var showNumbers: Bool {
-        get { model.showNumbers }
-        set { model.showNumbers = newValue }
-    }
-
-    var showDisplayBadges: Bool {
-        get { model.showDisplayBadges }
-        set { model.showDisplayBadges = newValue }
-    }
-
-    var showSpaceBadges: Bool {
-        get { model.showSpaceBadges }
-        set { model.showSpaceBadges = newValue }
-    }
-
-    /// Dock notification badges. Changing it re-reads the Dock, so a toggle takes effect at once.
-    var notificationBadges: Bool {
-        get { provider.notificationBadges }
-        set {
-            guard newValue != provider.notificationBadges else { return }
-            provider.notificationBadges = newValue
-            provider.refresh()
-        }
-    }
-
-    var tileCorner: CGFloat {
-        get { model.tileCorner }
-        set { model.tileCorner = newValue }
-    }
-
-    var titleFontName: String {
-        get { model.titleFontName }
-        set {
-            guard newValue != model.titleFontName else { return }
-            model.titleFontName = newValue
-            if isVisible { panels.layout() }
-        }
-    }
-
-    var titleFontSize: CGFloat {
-        get { model.titleFontSize }
-        set {
-            guard newValue != model.titleFontSize else { return }
-            model.titleFontSize = newValue
-            if isVisible { panels.layout() }
-        }
-    }
-
-    var fade: Bool {
-        get { panels.fade }
-        set { panels.fade = newValue }
-    }
-
-    var panelMaterial: PanelMaterial {
-        get { model.material }
-        set { model.material = newValue }
-    }
-
-    /// nil = the material's built-in blur; a value overrides it. Relayout so an open panel reflects
-    /// the change (the view is rebuilt from scratch on layout).
-    var panelBlur: Double? {
-        get { model.blurRadius }
-        set {
-            guard newValue != model.blurRadius else { return }
-            model.blurRadius = newValue
-            if isVisible { panels.layout() }
-        }
-    }
-
-    var maxColumns: Int {
-        get { panels.maxColumns }
-        set {
-            guard newValue != panels.maxColumns else { return }
-            panels.maxColumns = newValue
-            if isVisible { panels.layout() }
-        }
+        if needsRefresh { provider.refresh() }
+        if needsLayout, isVisible { panels.layout() }
     }
 
     /// A tap that opens the switcher waits this long before drawing; released sooner, it switches
     /// straight to the previous target with no panel flash. 0 keeps the panel instant.
     var showDelay: TimeInterval = 0
-
-    /// App mode: float live window thumbnails when a tile is hovered.
-    var windowPreview: Bool {
-        get { panels.windowPreviewEnabled }
-        set { panels.windowPreviewEnabled = newValue }
-    }
 
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
@@ -510,79 +432,89 @@ final class SwitcherController {
             return true
         }
 
-        // Idle. The order below *is* the precedence documented in `ShortcutAudit.Kind`, and it is
-        // load-bearing: openers first, so nothing a user (or a hand-edited `config.json`) binds can
-        // take ⌘-Tab away from the switcher itself. The recorders refuse a chord a trigger already
-        // claims, but a config file is not a recorder — and a settings file that quietly disabled
-        // the app's whole reason for existing would be very hard to diagnose.
+        // Idle. Which binding claims the keystroke — and whether it is swallowed — is decided by
+        // `TapRouting.idle`, which is pure and tested. The precedence it encodes is the one
+        // documented in `ShortcutAudit.Kind` and it is load-bearing; it used to live here as the
+        // order of a run of `if` statements reachable only through a live event tap, which meant it
+        // could only be checked by pressing keys and watching.
         //
-        // Openers are keydown-only; the global actions below match on both edges. Swallowing only
-        // the keydown left an unpaired key-up on the way to the frontmost app, and anything tracking
-        // raw key state from up/down pairs — virtualisers, VNC and RDP clients, remote terminals —
-        // reads that as a release with no press. The visible-panel branch swallows both for the
-        // same reason.
-        let backwards = flags.contains(.maskShift)
-        if type == .keyDown {
-            if code == hotkey.keyCode, modifiersMatch(flags, hotkey.heldModifiers) {
-                return open(backwards: backwards)
-            }
-            // After the main trigger, so binding both to the same chord keeps the switcher.
-            if let sameApp = sameAppHotkey, code == sameApp.keyCode,
-                modifiersMatch(flags, sameApp.heldModifiers) {
-                return openSameApp(backwards: backwards)
-            }
-            // Scoped triggers last among the openers, for the same reason: a chord shared with
-            // either built-in trigger keeps its built-in meaning.
-            if !NSApp.isActive, let match = scopedTriggers.scope(code: code, flags: flags) {
-                return openScoped(match.scope, held: match.held, backwards: backwards)
-            }
-        }
+        // What stays here is everything that is *not* a decision: performing the effect, and
+        // logging.
+        let isAppActive = NSApp.isActive
+        let decision = TapRouting.idle(
+            TapRouting.Event(
+                type: type, keyCode: code, flags: flags,
+                isAutorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0),
+            bindings: routingBindings(),
+            isAppActive: isAppActive)
 
-        // The global actions, all inert while we are frontmost: their recorders live in the settings
-        // window, and a bound chord matched here would be swallowed before the recorder's own
-        // monitor could see it — so no assigned combination could ever be re-recorded. The two
-        // built-in triggers above are deliberately *not* guarded, since they are recorded by a
-        // different control and opening the switcher from the settings window is long-standing.
-        guard !NSApp.isActive else {
+        switch decision {
+        case .pass:
+            // Nothing claimed it. Logged only when a real modifier was held, which keeps this off
+            // the per-keystroke path while still catching "I pressed the chord and nothing
+            // happened". Skipped while we are frontmost: there the chord is inert by design, which
+            // `.tilingInert` already reports, and "no binding" would be the wrong explanation.
+            if !isAppActive, type == .keyDown, tiling.isEnabled,
+                !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty {
+                Log.tap.log(
+                    level: Log.traceLevel,
+                    """
+                    tiling: no binding for key \(code, privacy: .public) \
+                    flags \(flags.rawValue, privacy: .public)
+                    """)
+            }
+        case .consume:
+            break
+        case .open(let backwards):
+            return open(backwards: backwards)
+        case .openSameApp(let backwards):
+            return openSameApp(backwards: backwards)
+        case .openScoped(let scope, let held, let backwards):
+            return openScoped(scope, held: held, backwards: backwards)
+        case .activate(let bundleID):
+            GlobalActions.activate(bundleID: bundleID)
+        case .allWindows(let action):
+            GlobalActions.perform(action)
+        case .tile(let arrangement):
+            Log.tap.notice("tiling: \(arrangement.rawValue, privacy: .public) matched")
+            applyTiling(arrangement)
+        case .tilingInert:
             // The commonest "my shortcut does nothing": the settings window has focus, so every
-            // global chord below is deliberately inert. Logged once per press, and only for a
-            // chord that would otherwise have fired, so this is not a line per keystroke.
-            if type == .keyDown, tiling.arrangement(code: code, flags: flags) != nil {
-                Log.tap.notice("tiling: inert — Cmd-Tab is frontmost (settings window focused)")
-            }
-            return false
+            // global chord is deliberately inert. Logged once per press, and only for a chord that
+            // would otherwise have fired, so this is not a line per keystroke.
+            Log.tap.notice("tiling: inert — Cmd-Tab is frontmost (settings window focused)")
         }
-        // Only a fresh keydown acts. Key repeat is swallowed but ignored — cycling ½ → ⅔ → ⅓ under
-        // autorepeat would strobe a window through every width in a fraction of a second — and the
-        // keyup only ever has to be consumed, not acted on.
-        let acts = type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) == 0
-        if let bundleID = activations.bundleID(code: code, flags: flags) {
-            if acts { GlobalActions.activate(bundleID: bundleID) }
-            return true
-        }
-        if let action = allWindows.action(code: code, flags: flags) {
-            if acts { GlobalActions.perform(action) }
-            return true
-        }
-        if let arrangement = tiling.arrangement(code: code, flags: flags) {
-            if acts {
-                Log.tap.notice("tiling: \(arrangement.rawValue, privacy: .public) matched")
-                applyTiling(arrangement)
-            }
-            return true
-        }
-        // Nothing claimed it. Logged only when a real modifier was held, which keeps this off the
-        // per-keystroke path while still catching "I pressed the chord and nothing happened".
-        if type == .keyDown, tiling.isEnabled,
-            !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty {
-            Log.tap.log(
-                level: Log.traceLevel,
-                """
-                tiling: no binding for key \(code, privacy: .public) \
-                flags \(flags.rawValue, privacy: .public)
-                """)
-        }
-        return false
+        return decision.swallows
+    }
+
+    /// The controller's live binding tables, as the lookups `TapRouting` matches against.
+    ///
+    /// Rebuilt per event rather than cached: each closure reads a stored property that the settings
+    /// window can change at any moment, and a cached table would answer with the bindings that were
+    /// in force when it was built. The closures capture `self` unowned — this runs on the tap
+    /// callback, synchronously, and the controller outlives the tap it owns.
+    private func routingBindings() -> TapRouting.Bindings {
+        TapRouting.Bindings(
+            openerMatches: { [unowned self] code, flags in
+                code == self.hotkey.keyCode && self.modifiersMatch(flags, self.hotkey.heldModifiers)
+            },
+            sameAppMatches: { [unowned self] code, flags in
+                guard let sameApp = self.sameAppHotkey else { return false }
+                return code == sameApp.keyCode
+                    && self.modifiersMatch(flags, sameApp.heldModifiers)
+            },
+            scopedMatch: { [unowned self] code, flags in
+                self.scopedTriggers.scope(code: code, flags: flags)
+            },
+            activationMatch: { [unowned self] code, flags in
+                self.activations.bundleID(code: code, flags: flags)
+            },
+            allWindowsMatch: { [unowned self] code, flags in
+                self.allWindows.action(code: code, flags: flags)
+            },
+            tilingMatch: { [unowned self] code, flags in
+                self.tiling.arrangement(code: code, flags: flags)
+            })
     }
 
     /// Snaps the focused window. Both reads here are main-thread reads and this runs on the tap's
@@ -882,6 +814,11 @@ final class SwitcherController {
         DispatchQueue.main.asyncAfter(deadline: .now() + sameAppTimeout, execute: deadline)
 
         provider.frontAppWindowTargets { [weak self] targets in
+            // `assumeIsolated`, not a `Task`: `TargetProvider` always hops back to the main thread
+            // before calling a handler, so this *is* already on the main actor — the closure is
+            // `@Sendable` only because it crossed `axQueue` to get here. A `Task` would defer the
+            // work to a later turn, and the session it belongs to could end in between.
+            MainActor.assumeIsolated {
             // The fetch is unbounded (an Accessibility walk against a possibly wedged app), so by
             // the time it lands the user may have abandoned this cycle and opened a normal session.
             // Acting on it then would stop *that* session's watchdog — deleting the failsafe that
@@ -906,6 +843,7 @@ final class SwitcherController {
             self.stopWatchdog()
             let target = targets[backwards ? targets.count - 1 : 1]
             DispatchQueue.main.async { target.focus() }
+            }
         }
         return true
     }
@@ -938,7 +876,10 @@ final class SwitcherController {
         sameAppDeadline = deadline
         DispatchQueue.main.asyncAfter(deadline: .now() + sameAppTimeout, execute: deadline)
 
-        let receive: ([SwitchTarget]) -> Void = { [weak self] targets in
+        // `@Sendable` because it is handed to `TargetProvider`, which builds its list on `axQueue`.
+        // It is still only ever *called* on the main thread — see the note in `openSameApp`.
+        let receive: @Sendable ([SwitchTarget]) -> Void = { [weak self] targets in
+            MainActor.assumeIsolated {
             guard let self, self.pendingSameApp, token == self.sessionToken else { return }
             self.sameAppDeadline?.cancel()
             self.sameAppDeadline = nil
@@ -960,6 +901,7 @@ final class SwitcherController {
             let index = backwards ? filtered.count - 1 : min(1, filtered.count - 1)
             let target = filtered[index]
             DispatchQueue.main.async { target.focus() }
+            }
         }
 
         if scope == .frontApp {
@@ -1062,9 +1004,13 @@ final class SwitcherController {
 
             // The cache can be a moment stale; fold in a fresh list without disturbing the highlight.
             self.provider.refresh { [weak self] fresh in
-                guard let self, self.isVisible else { return }
-                self.model.update(targets: fresh)
-                self.finishListMutation()
+                // `@Sendable` because the list is built on `axQueue`; still only ever *called* on
+                // the main thread, which is where `TargetProvider` hands its handlers back.
+                MainActor.assumeIsolated {
+                    guard let self, self.isVisible else { return }
+                    self.model.update(targets: fresh)
+                    self.finishListMutation()
+                }
             }
         }
     }
@@ -1078,6 +1024,10 @@ final class SwitcherController {
         stopStickyGuards()
         panels.hide()
         preview.teardown()
+        // A thumbnail is a photograph of a moment. Showing the next session what the last one
+        // looked like is worse than showing it an icon.
+        thumbnails.cancel()
+        model.thumbnails = [:]
     }
 
     private func commit() {
@@ -1316,8 +1266,23 @@ final class SwitcherController {
             Log.targets.notice("refresh emptied the list under an open session; dismissing")
             cancel()
         } else {
+            beginThumbnails()
             scheduleLayout()
         }
+    }
+
+    /// Starts (or extends) thumbnail capture for the current list, and republishes what has landed.
+    ///
+    /// Nothing waits on this: the panel is already on screen drawing icons, and each tile swaps to
+    /// its capture when that capture arrives. A no-op unless the feature is on and the mode is
+    /// window mode — an app tile has no single window to photograph.
+    private func beginThumbnails() {
+        guard thumbnails.isEnabled, model.mode == .windows else { return }
+        if thumbnailSubscription == nil {
+            thumbnailSubscription = thumbnails.$images
+                .sink { [weak self] images in self?.model.thumbnails = images }
+        }
+        thumbnails.begin(for: model.targets)
     }
 
     // MARK: - In-switcher window actions

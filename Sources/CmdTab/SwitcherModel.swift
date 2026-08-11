@@ -45,6 +45,12 @@ final class SwitcherModel: ObservableObject {
     @Published var blurRadius: Double?
     /// Corner radius of a tile's highlight.
     @Published var tileCorner: CGFloat = 12
+    /// Live window thumbnails drawn as the tile artwork in window mode, keyed by window id.
+    ///
+    /// Owned by `TileThumbnails` and republished here so a tile can read it without every tile
+    /// observing a second object. Empty when the feature is off, which is the default — see
+    /// `TileThumbnails` for why it is opt-in.
+    @Published var thumbnails: [CGWindowID: CGImage] = [:]
     /// Point size of tile titles.
     @Published var titleFontSize: CGFloat = 10
     /// Font family for tile titles and the caption. Empty means the system font.

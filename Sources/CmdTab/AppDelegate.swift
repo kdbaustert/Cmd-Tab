@@ -119,32 +119,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Pushes every tunable in `BehaviorStore` onto the running switcher. Cheap enough to run
     /// wholesale on any change rather than tracking which field moved.
     private func applyBehavior(_ behavior: BehaviorStore) {
-        controller.sortOrder = behavior.sortOrder
-        controller.layout = behavior.layout
-        controller.mode = behavior.mode
-        controller.hideEmptyApps = behavior.hideEmptyApps
-        controller.pinFavoritesFirst = behavior.pinFavoritesFirst
-        controller.panelAppearance = behavior.panelAppearance
-        controller.panelPosition = behavior.panelPosition
-        controller.highlightColor = behavior.highlightColor
-        controller.showNumbers = behavior.showNumbers
-        controller.showDisplayBadges = behavior.showDisplayBadges
-        controller.showSpaceBadges = behavior.showSpaceBadges
-        controller.notificationBadges = behavior.notificationBadges
-        controller.tileCorner = behavior.tileCorner
-        controller.titleFontSize = behavior.titleFontSize
-        controller.titleFontName = behavior.titleFontName
-        controller.fade = behavior.fade
-        controller.panelMaterial = behavior.panelMaterial
-        controller.panelBlur = behavior.blurOverride ? behavior.blurRadius : nil
-        controller.maxColumns = behavior.maxColumns
-        controller.showDelay = behavior.showDelay / 1000
-        controller.windowPreview = behavior.windowPreview
-        controller.launchFromSearch = behavior.launchFromSearch
-        controller.hotkey = behavior.hotkey
-        controller.sameAppHotkey = behavior.sameAppCycle ? behavior.sameAppHotkey : nil
-        controller.stickyMode = behavior.stickyMode
-        controller.panelScreens = behavior.panelScreens
+        // One value rather than twenty-six assignments, so the controller can see the settings
+        // together and rebuild the list at most once — see `SwitcherController.apply`. This method
+        // runs on every `BehaviorStore` notification, which an unstepped slider posts once per drag
+        // tick.
+        controller.apply(
+            SwitcherSettings(
+                mode: behavior.mode,
+                sortOrder: behavior.sortOrder,
+                hideEmptyApps: behavior.hideEmptyApps,
+                pinFavoritesFirst: behavior.pinFavoritesFirst,
+                notificationBadges: behavior.notificationBadges,
+                layout: behavior.layout,
+                panelAppearance: behavior.panelAppearance,
+                panelPosition: behavior.panelPosition,
+                panelScreens: behavior.panelScreens,
+                maxColumns: behavior.maxColumns,
+                fade: behavior.fade,
+                windowPreview: behavior.windowPreview,
+                windowThumbnailTiles: behavior.windowThumbnailTiles,
+                highlightColor: behavior.highlightColor,
+                showNumbers: behavior.showNumbers,
+                showDisplayBadges: behavior.showDisplayBadges,
+                showSpaceBadges: behavior.showSpaceBadges,
+                tileCorner: behavior.tileCorner,
+                titleFontName: behavior.titleFontName,
+                titleFontSize: behavior.titleFontSize,
+                panelMaterial: behavior.panelMaterial,
+                panelBlur: behavior.blurOverride ? behavior.blurRadius : nil,
+                // Stored in milliseconds, used in seconds.
+                showDelay: behavior.showDelay / 1000,
+                launchFromSearch: behavior.launchFromSearch,
+                stickyMode: behavior.stickyMode,
+                hotkey: behavior.hotkey,
+                sameAppHotkey: behavior.sameAppCycle ? behavior.sameAppHotkey : nil))
         // Not a controller field: the tracing is spread across types that have no view of the
         // stores, so the level lives on `Log` and is pushed here with everything else.
         Log.isVerbose = behavior.verboseLogging

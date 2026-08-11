@@ -144,6 +144,12 @@ VERSION=1.2.0 BUILD=42 ./release.sh   # stamp a version into the built bundle on
 | `NOTARY_PROFILE` | A stored `notarytool` credential profile, created once with `xcrun notarytool store-credentials`. |
 | `VERSION` / `BUILD` | Override `CFBundleShortVersionString` / `CFBundleVersion` in the built bundle. The tracked `Resources/Info.plist` is never touched, so a release build leaves the working tree clean. |
 
+Release builds are **universal** (`UNIVERSAL=1`, set by `release.sh`). A host-architecture build is
+right for local work and wrong for a download: an Apple Silicon-only bundle will not launch on an
+Intel Mac, and `generate_appcast` reads the slices out of the bundle and writes
+`<sparkle:hardwareRequirements>arm64` into the feed, turning that into something the updater
+enforces. The second slice costs about ten seconds.
+
 Notes that cost time if missed:
 
 - `release.sh` **refuses to fall back to ad-hoc signing**. A release that signed itself ad-hoc would
@@ -158,6 +164,113 @@ Notes that cost time if missed:
 - Packaging uses `ditto`, not `zip`: the Notary Service needs the bundle's symlinks and extended
   attributes intact. The zip is rebuilt *after* stapling, since the ticket lives inside the bundle
   and a zip made before stapling does not carry it.
+- Signing is **inside-out** and no longer uses `--deep`. See [Updates](#updates) — the bundle has
+  nested code now, and signing it outside-in produces something that passes a local `codesign
+  --verify` and fails notarisation.
+
+## Updates
+
+Cmd-Tab updates itself with [Sparkle](https://sparkle-project.org). Before that, a release was a
+file on GitHub that existing installs knew nothing about: every user stayed on whatever version
+they first downloaded until they happened to revisit the repository.
+
+**Settings → About → Updates** has the three controls — check now, check automatically (on), install
+automatically (off). Automatic *installation* is off by default deliberately: this app owns ⌘-Tab
+for the whole machine, and replacing itself mid-session is worth a prompt.
+
+### What makes an update safe to take
+
+The feed is HTTPS, but that is not what the trust rests on. Every archive is signed with an
+**EdDSA** key whose public half is baked into `Info.plist` as `SUPublicEDKey`, and Sparkle verifies
+that signature before unpacking anything. A compromised Pages host or a hijacked download can serve
+a different file; it cannot serve one this app will install.
+
+The private half lives in the maintainer's login keychain and in the `SPARKLE_PRIVATE_KEY` repo
+secret. **It is not recoverable.** Losing it means no existing install can ever be updated again —
+every future release would be signed by a key they do not trust, and the only route forward is
+asking every user to download a new build by hand. Back it up:
+
+```sh
+generate_keys -x sparkle-private-key.txt   # then store it somewhere real, and delete the file
+```
+
+`release.yml` checks the imported key against `SUPublicEDKey` before it builds and fails the release
+if they disagree, because the alternative is a feed that looks fine and that no client will install.
+
+### The framework, and what it cost
+
+Sparkle ships as a binary XCFramework, so it is the first dependency to leave a mark outside the
+compile. `build.sh` now has to:
+
+1. **Copy** the macOS slice into `Contents/Frameworks`. SwiftPM links against the XCFramework but
+   does nothing to embed it, so without this the app compiles, signs, launches, and dies on the
+   first line that touches Sparkle with a dyld error naming a path under `.build`.
+2. **Add an rpath** (`@executable_path/../Frameworks`). SwiftPM bakes in one pointing at `.build`,
+   which is right for `swift run` and wrong for everything a user will do.
+3. **Sign inside-out.** Sparkle is not one binary — the framework wraps `Autoupdate`, `Updater.app`
+   and two XPC services, each separately signable. Signatures nest, so an inner signature
+   invalidates every seal already covering it. `--deep` is gone from both paths: Apple advises
+   against it for distribution, and it re-signs nested code with the *outer* options, replacing
+   signatures that were built correctly with ones that were not. `build.sh` ends with
+   `codesign --verify --deep --strict`, which is the check that catches the mistake locally instead
+   of several minutes into a notarisation run.
+
+**A local build never updates itself.** `build.sh` strips `SUFeedURL` from any bundle that is not a
+release, so a `--install` build cannot notice that the published version is newer than the working
+tree and helpfully replace what you were testing. `Updater.isConfigured` reads that absence and
+greys out the controls with the reason.
+
+### Publishing
+
+`release.sh --notarize` ends by writing `build/releases/appcast.xml`, appending to the published
+feed rather than replacing it — a regenerated appcast listing only the newest release strands
+anyone more than one version behind, since an item Sparkle cannot see is an update it will never
+take. Set `APPCAST_URL` to have it fetch the live feed first.
+
+| Variable | What it does |
+| --- | --- |
+| `APPCAST_URL` | The published feed to append to. Skipped if unset, which starts a fresh appcast. |
+| `DOWNLOAD_URL_PREFIX` | What each `<enclosure url>` is built from. Defaults to this repo's release-download path for the version being built. |
+
+## Continuous integration
+
+Two workflows, both on `macos-26` — pinned rather than `macos-latest`, since this project reaches
+for private SkyLight symbols and has a `#available(macOS 26.0, *)` branch, and a runner a major
+version behind would be testing something subtly different from what ships.
+
+**`ci.yml`** — on every push and pull request. Builds, runs the suite, then assembles the app bundle
+and checks it came out whole. That last step is not redundant with the build: the `Info.plist` copy,
+the icon and the menu-bar PNG flattening are all steps that can break without the compiler noticing,
+and a glyph left in a subfolder is a blank menu bar at runtime with nothing else to catch it.
+
+The suite is worth running on every push precisely because it is cheap — 254 pure-logic tests in
+about 30 milliseconds, no window server, no Accessibility grant, no running apps. The parts that
+*cannot* be tested that way are the parts where a silent regression costs the most.
+
+**`release.yml`** — on a `v*` tag. Imports the Developer ID certificate into a throwaway keychain,
+imports the Sparkle key and checks it against `SUPublicEDKey`, stores notarisation credentials, runs
+`./release.sh --notarize`, publishes the GitHub release, and only then pushes the appcast to
+`gh-pages`. Ordering is deliberate: an appcast entry pointing at a release that failed to upload is
+an update every client tries and every client fails.
+
+It runs the same `release.sh` a maintainer runs by hand. A CI-only build path is one that stops
+working without anyone noticing until the day they need it.
+
+### Secrets it needs
+
+| Secret | What it is |
+| --- | --- |
+| `DEVELOPER_ID_P12_BASE64` | The Developer ID Application certificate and key, as `base64 -i cert.p12`. |
+| `DEVELOPER_ID_P12_PASSWORD` | The password set when exporting that `.p12`. |
+| `KEYCHAIN_PASSWORD` | Any string. Unlocks the temporary keychain the job creates and destroys. |
+| `NOTARY_APPLE_ID` | Apple ID for the Notary Service. |
+| `NOTARY_TEAM_ID` | The 10-character team identifier. |
+| `NOTARY_PASSWORD` | An **app-specific** password, not the account password. |
+| `SPARKLE_PRIVATE_KEY` | The EdDSA private key, as printed by `generate_keys -x`. |
+
+GitHub Pages must be serving the `gh-pages` branch for `SUFeedURL` to resolve. The workflow creates
+that branch on the first release and writes a `.nojekyll` alongside the appcast, which stops Pages
+running the XML through Jekyll and mangling it.
 
 ### Shortcuts
 
@@ -305,6 +418,37 @@ window that can't be shown is a **minimized** one: it has no live surface, so it
 is dropped. Captures are debounced per hovered tile, run concurrently, and reuse a briefly cached
 window list so a cursor sweeping across tiles does not re-enumerate the system each time.
 
+### Thumbnail tiles
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Thumbnail tiles | Window mode only: draws a live capture of each window as its tile instead of the app icon, with the app's icon inset in the corner. Persists as `windowThumbnailTiles`. | Off |
+
+Window mode's tiles are app icons, which is fine for the first window of an app and useless for the
+fifth — five identical Chrome icons distinguished only by a truncated title is the case this exists
+for. The icon stays, inset in the corner: a thumbnail alone loses the app identity the icon carried
+for free.
+
+**Off by default**, for the same reason the hover preview is. Capture needs Screen Recording, and
+this app's permission story is that it needs Accessibility and nothing else; leaving this off keeps
+that true. Turning it on flips Screen Recording from optional to required for the mode you are using
+— a real cost, and the user's call.
+
+It is a separate object from the hover preview (`TileThumbnails` vs `WindowCapture`) because it is a
+different problem. The hover preview captures *one app's* windows on a deliberate pause, debounced
+and cancelled on movement. This captures *every* tile the moment the panel opens, so the flow is
+inverted: **nothing waits**. The panel draws icons immediately and each tile swaps to its capture
+when that capture lands, in batches of four so a thirty-window list does not start thirty
+ScreenCaptureKit round trips against the window server that is, at that moment, compositing the
+panel that just appeared.
+
+Captures are diffed against what has already been taken, so the fresh list that folds in a moment
+after the panel opens does not re-capture what is already on screen. They are dropped when the
+session ends — a thumbnail is a photograph of a moment, and showing the next session what the last
+one looked like is worse than showing it an icon. Minimized windows keep their icon: they have no
+live surface, so they capture blank. So do the Electron and Catalyst phantom backing windows, caught
+by the same downsampled-alpha check the hover preview uses.
+
 ### Apps
 
 **Per-app overrides** are the settings that only became askable once the switcher grew a global
@@ -429,8 +573,25 @@ on screen: an app showing only a dialog still has something up, and restoring a 
 over it would be wrong. The role check is also what keeps Finder's desktop — an `AXScrollArea`
 that turns up in `AXWindows` — out of the list.
 
-Note that Finder's own browser windows report `AXDialog` even while up, so they are still missed
-in window mode. Unchanged from before, and not yet fixed.
+**Finder's own browser windows report `AXDialog` even while up**, so the minimized escape hatch
+above never reached them and Finder was missing from window mode entirely. The discriminator is the
+**minimize button**: a window the user can send to the Dock is one they can switch back to, which
+is the same question the filter is asking, while an alert or a modal has no such control. Measured
+on macOS 26.5:
+
+| Window | `AXRole` | `AXSubrole` | `AXMinimized` | Minimize button |
+| --- | --- | --- | --- | --- |
+| Finder browser, up | `AXWindow` | `AXDialog` | `false` | yes |
+| Finder browser, minimized | `AXWindow` | `AXDialog` | `true` | yes |
+| Finder desktop | `AXScrollArea` | — | `false` | no |
+
+The escape hatch is scoped to `AXDialog` rather than "any non-standard subrole", so floating
+palettes and system dialogs stay out however they are decorated. The decision itself lives in
+`WindowClassification.isSwitchable` — a pure function over those four facts, covered by
+`WindowClassificationTests`, because a subrole table that shifts on the next macOS is worth pinning
+down rather than re-deriving by hand. The Accessibility reads are passed as autoclosures so a
+standard window, which is the common case, is settled by its subrole alone and pays for no further
+IPC.
 
 ## How the ⌘-Tab takeover works
 
@@ -514,8 +675,9 @@ after that. Remove the identity in Keychain Access to undo it.
   partially disabled. `SpaceMover` therefore reads Space membership and switches Spaces, and does
   not pretend to move windows between them. Moving to another **display** is on ⌃⇧⌘-←/→, is plain
   Accessibility geometry, and keeps the window's relative position on the display it arrives at.
-- Live window thumbnails appear only in the optional hover preview (app mode); tiles themselves are
-  app icons.
+- Live window thumbnails are optional in both modes and off by default: the hover preview in app
+  mode, and **Thumbnail tiles** in window mode. Without either, tiles are app icons and Screen
+  Recording is never touched.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
   frontmost app and a ⌘-Tab lands one target further along than usual. Close it and ordering is
   normal again.
@@ -529,10 +691,14 @@ after that. Remove the identity in Keychain Access to undo it.
 | `FavoritesStore.swift` | Pinned apps, in the user's order, shown as launchable tiles when not running |
 | `EventTap.swift` | Session event tap; swallows keys, self-heals if the system disables it |
 | `SwitcherController.swift` | State machine — decides what to swallow and when to commit |
+| `TapRouting.swift` | Which binding claims a keystroke when the switcher is closed, and whether it is swallowed — pure, and tested |
+| `SwitcherSettings.swift` | Every preference the switcher reads, as one value applied in a single pass |
+| `RecencyList.swift` | The bounded MRU list behind both "Recently used" orders |
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |
 | `SwitcherPanel.swift` | Non-activating overlay window |
 | `SwitcherView.swift` | SwiftUI tile grid and list, and the `Metrics` both are laid out from |
 | `WindowPreview.swift` | Hover window-preview capture (ScreenCaptureKit) and its floating panel |
+| `TileThumbnails.swift` | Live window captures drawn as tile artwork in window mode |
 | `SwitchTarget.swift` | An app or window, and how to raise it |
 | `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |
 | `ExclusionStore.swift` | The set of excluded apps, persisted by bundle identifier |
@@ -553,6 +719,8 @@ after that. Remove the identity in Keychain Access to undo it.
 | `GlobalActions.swift` | Direct-activation and hide/show-all chords, and what they do |
 | `ScopedTriggers.swift` | Extra triggers that open a narrowed window list |
 | `ConfigFile.swift` | The `~/.config` mirror: file watching, write-back, live apply |
+| `WindowClassification.swift` | Whether an Accessibility window belongs in the switcher — pure, and tested |
+| `Updater.swift` | Sparkle, and the update preferences surfaced in Settings → About |
 | `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
 
 ## Design notes
@@ -570,6 +738,113 @@ is the only input path.
 
 `flagsChanged` events are never swallowed. Other apps need to track modifier state, and it
 guarantees releasing ⌘ always dismisses the panel even if the state machine gets confused.
+
+### Swift 6 language mode
+
+The two paragraphs above used to be conventions. The package builds in **Swift 6 language mode**,
+so they are now checked: `SwitcherController` and `TargetProvider` are `@MainActor`, and the work
+that legitimately leaves the main thread has to say so.
+
+That is worth more here than in most apps. This one runs four background queues doing Accessibility
+IPC (`TargetProvider`, `MouseWindowDrag`, `SwitchTarget.focusQueue`, `WindowTiling`) alongside a tap
+callback on the main run loop, and the cost of getting it wrong is not a corrupted value — it is a
+stalled tap, which the system responds to by killing it and taking every keystroke on the machine
+with it. Under Swift 5 a `DispatchQueue.async` added to any method could break the invariant
+silently.
+
+A clean build — debug and release — is warning-free. What survives the migration is a small set of
+`@unchecked Sendable` / `nonisolated(unsafe)` annotations, each a place where the compiler cannot
+see a guarantee that genuinely holds. Each carries its reasoning at the declaration:
+
+| What | Why it cannot be checked | Why it is safe |
+| --- | --- | --- |
+| `SwitchTarget` and its `Kind` | `NSImage` and `AXUIElement` are not `Sendable` | Built once on `axQueue`, never mutated after handoff. The icons are only drawn; `AXUIElement` is a thread-safe opaque handle this app messages off-thread by design. |
+| `WindowTiler.Target` | `.element` carries an `AXUIElement` | Crossing onto the tiler's queue is the point — `resolve` runs the Accessibility walk there rather than on the main thread. |
+| `WindowPreview.Entry` | `SCWindow` is not `Sendable` | A read-only descriptor from `SCShareableContent`, handed to a task group precisely so captures run concurrently. |
+| `EventTap`'s event and handler | `CGEvent` is not `Sendable`; `assumeIsolated` takes a `sending` closure | The run-loop source is on `CFRunLoopGetMain`, so the callback *is* the main thread. The event arrives as a parameter and leaves as the return value, with no other reference to it. |
+| `Permissions.waitForTrust`'s timer | `Timer` is not `Sendable` and its callback is nonisolated | One reference, written once before the timer can fire and read only from the run loop it is scheduled on. |
+| `SystemSwitcher.isNativeDisabled`, `SwitchTarget.focusGeneration`, the two `dlopen` handles | Nonisolated global mutable state | The `dlopen` handles are `let`s initialised once by the runtime's thread-safe lazy-static machinery. `focusGeneration` is touched only from the serial `focusQueue`. `isNativeDisabled` is a `Bool`, which cannot tear, and a redundant restore is a no-op. |
+
+`nonisolated static` on every helper in `TargetProvider` is not an escape hatch but the opposite:
+without it, `@MainActor` on the class would drag the Accessibility walk onto the thread the whole
+design exists to keep it off. `MainActor.assumeIsolated` appears at each point where a
+`TargetProvider` callback re-enters the actor — always `assumeIsolated` rather than a `Task`, since
+the provider has already hopped back to the main thread and a `Task` would defer the work to a later
+turn, letting a session end in between.
+
+### Accessibility
+
+The Settings window is fully labelled for VoiceOver. That work is concentrated in `SettingsChrome`
+rather than spread across the seven tabs: every row there is a label on the left and a control on
+the right, and every control is built with `labelsHidden()` so the checkboxes line up down the
+card's edge — which reads correctly and announces as nothing, because a hidden label is hidden from
+VoiceOver too. `SettingsRow` states that association once, so it cannot be forgotten by the next row
+someone adds. Sliders announce their formatted value rather than a percentage (several of them are
+pixel sizes), and the sidebar tabs and the card-shaped radio buttons carry `.isSelected`, which is
+otherwise conveyed only by a background tint or a filled-in circle.
+
+The switcher panel is a harder case and is honestly only half-solved. It is a `.nonactivatingPanel`
+that never becomes key and has no key handling of its own — the event tap is the only input path,
+which is what makes the switcher work at all — so driving it the way an assistive technology drives
+an ordinary window is not something it can offer. What it does now is stop the tiles being
+anonymous: each announces its title, app name, minimized/hidden/not-running state, notification
+count, display and Desktop, and the digit that jumps to it. All of that was previously carried by a
+dimmed icon, a badge glyph and a small corner number, and none of it was in any text.
+
+### Localization
+
+Every string in the settings window is localizable. Nothing visibly changes — English is the base
+language and each entry currently translates to itself — but the infrastructure is there and adding
+a language is now filling in `Sources/CmdTab/Resources/Localizable.xcstrings`.
+
+The obvious way to localize SwiftUI is to type the view parameters `LocalizedStringKey`, which makes
+string literals at the call sites localizable for free. **It does not work for this codebase.** The
+long explanations under each settings row are assembled with `+` across several source lines to stay
+inside the line limit, and a concatenation is not a literal — so nine out of ten subtitles here would
+silently stop being localizable the moment they were wrapped. That failure is invisible: a missing
+key renders as the key, and the keys are the English text.
+
+So the lookup happens at the point of display instead, in `SettingsChrome.text(_:)`, which every
+title, subtitle, footer and section heading passes through. One place, four hundred call sites, and
+it handles literals and concatenations alike. Its sibling `SettingsChrome.verbatim(_:)` is for text
+that is *data* rather than interface — the per-app rows are titled with the names of the user's
+applications, and looking those up would mean an app called "General" could come back as the
+sidebar's General tab.
+
+Two things about the build are worth knowing, because both fail silently:
+
+- **SwiftPM does not compile String Catalogs.** Declared as a package resource, the `.xcstrings` is
+  copied verbatim into a `CmdTab_CmdTab.bundle` where nothing can read it — `LocalizedStringKey`
+  resolves against `Bundle.main`, and an uncompiled catalogue is not a strings table in any case.
+  `build.sh` runs `xcrun xcstringstool compile` and writes the resulting `<locale>.lproj`
+  directories straight into `Contents/Resources`.
+- **Every failure mode looks like success.** A missing catalogue, an empty one, or one that never
+  reached the bundle all render exactly the English text that was passed in. `StringCatalogTests`
+  guards the file's shape and CI checks that `en.lproj/Localizable.strings` actually landed in the
+  bundle, because nothing else would notice until a translation existed.
+
+### Measuring the timing claims
+
+The two paragraphs above are the reasons this code is shaped the way it is, and until recently
+nothing anywhere checked that either one held. A regression in them fails no test — it shows up as
+the system killing the tap and the user losing every keystroke on the machine. `Signpost` (in
+`Log.swift`) instruments them:
+
+| Interval | Category | What it answers |
+| --- | --- | --- |
+| `handle` | `tap` | How long the tap callback took. The one that must stay short. |
+| `refresh` | `targets` | How long a full enumeration took, and how many targets it produced. |
+| `windows` | `targets` | One app's `AXWindows` read, tagged with its pid — where the 250ms cap bites. |
+
+```sh
+xcrun xctrace record --template 'os_signpost' --attach Cmd-Tab --output trace.trace
+```
+
+A `refresh` interval overlapping a `handle` interval is the design working; one nested *inside* it
+is the bug the off-thread cache exists to prevent. A `windows` interval sitting at 250ms names the
+app that is hanging, which is the difference between "the machine is busy" and "Slack is wedged".
+Signposts cost close to nothing unattached — `OSSignposter` checks whether anyone is listening
+before formatting — which is what makes it acceptable to leave one in a per-keystroke callback.
 
 ## Renamed from Overtab
 

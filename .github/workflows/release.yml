@@ -1,0 +1,188 @@
+name: Release
+
+# Tag-driven, because a release is the one thing here that must not be reproducible by accident.
+# Pushing `v0.2.0` builds, signs, notarises, publishes the zip, and appends an entry to the appcast
+# that every existing install will see within a day.
+on:
+  push:
+    tags: ['v*']
+  # For re-running a release whose notarisation failed on Apple's side rather than ours.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release (e.g. v0.2.0)'
+        required: true
+
+# Two concurrent releases would race on the appcast and one would silently lose its entry.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, notarise and publish
+    runs-on: macos-26
+    # Notarisation is a round trip through Apple's service and is usually minutes, occasionally
+    # much longer. The default 360 would strand a release mid-flight.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # The appcast step needs to push, and a shallow clone cannot.
+          fetch-depth: 0
+
+      - name: Derive version from the tag
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          # v0.2.0 -> 0.2.0. CFBundleShortVersionString is a dotted number; the leading v is ours.
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # CFBundleVersion has to increase monotonically across releases or Sparkle will not offer
+          # the update. The commit count is monotonic by construction and needs no manual bookkeeping.
+          echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+
+      # A dedicated keychain rather than the runner's login one: it is unlocked with a password we
+      # know, its timeout is ours to set, and it is destroyed with the runner. Importing a
+      # Developer ID certificate into a shared keychain and leaving it there is how signing
+      # identities leak between jobs.
+      - name: Import the Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Default 300s lock timeout will expire mid-notarisation and take the signing identity
+          # with it. -u with no -t disables the timeout entirely.
+          security set-keychain-settings -u "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          # Without this, codesign blocks on a GUI prompt that no one is there to answer and the
+          # job hangs until the timeout.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+
+          # Prepended rather than replacing: the system roots live in the default list and dropping
+          # them breaks certificate chain validation.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      # The other half of the trust story. This key signs the appcast entries; its public half is
+      # baked into Info.plist as SUPublicEDKey. They must be the same pair or every client rejects
+      # every update, silently.
+      - name: Import the Sparkle signing key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          swift package resolve
+          GENERATE_KEYS="$(find .build/artifacts -type f -name generate_keys -perm -u+x -print -quit)"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_key"
+          "$GENERATE_KEYS" -f "$RUNNER_TEMP/sparkle_key"
+          rm -f "$RUNNER_TEMP/sparkle_key"
+          # Fails loudly here rather than producing a feed nobody can install.
+          EXPECTED=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' Resources/Info.plist)
+          ACTUAL=$("$GENERATE_KEYS" -p)
+          if [[ "$EXPECTED" != "$ACTUAL" ]]; then
+            echo "::error::SUPublicEDKey in Info.plist does not match the imported private key."
+            echo "  Info.plist: $EXPECTED"
+            echo "  keychain:   $ACTUAL"
+            exit 1
+          fi
+          echo "Sparkle key matches Info.plist."
+
+      - name: Store notarisation credentials
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool store-credentials "Cmd-Tab" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --keychain "$RUNNER_TEMP/build.keychain-db"
+
+      # Everything above is setup; this one line is the release. Deliberately the same script a
+      # maintainer runs by hand — a CI-only build path is one that stops working without anyone
+      # noticing until the day they need it.
+      - name: Build, sign, notarise
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          NOTARY_PROFILE: Cmd-Tab
+          APPCAST_URL: https://kdbaustert.github.io/Cmd-Tab/appcast.xml
+          DOWNLOAD_URL_PREFIX: https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/
+        run: ./release.sh --notarize
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ASSET="build/releases/Cmd-Tab-$VERSION.zip"
+          [[ -f "$ASSET" ]] || { echo "::error::missing $ASSET"; exit 1; }
+          # --generate-notes writes the changelog from the commits since the last tag, which is the
+          # same thing a hand-written one would say for a project of this shape.
+          gh release create "$TAG" "$ASSET" \
+            --title "Cmd-Tab $VERSION" \
+            --generate-notes
+
+      # Last, and only on success. An appcast entry pointing at a release that failed to upload is
+      # an update every client tries and every client fails to install.
+      - name: Publish the appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # An orphan branch: the appcast has no relationship to the source history, and carrying
+          # the whole tree into Pages would publish the repository as a website by accident.
+          WORKTREE="$RUNNER_TEMP/pages"
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
+            git fetch origin gh-pages
+            git worktree add "$WORKTREE" origin/gh-pages
+            git -C "$WORKTREE" checkout -B gh-pages
+          else
+            git worktree add --detach "$WORKTREE"
+            git -C "$WORKTREE" checkout --orphan gh-pages
+            git -C "$WORKTREE" rm -rf . > /dev/null 2>&1 || true
+          fi
+
+          cp build/releases/appcast.xml "$WORKTREE/appcast.xml"
+          # Stops Pages running the file through Jekyll, which mangles XML it decides is a template.
+          touch "$WORKTREE/.nojekyll"
+
+          git -C "$WORKTREE" add appcast.xml .nojekyll
+          if git -C "$WORKTREE" diff --cached --quiet; then
+            echo "Appcast unchanged."
+          else
+            git -C "$WORKTREE" commit -m "Appcast: Cmd-Tab $VERSION"
+            git -C "$WORKTREE" push origin gh-pages
+          fi
+
+      - name: Clean up the keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true

@@ -1,0 +1,1777 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "A second shortcut that shows only the frontmost app's windows. Off by default — the usual ⌘` is a shortcut apps use themselves.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A second shortcut that shows only the frontmost app's windows. Off by default — the usual ⌘` is a shortcut apps use themselves."
+          }
+        }
+      }
+    },
+    "A theme carries only the look — never a shortcut — so importing one can not change what your keys do.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A theme carries only the look — never a shortcut — so importing one can not change what your keys do."
+          }
+        }
+      }
+    },
+    "About": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "About"
+          }
+        }
+      }
+    },
+    "Accessibility": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accessibility"
+          }
+        }
+      }
+    },
+    "Accessibility is granted per binary. A rebuild signed with a different certificate looks like a new app to macOS and has to be granted again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accessibility is granted per binary. A rebuild signed with a different certificate looks like a new app to macOS and has to be granted again."
+          }
+        }
+      }
+    },
+    "Act on the highlighted tile without leaving the switcher. Each is a key plus ⌥ or ⌃ held on top of the trigger — an extra modifier is required, since a bare letter is type-to-filter input.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Act on the highlighted tile without leaving the switcher. Each is a key plus ⌥ or ⌃ held on top of the trigger — an extra modifier is required, since a bare letter is type-to-filter input."
+          }
+        }
+      }
+    },
+    "All windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All windows"
+          }
+        }
+      }
+    },
+    "An exported file carries every preference, including favourites and exclusions.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An exported file carries every preference, including favourites and exclusions."
+          }
+        }
+      }
+    },
+    "App rules": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App rules"
+          }
+        }
+      }
+    },
+    "Appearance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appearance"
+          }
+        }
+      }
+    },
+    "Application mode only — a window list has as many tiles per app as the app has windows, so no app can hold a slot in it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Application mode only — a window list has as many tiles per app as the app has windows, so no app can hold a slot in it."
+          }
+        }
+      }
+    },
+    "Apps": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apps"
+          }
+        }
+      }
+    },
+    "Ask first for Quit and Force-quit. One key separates ⌥W (close a window) from ⌥Q (quit the app), and only one of them can be undone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ask first for Quit and Force-quit. One key separates ⌥W (close a window) from ⌥Q (quit the app), and only one of them can be undone."
+          }
+        }
+      }
+    },
+    "Backup": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backup"
+          }
+        }
+      }
+    },
+    "Behavior": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Behavior"
+          }
+        }
+      }
+    },
+    "Bindings are matched in the order listed above, so the first one to claim a combination is the one that fires. Openers come first: nothing you bind can take the switcher's own trigger away from it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bindings are matched in the order listed above, so the first one to claim a combination is the one that fires. Openers come first: nothing you bind can take the switcher's own trigger away from it."
+          }
+        }
+      }
+    },
+    "Bring back exactly what Hide all hid — apps you hid yourself stay hidden.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bring back exactly what Hide all hid — apps you hid yourself stay hidden."
+          }
+        }
+      }
+    },
+    "Build": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Build"
+          }
+        }
+      }
+    },
+    "Changes apply live, including to a switcher that is already open.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changes apply live, including to a switcher that is already open."
+          }
+        }
+      }
+    },
+    "Check automatically": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check automatically"
+          }
+        }
+      }
+    },
+    "Check for updates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for updates"
+          }
+        }
+      }
+    },
+    "Clears every Cmd-Tab preference, including excluded apps.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clears every Cmd-Tab preference, including excluded apps."
+          }
+        }
+      }
+    },
+    "Configuration file": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configuration file"
+          }
+        }
+      }
+    },
+    "Confirm before quitting": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm before quitting"
+          }
+        }
+      }
+    },
+    "Console command": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Console command"
+          }
+        }
+      }
+    },
+    "Contents": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contents"
+          }
+        }
+      }
+    },
+    "Corner radius": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Corner radius"
+          }
+        }
+      }
+    },
+    "Custom blur": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom blur"
+          }
+        }
+      }
+    },
+    "Cycle app windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cycle app windows"
+          }
+        }
+      }
+    },
+    "Cycle widths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cycle widths"
+          }
+        }
+      }
+    },
+    "Diagnostics": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diagnostics"
+          }
+        }
+      }
+    },
+    "Direct activation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct activation"
+          }
+        }
+      }
+    },
+    "Display badges": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Display badges"
+          }
+        }
+      }
+    },
+    "Dot": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dot"
+          }
+        }
+      }
+    },
+    "Download and install without asking, applying it the next time Cmd-Tab starts. Off keeps the decision yours — this app owns ⌘-Tab for the whole machine, so replacing itself mid-session is worth a prompt.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download and install without asking, applying it the next time Cmd-Tab starts. Off keeps the decision yours — this app owns ⌘-Tab for the whole machine, so replacing itself mid-session is worth a prompt."
+          }
+        }
+      }
+    },
+    "Drag a window's title bar to a screen edge or corner to tile it there. Independent of the shortcuts below — you can have either, or both.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag a window's title bar to a screen edge or corner to tile it there. Independent of the shortcuts below — you can have either, or both."
+          }
+        }
+      }
+    },
+    "Each opens the switcher on part of the window list instead of all of it. Held and released like the main trigger, and never sticky — a scoped cycle is a quick jump, not a panel to browse.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Each opens the switcher on part of the window list instead of all of it. Held and released like the main trigger, and never sticky — a scoped cycle is a quick jump, not a panel to browse."
+          }
+        }
+      }
+    },
+    "Edit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit"
+          }
+        }
+      }
+    },
+    "Enable window actions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable window actions"
+          }
+        }
+      }
+    },
+    "Enable window tiling": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable window tiling"
+          }
+        }
+      }
+    },
+    "Fade in and out": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fade in and out"
+          }
+        }
+      }
+    },
+    "Favorite order": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favorite order"
+          }
+        }
+      }
+    },
+    "For the handful of apps you reach for all day, the switcher is overhead. These jump straight there, launching the app if it isn't running.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For the handful of apps you reach for all day, the switcher is overhead. These jump straight there, launching the app if it isn't running."
+          }
+        }
+      }
+    },
+    "Force the panel light or dark regardless of the system setting.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Force the panel light or dark regardless of the system setting."
+          }
+        }
+      }
+    },
+    "Gap": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gap"
+          }
+        }
+      }
+    },
+    "Gap between an icon and its name.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gap between an icon and its name."
+          }
+        }
+      }
+    },
+    "General": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "General"
+          }
+        }
+      }
+    },
+    "Hide all windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide all windows"
+          }
+        }
+      }
+    },
+    "Hide apps with no windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide apps with no windows"
+          }
+        }
+      }
+    },
+    "Hide every app to clear the screen to the desktop.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide every app to clear the screen to the desktop."
+          }
+        }
+      }
+    },
+    "Highlight": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Highlight"
+          }
+        }
+      }
+    },
+    "Hold a modifier and drag anywhere in a window — no aiming at the titlebar or a 4px edge. A resize takes the corner of the quarter you press in; the opposite corner stays put. Drag to a screen edge or corner and the snap zone lights up: let go there and the window tiles to it, gaps included.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold a modifier and drag anywhere in a window — no aiming at the titlebar or a 4px edge. A resize takes the corner of the quarter you press in; the opposite corner stays put. Drag to a screen edge or corner and the snap zone lights up: let go there and the window tiles to it, gaps included."
+          }
+        }
+      }
+    },
+    "Hold to open the switcher; release to switch.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold to open the switcher; release to switch."
+          }
+        }
+      }
+    },
+    "How Cmd-Tab itself starts and presents itself.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How Cmd-Tab itself starts and presents itself."
+          }
+        }
+      }
+    },
+    "How the switcher opens, what it lists, and where it appears.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How the switcher opens, what it lists, and where it appears."
+          }
+        }
+      }
+    },
+    "How tiles are sorted.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How tiles are sorted."
+          }
+        }
+      }
+    },
+    "Icon size": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Icon size"
+          }
+        }
+      }
+    },
+    "Icon spacing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Icon spacing"
+          }
+        }
+      }
+    },
+    "In-switcher keys": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In-switcher keys"
+          }
+        }
+      }
+    },
+    "Install automatically": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install automatically"
+          }
+        }
+      }
+    },
+    "Keep settings in a config file": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep settings in a config file"
+          }
+        }
+      }
+    },
+    "Keep the per-key tracing in the system log, so a problem can be read back afterwards instead of having to happen again while you watch.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the per-key tracing in the system log, so a problem can be read back afterwards instead of having to happen again while you watch."
+          }
+        }
+      }
+    },
+    "Keeps the window's size and its relative position on the new display. Live whether or not tiling is on: a move changes no layout, so the switch above does not govern it, and a bound chord is claimed system-wide.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keeps the window's size and its relative position on the new display. Live whether or not tiling is on: a move changes no layout, so the switch above does not govern it, and a bound chord is claimed system-wide."
+          }
+        }
+      }
+    },
+    "Labels": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Labels"
+          }
+        }
+      }
+    },
+    "Layout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Layout"
+          }
+        }
+      }
+    },
+    "Look for a new version in the background, about once a day, and say so when one turns up.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Look for a new version in the background, about once a day, and say so when one turns up."
+          }
+        }
+      }
+    },
+    "Markers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Markers"
+          }
+        }
+      }
+    },
+    "Material": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Material"
+          }
+        }
+      }
+    },
+    "Max columns": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Max columns"
+          }
+        }
+      }
+    },
+    "Menu bar": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menu bar"
+          }
+        }
+      }
+    },
+    "Menu-bar glyph": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menu-bar glyph"
+          }
+        }
+      }
+    },
+    "Mouse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mouse"
+          }
+        }
+      }
+    },
+    "Move and resize with the mouse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move and resize with the mouse"
+          }
+        }
+      }
+    },
+    "Move your whole setup between Macs.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move your whole setup between Macs."
+          }
+        }
+      }
+    },
+    "No conflicts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No conflicts"
+          }
+        }
+      }
+    },
+    "Notification badges": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification badges"
+          }
+        }
+      }
+    },
+    "Number badges": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Number badges"
+          }
+        }
+      }
+    },
+    "Off by default. Each binding is a real global hotkey — while tiling is on, Cmd-Tab takes those combinations from whatever app is in front, so nothing is claimed until you ask for it. Displays at the bottom is the exception: moving a window is not resizing it, so it stays live either way.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off by default. Each binding is a real global hotkey — while tiling is on, Cmd-Tab takes those combinations from whatever app is in front, so nothing is claimed until you ask for it. Displays at the bottom is the exception: moving a window is not resizing it, so it stays live either way."
+          }
+        }
+      }
+    },
+    "Off leaves every ⌥-key to the filter. Off by default: quitting an app is not something to discover by mistyping a search.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off leaves every ⌥-key to the filter. Off by default: quitting an app is not something to discover by mistyping a search."
+          }
+        }
+      }
+    },
+    "Off leaves no menu-bar item. Reopen Cmd-Tab from Finder to get Settings back.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off leaves no menu-bar item. Reopen Cmd-Tab from Finder to get Settings back."
+          }
+        }
+      }
+    },
+    "Off, the switcher records what it did — sessions opening, picks, tiling, anything that failed. On, it also records every key it saw getting there. Leave it off unless you are chasing something; it is a line per keystroke.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off, the switcher records what it did — sessions opening, picks, tiling, anything that failed. On, it also records every key it saw getting there. Leave it off unless you are chasing something; it is a line per keystroke."
+          }
+        }
+      }
+    },
+    "Only apps with an override are listed. Everything else follows the global settings.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only apps with an override are listed. Everything else follows the global settings."
+          }
+        }
+      }
+    },
+    "Only for window previews on hover. Everything else works without it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only for window previews on hover. Everything else works without it."
+          }
+        }
+      }
+    },
+    "Open the repository in your browser.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the repository in your browser."
+          }
+        }
+      }
+    },
+    "Order": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Order"
+          }
+        }
+      }
+    },
+    "Override the material's built-in glass blur. 0 = none, 50 = heavy.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Override the material's built-in glass blur. 0 = none, 50 = heavy."
+          }
+        }
+      }
+    },
+    "Overview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overview"
+          }
+        }
+      }
+    },
+    "Panel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panel"
+          }
+        }
+      }
+    },
+    "Paste into Terminal to read back what was logged.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste into Terminal to read back what was logged."
+          }
+        }
+      }
+    },
+    "Per-app overrides": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per-app overrides"
+          }
+        }
+      }
+    },
+    "Permissions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permissions"
+          }
+        }
+      }
+    },
+    "Pin favorites to the front": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pin favorites to the front"
+          }
+        }
+      }
+    },
+    "Placement": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Placement"
+          }
+        }
+      }
+    },
+    "Point size of tile titles and the caption.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point size of tile titles and the caption."
+          }
+        }
+      }
+    },
+    "Position": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Position"
+          }
+        }
+      }
+    },
+    "Press the same half twice to step the window through ½ → ⅔ → ⅓ of the screen on that side.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Press the same half twice to step the window through ½ → ⅔ → ⅓ of the screen on that side."
+          }
+        }
+      }
+    },
+    "Pressed while the panel is up — on top of the held trigger, or on their own once it is released in Stay open. Scrolling or hovering over a tile moves the selection too, and a click switches straight to it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pressed while the panel is up — on top of the held trigger, or on their own once it is released in Stay open. Scrolling or hovering over a tile moves the selection too, and a click switches straight to it."
+          }
+        }
+      }
+    },
+    "Preview windows on hover": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview windows on hover"
+          }
+        }
+      }
+    },
+    "Recovery": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery"
+          }
+        }
+      }
+    },
+    "Releasing the trigger leaves the switcher up instead of switching. Tab, Return, a click or 1–9/0 then picks; Escape backs out.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Releasing the trigger leaves the switcher up instead of switching. Tab, Return, a click or 1–9/0 then picks; Escape backs out."
+          }
+        }
+      }
+    },
+    "Required. Without it the event tap cannot see ⌘-Tab, and windows cannot be raised.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Required. Without it the event tap cannot see ⌘-Tab, and windows cannot be raised."
+          }
+        }
+      }
+    },
+    "Reset to defaults": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset to defaults"
+          }
+        }
+      }
+    },
+    "Restore macOS ⌘-Tab": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore macOS ⌘-Tab"
+          }
+        }
+      }
+    },
+    "Roundness of the selected tile's highlight.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Roundness of the selected tile's highlight."
+          }
+        }
+      }
+    },
+    "Scales the whole panel. Window tiles and list rows use a smaller icon, and follow in step.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scales the whole panel. Window tiles and list rows use a smaller icon, and follow in step."
+          }
+        }
+      }
+    },
+    "Scoped shortcuts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scoped shortcuts"
+          }
+        }
+      }
+    },
+    "Screen Recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Screen Recording"
+          }
+        }
+      }
+    },
+    "Session": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Session"
+          }
+        }
+      }
+    },
+    "Settings file": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings file"
+          }
+        }
+      }
+    },
+    "Shortcuts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shortcuts"
+          }
+        }
+      }
+    },
+    "Show all windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show all windows"
+          }
+        }
+      }
+    },
+    "Show delay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show delay"
+          }
+        }
+      }
+    },
+    "Show menu-bar icon": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show menu-bar icon"
+          }
+        }
+      }
+    },
+    "Show on": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show on"
+          }
+        }
+      }
+    },
+    "Show the file": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show the file"
+          }
+        }
+      }
+    },
+    "Sizes and positions only — the Displays moves do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sizes and positions only — the Displays moves do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free."
+          }
+        }
+      }
+    },
+    "Slack around each icon, inside its highlight.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Slack around each icon, inside its highlight."
+          }
+        }
+      }
+    },
+    "Snap by dragging": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snap by dragging"
+          }
+        }
+      }
+    },
+    "Snap the focused window without reaching for its edges. These work system-wide, whether or not the switcher is open.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snap the focused window without reaching for its edges. These work system-wide, whether or not the switcher is open."
+          }
+        }
+      }
+    },
+    "Source": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source"
+          }
+        }
+      }
+    },
+    "Space badges": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Space badges"
+          }
+        }
+      }
+    },
+    "Space left around a tiled window: the full gap against a screen edge, half of it where two windows meet — so neighbours sit exactly one gap apart. 0 keeps them flush.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Space left around a tiled window: the full gap against a screen edge, half of it where two windows meet — so neighbours sit exactly one gap apart. 0 keeps them flush."
+          }
+        }
+      }
+    },
+    "Star an app to keep it in the switcher even when it isn't running; picking it launches it. Excluded apps never appear.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Star an app to keep it in the switcher even when it isn't running; picking it launches it. Excluded apps never appear."
+          }
+        }
+      }
+    },
+    "Start at login": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start at login"
+          }
+        }
+      }
+    },
+    "Startup": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Startup"
+          }
+        }
+      }
+    },
+    "Stay open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stay open"
+          }
+        }
+      }
+    },
+    "Switch between": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch between"
+          }
+        }
+      }
+    },
+    "Switcher shortcut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switcher shortcut"
+          }
+        }
+      }
+    },
+    "Sync settings over iCloud": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync settings over iCloud"
+          }
+        }
+      }
+    },
+    "The anchor the hold-and-point gesture measures its direction from. The outline and the landing block are not configurable — they match Rectangle's snap footprint: light grey on black.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The anchor the hold-and-point gesture measures its direction from. The outline and the landing block are not configurable — they match Rectangle's snap footprint: light grey on black."
+          }
+        }
+      }
+    },
+    "The frosted glass behind the tiles.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The frosted glass behind the tiles."
+          }
+        }
+      }
+    },
+    "The shape the switcher takes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The shape the switcher takes."
+          }
+        }
+      }
+    },
+    "The takeover lives in the window server's memory, never in `com.apple.symbolichotkeys`, so logging out restores ⌘-Tab too.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The takeover lives in the window server's memory, never in `com.apple.symbolichotkeys`, so logging out restores ⌘-Tab too."
+          }
+        }
+      }
+    },
+    "The ⌘-number jump hint on the first ten targets.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ⌘-number jump hint on the first ten targets."
+          }
+        }
+      }
+    },
+    "Theme": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Theme"
+          }
+        }
+      }
+    },
+    "Thumbnail tiles": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thumbnail tiles"
+          }
+        }
+      }
+    },
+    "Tiles": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiles"
+          }
+        }
+      }
+    },
+    "Tint behind the selected tile.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tint behind the selected tile."
+          }
+        }
+      }
+    },
+    "Title font": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Title font"
+          }
+        }
+      }
+    },
+    "Title size": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Title size"
+          }
+        }
+      }
+    },
+    "Title spacing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Title spacing"
+          }
+        }
+      }
+    },
+    "Trigger": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trigger"
+          }
+        }
+      }
+    },
+    "Unbound by default: these act system-wide and have no natural home key, so the combination is yours to pick rather than ours to claim.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unbound by default: these act system-wide and have no natural home key, so the combination is yours to pick rather than ours to claim."
+          }
+        }
+      }
+    },
+    "Unread counts from each app's Dock icon. Read from the Dock over Accessibility, so it is best-effort.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unread counts from each app's Dock icon. Read from the Dock over Accessibility, so it is best-effort."
+          }
+        }
+      }
+    },
+    "Updates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates"
+          }
+        }
+      }
+    },
+    "Verbose logging": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbose logging"
+          }
+        }
+      }
+    },
+    "Version": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version"
+          }
+        }
+      }
+    },
+    "Wait before drawing the panel, so a quick tap switches with no flash. 0 = instant.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wait before drawing the panel, so a quick tap switches with no flash. 0 = instant."
+          }
+        }
+      }
+    },
+    "What each tile stands for.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What each tile stands for."
+          }
+        }
+      }
+    },
+    "What opens the switcher, and what the keys do while it is up.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What opens the switcher, and what the keys do while it is up."
+          }
+        }
+      }
+    },
+    "Where on a display the panel opens.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where on a display the panel opens."
+          }
+        }
+      }
+    },
+    "Which Desktop a window is on. Only ever appears when you have more than one.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which Desktop a window is on. Only ever appears when you have more than one."
+          }
+        }
+      }
+    },
+    "Which display a window is on. Only ever appears when more than one is connected.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which display a window is on. Only ever appears when more than one is connected."
+          }
+        }
+      }
+    },
+    "Which displays get a panel.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which displays get a panel."
+          }
+        }
+      }
+    },
+    "Which icon the menu-bar item shows.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which icon the menu-bar item shows."
+          }
+        }
+      }
+    },
+    "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch above, and of Snap by dragging.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch above, and of Snap by dragging."
+          }
+        }
+      }
+    },
+    "Window": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window"
+          }
+        }
+      }
+    },
+    "Window actions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window actions"
+          }
+        }
+      }
+    },
+    "Window tiling": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window tiling"
+          }
+        }
+      }
+    },
+    "Windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Windows"
+          }
+        }
+      }
+    },
+    "Written in place rather than replaced, so a symlink into a dotfiles repo survives every save. On launch the file wins over local settings — that is what makes a fresh checkout come up configured, and what makes a second Mac pick up the settings iCloud sent it rather than publish its own over them.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Written in place rather than replaced, so a symlink into a dotfiles repo survives every save. On launch the file wins over local settings — that is what makes a fresh checkout come up configured, and what makes a second Mac pick up the settings iCloud sent it rather than publish its own over them."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

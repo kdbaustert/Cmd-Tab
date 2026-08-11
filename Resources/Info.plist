@@ -32,5 +32,26 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Sparkle. The appcast is served from GitHub Pages rather than raw.githubusercontent.com:
+	     the raw host is not a CDN, rate-limits, and sends a content type that some proxies mangle,
+	     and this URL is baked into every shipped bundle so it is not one to get wrong twice. -->
+	<key>SUFeedURL</key>
+	<string>https://kdbaustert.github.io/Cmd-Tab/appcast.xml</string>
+	<!-- The public half of the EdDSA key pair. Sparkle verifies every downloaded archive against
+	     this before unpacking it, which is what makes an HTTPS feed safe to trust: even a
+	     compromised host cannot ship this app's users a binary signed by anyone else. The private
+	     half lives in the maintainer's login keychain and in the SPARKLE_PRIVATE_KEY secret. -->
+	<key>SUPublicEDKey</key>
+	<string>FYMMALSs2mAccV/rUgQcByyY+mdkpXSBA/nD4JpwvT0=</string>
+	<!-- Checks run, but nothing installs itself without being asked. This app owns ⌘-Tab for the
+	     whole machine; replacing itself mid-session is worth a prompt. Both are user-overridable
+	     in Settings → About → Updates. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<!-- A day. Sparkle's own default, stated rather than inherited so changing it is a diff. -->
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

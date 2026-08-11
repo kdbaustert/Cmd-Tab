@@ -43,8 +43,27 @@ enum SwitcherMode: String, CaseIterable {
 }
 
 /// One tile in the switcher: either a whole app or a single window.
+/// `@unchecked Sendable` rather than genuinely `Sendable`, because two of the fields cannot be
+/// checked: `NSImage` is not `Sendable`, and `AXUIElement` is an opaque CF handle. Both are safe
+/// here for the same reason, which is worth stating rather than assuming.
+///
+/// A target is **built once and never mutated after it is handed off**. `TargetProvider` constructs
+/// the whole list on `axQueue` and passes it to the main thread, which only reads it; nothing
+/// writes to a target after construction. The `NSImage`s are app icons obtained from
+/// `NSWorkspace`/`NSRunningApplication` and are only ever drawn, and `AXUIElement` is a thread-safe
+/// opaque reference whose whole purpose is to be messaged from whichever queue the caller is on —
+/// this app already does exactly that, deliberately, all over `AX`.
+///
+/// The alternative is threading the list back as a `sending` value, which says the same thing with
+/// more ceremony and none of the explanation.
+extension SwitchTarget: @unchecked Sendable {}
+
 struct SwitchTarget: Identifiable {
-    enum Kind {
+    /// `@unchecked Sendable` for the same reason as `SwitchTarget` itself, and it has to be stated
+    /// separately because the associated value is what makes it unclear: `AXUIElement` is an opaque
+    /// CF handle that this app messages from `focusQueue` on purpose. See the note on the extension
+    /// below.
+    enum Kind: @unchecked Sendable {
         case app(pid_t)
         case window(pid_t, AXUIElement)
         /// A favourited app that isn't running: picking it launches the app at this URL.
@@ -169,6 +188,11 @@ extension SwitchTarget {
             let parsed = windowID
             let wasMinimized = isMinimized
             let pid = self.pid
+            // `nonisolated(unsafe)` rather than relying on `Kind`'s conformance: the element is
+            // bound out of the pattern match above, so it arrives as a bare `AXUIElement` with no
+            // `Sendable` of its own. Crossing onto `focusQueue` is the point — every Accessibility
+            // call in this app is IPC that must not run on the thread servicing the event tap.
+            nonisolated(unsafe) let window = window
             Self.focusQueue.async {
                 let resolved = Self.windowID(of: window, parsed: parsed, pid: pid)
                 guard let id = resolved, !wasMinimized else {
@@ -524,8 +548,9 @@ extension SwitchTarget {
     /// be synchronous with the pick, which made that impossible by construction; the wait for the
     /// Space transition is what opened the gap.
     ///
-    /// Only ever touched from `focusQueue`, which is serial — no lock needed.
-    private static var focusGeneration: UInt64 = 0
+    /// Only ever touched from `focusQueue`, which is serial — no lock needed, and
+    /// `nonisolated(unsafe)` is exactly that claim stated to the compiler rather than to a reader.
+    private nonisolated(unsafe) static var focusGeneration: UInt64 = 0
 
     @discardableResult
     private static func beginFocus() -> UInt64 {

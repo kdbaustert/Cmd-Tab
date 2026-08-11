@@ -39,3 +39,31 @@ enum Log {
     /// compile. The *level* is an ordinary runtime argument, which is what makes this work at all.
     static var traceLevel: OSLogType { isVerbose ? .default : .debug }
 }
+
+/// Instruments the two timing claims this app's architecture rests on.
+///
+/// Both are currently arguments rather than measurements. *"Enumeration never happens inside the
+/// tap callback"* and *"per-app Accessibility messaging is capped at 250ms so one hung app cannot
+/// hang the switcher"* are the reasons the code is shaped the way it is — the off-thread cache, the
+/// `DispatchQueue.main.async` hop in `frontAppWindowTargets`, the messaging timeout in
+/// `AX.application` — and nothing anywhere proves either one holds. A regression in them does not
+/// fail a test; it shows up as the system killing the tap and the user losing every keystroke on
+/// the machine, which is both the worst failure this app has and the hardest to catch by hand.
+///
+/// Signposts rather than logging, because the question is *how long* rather than *what happened*,
+/// and because they cost close to nothing when no tool is attached — `OSSignposter` checks whether
+/// anyone is listening before formatting anything, which matters when the instrumented region is a
+/// per-keystroke callback.
+///
+/// Record with:
+///   xcrun xctrace record --template 'os_signpost' --attach Cmd-Tab --output trace.trace
+/// or add an os_signpost instrument to a Time Profiler session in Instruments and filter to the
+/// `com.cmdtab.CmdTab` subsystem.
+enum Signpost {
+    /// The tap callback. The system kills a tap that overruns its deadline, so this interval is the
+    /// one that must stay short — everything else is a comfort measurement by comparison.
+    static let tap = OSSignposter(subsystem: "com.cmdtab.CmdTab", category: "tap")
+
+    /// Target enumeration, which is the work the tap callback is kept away from.
+    static let targets = OSSignposter(subsystem: "com.cmdtab.CmdTab", category: "targets")
+}

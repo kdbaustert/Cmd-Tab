@@ -693,7 +693,11 @@ enum WindowTiler {
     /// mouse-down so the click never reaches the app, and the hold-and-point gesture involves no
     /// click at all. Handed a pid alone, the tiler re-resolved to the focused window and snapped the
     /// wrong one on any app with more than one window open.
-    enum Target {
+    /// `@unchecked Sendable` because `.element` carries an `AXUIElement`, which is an opaque CF
+    /// handle and so not checkable. Crossing onto the tiler's queue is exactly what this type is
+    /// for: `resolve` runs the Accessibility walk there rather than on the main thread, which is the
+    /// same rule every other Accessibility call in this app follows.
+    enum Target: @unchecked Sendable {
         /// A window already resolved over Accessibility — the modifier-drag, which has been writing
         /// frames to this very element for the length of the gesture.
         case element(AXUIElement)

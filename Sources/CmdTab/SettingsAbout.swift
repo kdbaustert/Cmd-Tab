@@ -9,6 +9,7 @@ import SwiftUI
 /// place in it.
 struct AboutSettings: View {
     @ObservedObject private var behavior = BehaviorStore.shared
+    @ObservedObject private var updater = Updater.shared
 
     /// Re-read whenever the tab appears rather than cached at launch: the usual reason to be
     /// looking at this pane is that you have just granted something in System Settings.
@@ -72,6 +73,42 @@ struct AboutSettings: View {
                     Button(didCopyCommand ? "Copied" : "Copy") { copyLogCommand() }
                         .disabled(didCopyCommand)
                 }
+            }
+
+            SettingsSection(
+                title: "Updates", anchor: SettingsAnchor.updates,
+                footer: updater.isConfigured
+                    ? "Updates are downloaded over HTTPS and checked against this app's signing key "
+                        + "before anything is installed, so a replaced download cannot install a "
+                        + "different app."
+                    : "This build has no update feed — it was produced by build.sh rather than a "
+                        + "release, and updating itself out from under you is not something a local "
+                        + "build should do."
+            ) {
+                SettingsRow(
+                    title: "Check for updates",
+                    subtitle: Self.lastCheckDescription(updater.lastCheck)
+                ) {
+                    Button("Check Now") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheck || !updater.isConfigured)
+                }
+                SettingsToggle(
+                    title: "Check automatically",
+                    subtitle: "Look for a new version in the background, about once a day, and say "
+                        + "so when one turns up.",
+                    isOn: Binding(
+                        get: { updater.automaticallyChecks },
+                        set: { updater.automaticallyChecks = $0 }))
+                    .disabled(!updater.isConfigured)
+                SettingsToggle(
+                    title: "Install automatically",
+                    subtitle: "Download and install without asking, applying it the next time "
+                        + "Cmd-Tab starts. Off keeps the decision yours — this app owns ⌘-Tab for "
+                        + "the whole machine, so replacing itself mid-session is worth a prompt.",
+                    isOn: Binding(
+                        get: { updater.automaticallyDownloads },
+                        set: { updater.automaticallyDownloads = $0 }))
+                    .disabled(!updater.isConfigured || !updater.automaticallyChecks)
             }
 
             SettingsSection(title: "Build", anchor: SettingsAnchor.build) {
@@ -146,6 +183,16 @@ struct AboutSettings: View {
         // Back to "Copy" on its own, so the button does not sit there claiming a copy that happened
         // a quarter of an hour ago.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { didCopyCommand = false }
+    }
+
+    /// The subtitle under the Check button. "Never" is a real answer worth showing rather than
+    /// hiding behind an empty string: a background updater that has never once run is the failure
+    /// this row exists to make visible.
+    private static func lastCheckDescription(_ date: Date?) -> String {
+        guard let date else { return "Never checked." }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return "Last checked \(formatter.localizedString(for: date, relativeTo: Date()))."
     }
 
     /// `1.2.3 (45)`, or just the short string when there is no separate build number to add.

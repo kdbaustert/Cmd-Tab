@@ -43,8 +43,16 @@ enum AX {
         return element
     }
 
+    /// Instrumented because this is where the messaging timeout earns its keep: one call, to one
+    /// app, that a wedged app can stall for the full 250ms. A refresh makes this call per app, so
+    /// the difference between "the machine is busy" and "one particular app is hanging us" is
+    /// visible here and nowhere else — the interval carries the pid to say which.
     static func windows(of app: AXUIElement) -> [AXUIElement] {
-        onOwningThread(app) {
+        var owner: pid_t = 0
+        AXUIElementGetPid(app, &owner)
+        let state = Signpost.targets.beginInterval(
+            "windows", id: Signpost.targets.makeSignpostID(), "pid=\(owner)")
+        let windows: [AXUIElement] = onOwningThread(app) {
             var value: CFTypeRef?
             guard
                 AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
@@ -53,28 +61,34 @@ enum AX {
             else { return [] }
             return windows
         }
+        Signpost.targets.endInterval("windows", state, "count=\(windows.count)")
+        return windows
     }
 
     /// A window as opposed to the other things that turn up in `AXWindows` — Finder puts the
     /// desktop in there as an `AXScrollArea`.
     static func isWindow(_ element: AXUIElement) -> Bool {
-        copyString(element, kAXRoleAttribute) == (kAXWindowRole as String)
+        WindowClassification.isWindow(role: copyString(element, kAXRoleAttribute))
     }
 
     /// A real window the user could switch to, as opposed to a palette, sheet or toolbar.
     ///
-    /// This cannot be a subrole check alone. **macOS reports a window's subrole as `AXDialog`
-    /// while it is minimized**: the same window flips `AXStandardWindow` → `AXDialog` on minimize
-    /// and back on restore (verified on macOS 26.5 with TextEdit). Filtering on
-    /// `AXStandardWindow` therefore drops every minimized window on the floor — silently, since
-    /// an empty list looks exactly like an app with no windows.
+    /// The decision itself is `WindowClassification.isSwitchable`, which is pure and tested; this
+    /// only gathers the facts it asks for. The reads are passed as autoclosures because the order
+    /// they are needed in is the order they get cheaper to avoid — a standard window is settled by
+    /// its subrole alone and never pays for the other two round trips.
     static func isSwitchableWindow(_ window: AXUIElement) -> Bool {
-        guard isWindow(window) else { return false }
-        if copyString(window, kAXSubroleAttribute) == (kAXStandardWindowSubrole as String) {
-            return true
-        }
-        // Minimized: it is sitting in the Dock and is switchable whatever it now calls itself.
-        return isMinimized(window)
+        WindowClassification.isSwitchable(
+            role: copyString(window, kAXRoleAttribute),
+            subrole: copyString(window, kAXSubroleAttribute),
+            isMinimized: isMinimized(window),
+            hasMinimizeButton: hasMinimizeButton(window))
+    }
+
+    /// Whether the window carries a minimize control — the discriminator that tells a real window
+    /// misreporting its subrole from an actual dialog. See `WindowClassification.isSwitchable`.
+    private static func hasMinimizeButton(_ window: AXUIElement) -> Bool {
+        copyElement(window, kAXMinimizeButtonAttribute as String) != nil
     }
 
     /// A window that does not answer is treated as not minimized: the fallback should be to leave

@@ -9,6 +9,28 @@ import SwiftUI
 // MARK: - Palette
 
 enum SettingsChrome {
+    /// Every piece of user-facing text in the settings window goes through here.
+    ///
+    /// The obvious way to localise SwiftUI is to type the parameters `LocalizedStringKey`, which
+    /// makes string literals at the call sites localisable for free. It does not work for this
+    /// codebase: the long explanations under each row are assembled with `+` across several source
+    /// lines to keep them inside the line limit, and a concatenation is not a literal, so nine out
+    /// of ten subtitles here would silently stop being localisable the moment they were wrapped.
+    ///
+    /// Looking the finished string up at the point of display handles both, and does it in one
+    /// place rather than at four hundred call sites. A key that is not in the catalogue renders as
+    /// itself, which is exactly the English text that was passed in.
+    static func text(_ string: String) -> Text {
+        Text(LocalizedStringKey(string))
+    }
+
+    /// For text that is *data* rather than interface — an app's name, a shortcut's description, a
+    /// version number. Looking those up would mean an app called "General" could be translated into
+    /// whatever the sidebar's General tab is called.
+    static func verbatim(_ string: String) -> Text {
+        Text(verbatim: string)
+    }
+
     static let cardCorner: CGFloat = 14
     static let hairline: CGFloat = 0.5
 
@@ -59,9 +81,9 @@ struct SettingsPage<Content: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 17) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 21, weight: .bold))
+                    SettingsChrome.text(title).font(.system(size: 21, weight: .bold))
                     if let subtitle {
-                        Text(subtitle)
+                        SettingsChrome.text(subtitle)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -100,7 +122,7 @@ struct SettingsSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title)
+            SettingsChrome.text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 2)
@@ -119,7 +141,7 @@ struct SettingsSection<Content: View>: View {
                 .animation(.easeInOut(duration: 0.25), value: isFlashing)
 
             if let footer {
-                Text(footer)
+                SettingsChrome.text(footer)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -136,6 +158,13 @@ struct SettingsSection<Content: View>: View {
 struct SettingsRow<Control: View>: View {
     let title: String
     var subtitle: String?
+    /// Set for a row whose title is *data* rather than interface — the per-app rows, whose titles
+    /// are the names of the user's applications. Without it an app called "General" would be looked
+    /// up in the catalogue and could come back as the sidebar's General tab.
+    ///
+    /// Declared after `subtitle` because Swift's memberwise initialiser fixes argument order, and
+    /// the call sites that need it also pass a subtitle.
+    var isTitleVerbatim = false
     /// Lets a row give its control more of the width — sliders and recorders need it, a checkbox
     /// does not.
     var controlWidth: CGFloat?
@@ -144,9 +173,10 @@ struct SettingsRow<Control: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13))
+                (isTitleVerbatim ? SettingsChrome.verbatim(title) : SettingsChrome.text(title))
+                    .font(.system(size: 13))
                 if let subtitle {
-                    Text(subtitle)
+                    SettingsChrome.text(subtitle)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -155,6 +185,18 @@ struct SettingsRow<Control: View>: View {
             Spacer(minLength: 8)
             control
                 .frame(width: controlWidth, alignment: .trailing)
+                // The row's whole shape is a label on the left and a control on the right, which
+                // reads correctly and announces as nothing: every control here is built with
+                // `labelsHidden()` so the checkboxes line up down the card's edge, and a hidden
+                // label is hidden from VoiceOver too. Sighted users get the association from the
+                // layout; this is the same association stated to the accessibility tree.
+                //
+                // Applied here rather than at each control so it cannot be forgotten by the next
+                // row someone adds. Harmless on the rows whose control is a container of several
+                // already-labelled things — a label on a non-element is ignored.
+                .accessibilityLabel(
+                    isTitleVerbatim ? SettingsChrome.verbatim(title) : SettingsChrome.text(title))
+                .accessibilityHint(SettingsChrome.text(subtitle ?? ""))
         }
         .padding(.horizontal, SettingsChrome.rowInset)
         .padding(.vertical, 9)
@@ -174,9 +216,9 @@ struct SettingsWideRow<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             if title != nil || subtitle != nil {
                 VStack(alignment: .leading, spacing: 2) {
-                    if let title { Text(title).font(.system(size: 13)) }
+                    if let title { SettingsChrome.text(title).font(.system(size: 13)) }
                     if let subtitle {
-                        Text(subtitle)
+                        SettingsChrome.text(subtitle)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -243,7 +285,15 @@ struct SettingsSlider<V: BinaryFloatingPoint>: View where V.Stride: BinaryFloati
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(width: 30, alignment: .trailing)
+                    // The number is the slider's value rendered beside it, not a second thing on
+                    // the row. Read as its own element it announces a bare "18" after the slider
+                    // has already said the same.
+                    .accessibilityHidden(true)
             }
+            // Spoken rather than the raw fraction: several of these are pixel sizes, and "40
+            // percent" is not what the setting is measured in. `format` is what the row shows
+            // sighted users for exactly the same reason.
+            .accessibilityValue(format?(value) ?? "\(Int(Double(value)))")
         }
     }
 
@@ -296,7 +346,10 @@ struct SettingsChoice<Value: Hashable>: View {
         var detail: String?
         var symbol: String?
 
-        var id: Int { title.hashValue }
+        /// Keyed on the *value* rather than the title, which is now a `LocalizedStringKey` and has
+        /// no accessible key to hash. Better identity anyway: the value is what the option means,
+        /// and two options can no longer collide by being renamed to the same words.
+        var id: Value { value }
     }
 
     let title: String
@@ -314,6 +367,15 @@ struct SettingsChoice<Value: Hashable>: View {
                         card(for: option)
                     }
                     .buttonStyle(.plain)
+                    // These are radio buttons wearing a card, and without this they announce as
+                    // plain buttons whose selected state is carried entirely by a filled-in circle
+                    // and an accent colour — both invisible to VoiceOver. `.isSelected` is what
+                    // makes the current choice audible.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(option.title)
+                    .accessibilityHint(SettingsChrome.text(option.detail ?? ""))
+                    .accessibilityAddTraits(
+                        option.value == selection ? [.isButton, .isSelected] : .isButton)
                 }
             }
         }
@@ -336,7 +398,7 @@ struct SettingsChoice<Value: Hashable>: View {
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.5))
             }
             if let detail = option.detail {
-                Text(detail)
+                SettingsChrome.text(detail)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)

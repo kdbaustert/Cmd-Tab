@@ -82,7 +82,20 @@ final class EventTap {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
+        // The interval the whole architecture is arranged around: overrun the system's deadline and
+        // the tap is killed, taking every keystroke on the machine with it until it is re-enabled
+        // above. Measured rather than asserted — see `Signpost`.
+        let state = Signpost.tap.beginInterval("handle", id: Signpost.tap.makeSignpostID())
+        // `nonisolated(unsafe)` on both, because neither `CGEvent` nor the handler is `Sendable` and
+        // `assumeIsolated` takes a `sending` closure. Safe, and for a stronger reason than usual:
+        // the run-loop source is added to `CFRunLoopGetMain`, so this callback *is* the main thread
+        // — the hop is a formality that lets the handler touch main-actor state. The event itself is
+        // owned by this call, arriving as a parameter and leaving as the return value, with no other
+        // reference to it anywhere.
+        nonisolated(unsafe) let event = event
+        nonisolated(unsafe) let handler = handler
         let swallow = MainActor.assumeIsolated { handler(type, event) }
+        Signpost.tap.endInterval("handle", state, "swallow=\(swallow)")
         return swallow ? nil : Unmanaged.passUnretained(event)
     }
 }

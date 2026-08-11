@@ -67,8 +67,9 @@ echo "==> Release identity: $IDENTITY"
 
 # ---------------------------------------------------------------- build + sign
 
-# Hardened runtime and timestamp come from HARDENED=1; see build.sh.
-CODESIGN_IDENTITY="$IDENTITY" HARDENED=1 ./build.sh
+# Hardened runtime and timestamp come from HARDENED=1; UNIVERSAL=1 builds both slices so the
+# download runs on Intel as well as Apple Silicon. Both see build.sh.
+CODESIGN_IDENTITY="$IDENTITY" HARDENED=1 UNIVERSAL=1 ./build.sh
 
 # ---------------------------------------------------------------- verify
 
@@ -125,3 +126,53 @@ spctl --assess --type exec --verbose=4 "$APP"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 echo "==> Notarised and stapled: $ZIP"
+
+# ---------------------------------------------------------------- appcast
+
+# The step that turns a notarised zip into an update anyone receives. Without it a release is a file
+# on GitHub that existing installs know nothing about, which is exactly the state this app was in
+# before Sparkle.
+#
+# `generate_appcast` reads every archive in the releases directory, signs each with the EdDSA
+# private key from the login keychain, and writes an appcast.xml listing them. The key is the same
+# one whose public half is baked into Info.plist as SUPublicEDKey: if they ever disagree, every
+# client silently rejects every update, which is the failure mode worth being loud about.
+RELEASES="build/releases"
+APPCAST="$RELEASES/appcast.xml"
+GENERATE_APPCAST="$(find .build/artifacts -type f -name generate_appcast -perm -u+x -print -quit || true)"
+
+if [[ -z "$GENERATE_APPCAST" ]]; then
+    echo "==> WARNING: generate_appcast not found; run 'swift package resolve'." >&2
+    echo "    The zip is notarised, but no appcast entry was produced for it." >&2
+    exit 0
+fi
+
+# Named with the version, because generate_appcast reads the version *out of each bundle* but uses
+# the filename to tell archives apart — two releases both called Cmd-Tab.zip are one entry that
+# changes underneath the feed.
+STAMPED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+mkdir -p "$RELEASES"
+cp "$ZIP" "$RELEASES/Cmd-Tab-$STAMPED_VERSION.zip"
+
+# Carried forward from the published feed when there is one, so the history of older versions
+# survives. A regenerated appcast that listed only this release would strand anyone more than one
+# version behind — Sparkle offers the newest item its client can run, and an item it cannot see is
+# an update it will never take.
+if [[ -n "${APPCAST_URL:-}" ]] && [[ ! -f "$APPCAST" ]]; then
+    echo "==> Fetching the published appcast to append to"
+    curl -fsSL "$APPCAST_URL" -o "$APPCAST" || rm -f "$APPCAST"
+fi
+
+echo "==> Generating appcast"
+# The prefix each <enclosure url> is built from. GitHub serves release assets from a stable path, so
+# an entry written today still resolves after the next release moves the "latest" pointer.
+DOWNLOAD_PREFIX="${DOWNLOAD_URL_PREFIX:-https://github.com/kdbaustert/Cmd-Tab/releases/download/v$STAMPED_VERSION/}"
+"$GENERATE_APPCAST" \
+    --download-url-prefix "$DOWNLOAD_PREFIX" \
+    --maximum-versions 0 \
+    "$RELEASES"
+
+echo "==> Appcast written: $APPCAST"
+echo
+echo "    Publish by uploading $RELEASES/Cmd-Tab-$STAMPED_VERSION.zip to the v$STAMPED_VERSION"
+echo "    GitHub release, and $APPCAST to the branch GitHub Pages serves."

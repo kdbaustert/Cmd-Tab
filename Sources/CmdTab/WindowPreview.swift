@@ -53,7 +53,14 @@ actor WindowCapture {
     static let shared = WindowCapture()
 
     /// One window bound for the strip, before its pixels are fetched.
-    private struct Entry {
+    /// `@unchecked Sendable` because `SCWindow` is not `Sendable` and an entry is handed to a task
+    /// group — the captures run concurrently, which is the whole point of batching them.
+    ///
+    /// Safe because an `Entry` is a description, not a handle to anything mutable: every field is a
+    /// `let`, and `SCWindow` is a read-only snapshot ScreenCaptureKit hands out from
+    /// `SCShareableContent` for exactly this purpose — naming a window to capture. Nothing here
+    /// writes to it, and the capture API is designed to be called off the main thread.
+    private struct Entry: @unchecked Sendable {
         let id: CGWindowID
         let title: String
         /// The capture source, or nil for a minimized window — which has no surface to capture.
@@ -371,6 +378,10 @@ actor WindowCapture {
         return try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: config)
     }
+
+    /// Shared with `TileThumbnails`, which needs the identical verdict: the phantom windows this
+    /// rejects are a property of the *app*, not of which feature is looking at it.
+    nonisolated static func isBlankImage(_ image: CGImage) -> Bool { isBlank(image) }
 
     /// Whether a capture came back essentially empty. Downsamples to a small grid and counts pixels
     /// carrying any alpha, which separates a real (opaque) window from a hidden helper window's

@@ -370,6 +370,11 @@ extension Defaults.Keys {
     /// what asks for the permission. Defaulted on, an ungranted install would show nothing on hover
     /// with no hint as to why.
     static let windowPreview = Key<Bool>("windowPreviewOnHover", default: false)
+    /// Window mode: draw a live capture as the tile artwork instead of the app icon.
+    ///
+    /// Off by default, like the hover preview and for the same reason — it needs Screen Recording,
+    /// and this app's permission story is that it needs Accessibility and nothing else.
+    static let windowThumbnailTiles = Key<Bool>("windowThumbnailTiles", default: false)
     /// Offer installed apps when a query matches nothing running. On by default: it only ever
     /// appears in place of "No matches", so it costs nothing when it is not wanted.
     static let launchFromSearch = Key<Bool>("launchFromSearch", default: true)
@@ -402,7 +407,8 @@ final class BehaviorStore: ObservableObject {
         .blurOverride, .blurRadius,
         .showNumbers, .showDisplayBadges, .showSpaceBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
-        .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview, .launchFromSearch,
+        .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview, .windowThumbnailTiles,
+        .launchFromSearch,
         .verboseLogging,
     ]
 
@@ -413,7 +419,7 @@ final class BehaviorStore: ObservableObject {
             "iconSize", "iconSpacing", "titleSpacing",
             "excludedBundleIDs", "favoriteBundleIDs",
         ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
-        + SwitcherShortcutsStore.defaultsKeys
+        + SwitcherShortcutsStore.defaultsKeys + Updater.exportedDefaultsKeys
 
     /// The keys export/import/reset operate on.
     static var ownedDefaultsKeys: [String] { ownedKeys.map(\.name) + otherStoreKeys }
@@ -535,6 +541,10 @@ final class BehaviorStore: ObservableObject {
     }
     /// Hovering a tile floats live thumbnails of that app's windows; clicking one goes straight to
     /// that window. Needs Screen Recording.
+    @Published var windowThumbnailTiles: Bool = Defaults[.windowThumbnailTiles] {
+        didSet { persist(windowThumbnailTiles, oldValue, to: .windowThumbnailTiles) }
+    }
+
     @Published var windowPreview: Bool = Defaults[.windowPreview] {
         didSet { persist(windowPreview, oldValue, to: .windowPreview) }
     }
@@ -599,6 +609,7 @@ final class BehaviorStore: ObservableObject {
         showMenuBarIcon = Defaults[.showMenuBarIcon]
         menuBarIcon = Defaults[.menuBarIcon]
         windowPreview = Defaults[.windowPreview]
+        windowThumbnailTiles = Defaults[.windowThumbnailTiles]
         launchFromSearch = Defaults[.launchFromSearch]
         verboseLogging = Defaults[.verboseLogging]
     }
@@ -700,7 +711,12 @@ final class BehaviorStore: ObservableObject {
     func resetAll() {
         Defaults.reset(Self.ownedKeys)
         let d = UserDefaults.standard
-        for key in Self.otherStoreKeys + Self.retiredDefaultsKeys { d.removeObject(forKey: key) }
+        // `Updater.transientDefaultsKeys` is swept here but is deliberately absent from
+        // `ownedDefaultsKeys`: it is this install's update history rather than a preference, so a
+        // reset should clear it while an export should not carry it to another Mac.
+        for key in Self.otherStoreKeys + Self.retiredDefaultsKeys + Updater.transientDefaultsKeys {
+            d.removeObject(forKey: key)
+        }
     }
 }
 

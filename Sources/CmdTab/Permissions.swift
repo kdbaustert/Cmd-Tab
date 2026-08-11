@@ -9,7 +9,10 @@ enum Permissions {
 
     /// Asks the system to show its "grant access" alert. No-op if already trusted.
     static func promptForTrust() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        // The literal rather than `kAXTrustedCheckOptionPrompt`, which imports as a mutable C
+        // global and so is not concurrency-safe to read. The constant's value is API and has been
+        // this string since the option existed.
+        let options = ["AXTrustedCheckOptionPrompt": true]
         _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
 
@@ -39,6 +42,9 @@ enum Permissions {
     /// (which also registers the app in the Screen Recording list); a user who already answered — and
     /// was denied — is routed to System Settings instead, since no prompt will reappear and the
     /// feature would otherwise look silently broken.
+    /// `@MainActor` because it puts up an `NSAlert` and runs it modally, neither of which is legal
+    /// anywhere else. The only caller is the preview toggle in Settings, which is already there.
+    @MainActor
     static func ensureScreenCaptureForPreview() {
         guard !canCaptureScreen else { return }
         let askedKey = "didRequestScreenCapture"
@@ -61,12 +67,24 @@ enum Permissions {
 
     /// Polls until the user flips the switch. There is no notification for this, so polling is
     /// the only option; the interval is slow enough to be free.
-    static func waitForTrust(interval: TimeInterval = 1.0, then handler: @escaping () -> Void) {
+    /// `@MainActor` because the timer is scheduled on the main run loop and the handler starts the
+    /// event tap. The callers are `AppDelegate` and the settings window, both already on it.
+    @MainActor
+    static func waitForTrust(
+        interval: TimeInterval = 1.0, then handler: @escaping @MainActor () -> Void
+    ) {
         guard !isTrusted else { return handler() }
-        Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
-            guard isTrusted else { return }
-            timer.invalidate()
-            handler()
+        // `nonisolated(unsafe)` on the box rather than sending the `timer` parameter into the
+        // closure: `Timer` is not `Sendable`, and `scheduledTimer`'s callback is nonisolated even
+        // though it is delivered on the main run loop. One reference, written once before the timer
+        // can fire and read only from the run loop it is scheduled on.
+        nonisolated(unsafe) var poll: Timer?
+        poll = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard isTrusted else { return }
+                poll?.invalidate()
+                handler()
+            }
         }
     }
 }

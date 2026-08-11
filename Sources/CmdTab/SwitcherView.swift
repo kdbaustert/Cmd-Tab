@@ -205,7 +205,8 @@ struct SwitcherView: View {
                     titleFont: model.titleFont(size: model.titleFontSize),
                     number: number(for: index),
                     showsDisplayBadges: model.showDisplayBadges,
-                    showsSpaceBadges: model.showSpaceBadges)
+                    showsSpaceBadges: model.showSpaceBadges,
+                    thumbnail: thumbnail(for: target))
                     .reportingFrame(at: index)
             }
         }
@@ -242,13 +243,24 @@ struct SwitcherView: View {
                             subtitleFont: model.titleFont(size: model.titleFontSize),
                             number: number(for: index),
                             showsDisplayBadges: model.showDisplayBadges,
-                            showsSpaceBadges: model.showSpaceBadges)
+                            showsSpaceBadges: model.showSpaceBadges,
+                            thumbnail: thumbnail(for: model.targets[index]))
                             .reportingFrame(at: index)
                     }
                 }
                 .frame(width: row.width)
             }
         }
+    }
+
+    /// This target's live capture, when thumbnail tiles are on and one has landed for it.
+    ///
+    /// Empty in the ordinary case: the feature is off by default, and a tile draws its icon until
+    /// its own capture arrives — which is what keeps the panel instant rather than waiting on
+    /// ScreenCaptureKit.
+    private func thumbnail(for target: SwitchTarget) -> CGImage? {
+        guard !model.thumbnails.isEmpty, let id = target.windowID else { return nil }
+        return model.thumbnails[id]
     }
 
     /// Whether this target survives the current filter. Non-matches stay visible but dimmed.
@@ -315,6 +327,33 @@ struct SwitcherView: View {
     }
 }
 
+/// What a tile announces to VoiceOver.
+///
+/// The panel is a `.nonactivatingPanel` that never becomes key and has no key handling of its own,
+/// so driving the switcher the way an assistive technology drives an ordinary window is not
+/// something this can offer — the event tap is the only input path, by design, and that is what
+/// makes the switcher work at all. What it *can* do is stop the tiles being anonymous: everything
+/// distinguishing one tile from the next is visual — a dimmed icon for hidden, a badge glyph for
+/// the Space, a small number in the corner for the jump key — and none of it is in the text.
+private func accessibilityDescription(
+    for target: SwitchTarget, number: Int?, showsDisplayBadges: Bool, showsSpaceBadges: Bool
+) -> String {
+    var parts = [target.title]
+    // In window mode the title is the window's, and the app name is the other half of the identity.
+    if target.appName != target.title { parts.append(target.appName) }
+    if target.isMinimized { parts.append("minimized") }
+    if target.isHidden { parts.append("hidden") }
+    if target.isLaunchable { parts.append("not running") }
+    if let badge = target.badge { parts.append("\(badge) notifications") }
+    if showsDisplayBadges, let display = target.displayIndex {
+        parts.append("display \(display + 1)")
+    }
+    if showsSpaceBadges, let space = target.spaceIndex { parts.append("desktop \(space + 1)") }
+    // The tenth tile is reached with 0, so this says the key rather than the position.
+    if let number { parts.append("press \(number == 10 ? 0 : number) to switch") }
+    return parts.joined(separator: ", ")
+}
+
 private struct TargetTile: View {
     let target: SwitchTarget
     let size: CGSize
@@ -334,12 +373,15 @@ private struct TargetTile: View {
     /// Whether the display and Space badges may be drawn at all.
     let showsDisplayBadges: Bool
     let showsSpaceBadges: Bool
+    /// This window's live capture, when thumbnail tiles are on and one has landed.
+    var thumbnail: CGImage?
 
     var body: some View {
         VStack(spacing: titleSpacing) {
             TargetIcon(
                 target: target, iconSize: iconSize, number: number,
-                showsDisplayBadges: showsDisplayBadges, showsSpaceBadges: showsSpaceBadges)
+                showsDisplayBadges: showsDisplayBadges, showsSpaceBadges: showsSpaceBadges,
+                thumbnail: thumbnail)
             if showsTitle {
                 Text(target.title)
                     .font(titleFont)
@@ -351,6 +393,12 @@ private struct TargetTile: View {
         }
         .frame(width: size.width, height: size.height)
         .opacity(isMatch ? 1 : 0.3)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            accessibilityDescription(
+                for: target, number: number, showsDisplayBadges: showsDisplayBadges,
+                showsSpaceBadges: showsSpaceBadges))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .background {
             // The tint alone cannot carry the selection: `highlightColor` is a fixed sRGB value —
             // the user's, or the default — while the panel behind it is light or dark depending on
@@ -385,12 +433,13 @@ private struct TargetRow: View {
     let number: Int?
     let showsDisplayBadges: Bool
     let showsSpaceBadges: Bool
+    var thumbnail: CGImage?
 
     var body: some View {
         HStack(spacing: 8) {
             TargetIcon(
                 target: target, iconSize: iconSize, number: nil,
-                showsDisplayBadges: false, showsSpaceBadges: false)
+                showsDisplayBadges: false, showsSpaceBadges: false, thumbnail: thumbnail)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(target.title)
@@ -422,6 +471,12 @@ private struct TargetRow: View {
         .padding(.horizontal, 8)
         .frame(width: size.width, height: size.height)
         .opacity(isMatch ? 1 : 0.3)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            accessibilityDescription(
+                for: target, number: number, showsDisplayBadges: showsDisplayBadges,
+                showsSpaceBadges: showsSpaceBadges))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .background {
             // Same treatment as `TargetTile` — see the reasoning there.
             let shape = RoundedRectangle(cornerRadius: min(corner, size.height / 2), style: .continuous)
@@ -467,11 +522,33 @@ private struct TargetIcon: View {
     let number: Int?
     let showsDisplayBadges: Bool
     let showsSpaceBadges: Bool
+    /// A live capture of this window, when thumbnail tiles are on and one has landed. nil is the
+    /// ordinary case — the feature is off by default, and even with it on a tile draws its icon
+    /// until its capture arrives.
+    var thumbnail: CGImage?
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             Group {
-                if let image = target.icon {
+                if let thumbnail {
+                    // Aspect-fit inside the tile with the app's icon inset in the corner, which is
+                    // what makes a strip of thumbnails still readable as "these are Chrome windows".
+                    // A thumbnail alone loses the app identity that the icon carried for free.
+                    Image(decorative: thumbnail, scale: 1)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .overlay(alignment: .bottomTrailing) {
+                            if let icon = target.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .frame(width: iconSize * 0.34, height: iconSize * 0.34)
+                                    .offset(x: 2, y: 2)
+                            }
+                        }
+                } else if let image = target.icon {
                     Image(nsImage: image).resizable().interpolation(.high)
                 } else {
                     Image(systemName: "app.dashed").resizable().foregroundStyle(.secondary)

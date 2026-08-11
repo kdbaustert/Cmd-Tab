@@ -104,6 +104,7 @@ enum SettingsAnchor {
 
     static let permissions = "about.permissions"
     static let diagnostics = "about.diagnostics"
+    static let updates = "about.updates"
     static let build = "about.build"
 }
 
@@ -215,6 +216,10 @@ enum SettingsIndex {
         item("preview", .behavior, SettingsAnchor.placement, "Placement",
              "Preview windows on hover",
              ["preview", "thumbnail", "hover", "screen recording"]),
+        item("thumbnailTiles", .behavior, SettingsAnchor.placement, "Placement",
+             "Thumbnail tiles",
+             ["thumbnail", "thumbnails", "preview", "screenshot", "window contents", "alttab",
+              "alt-tab", "live", "capture", "screen recording", "tile artwork"]),
 
         item("layout", .appearance, SettingsAnchor.layout, "Layout", "Layout",
              ["layout", "grid", "list", "rows", "shape"]),
@@ -279,6 +284,15 @@ enum SettingsIndex {
               "troubleshoot", "not working", "bug report", "os_log"]),
         item("logCommand", .about, SettingsAnchor.diagnostics, "Diagnostics", "Console command",
              ["log", "logs", "console", "terminal", "command", "copy", "read back", "log show"]),
+        item("checkForUpdates", .about, SettingsAnchor.updates, "Updates", "Check for updates",
+             ["update", "updates", "upgrade", "new version", "sparkle", "check", "latest",
+              "release", "download"]),
+        item("automaticUpdateChecks", .about, SettingsAnchor.updates, "Updates",
+             "Check automatically",
+             ["update", "updates", "automatic", "background", "notify", "sparkle"]),
+        item("automaticUpdateInstall", .about, SettingsAnchor.updates, "Updates",
+             "Install automatically",
+             ["update", "updates", "automatic", "install", "silent", "unattended", "sparkle"]),
         item("version", .about, SettingsAnchor.build, "Build", "Version",
              ["version", "build", "about", "release"]),
         item("source", .about, SettingsAnchor.build, "Build", "Source",
@@ -362,9 +376,18 @@ struct SettingsRootView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                // Which tab is showing is carried by a background tint and nothing else, so
+                // without `.isSelected` a VoiceOver user walking the sidebar has no way to tell
+                // where they already are. The gradient badge is decoration and is folded into the
+                // tab's name rather than announced as an image.
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(candidate.title)
+                .accessibilityAddTraits(
+                    tab == candidate ? [.isButton, .isSelected] : .isButton)
             }
         }
         .padding(.horizontal, 8)
+        .accessibilityLabel("Settings sections")
     }
 
     /// Search hits, each naming the tab and section it lives in — the same job the sidebar does the
@@ -941,6 +964,21 @@ struct BehaviorSettings: View {
                 ) {
                     ForEach(PanelScreens.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
+                SettingsToggle(
+                    title: "Thumbnail tiles",
+                    subtitle: behavior.mode == .apps
+                        ? "Window mode only — an application tile has no single window to show."
+                        : "Draw a live capture of each window as its tile instead of the app icon, "
+                            + "with the app's icon inset in the corner. Five identical Chrome icons "
+                            + "become five recognisable windows. Needs Screen Recording permission; "
+                            + "tiles show icons until each capture lands, so the panel never waits.",
+                    isOn: $behavior.windowThumbnailTiles)
+                    .disabled(behavior.mode == .apps)
+                    .onChange(of: behavior.windowThumbnailTiles) {
+                        if behavior.windowThumbnailTiles {
+                            Permissions.ensureScreenCaptureForPreview()
+                        }
+                    }
                 SettingsToggle(
                     title: "Preview windows on hover",
                     subtitle: behavior.mode == .windows

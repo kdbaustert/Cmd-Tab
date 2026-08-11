@@ -9,10 +9,21 @@ import ApplicationServices
 /// Enumeration is cached. Every Accessibility call is IPC to another process, and the switcher
 /// is driven from an event tap that must never stall, so `snapshot()` returns the cache
 /// instantly and `refresh()` updates it off the main thread.
+/// `@MainActor` states what was already true and previously only written down: every stored
+/// property here is touched from the main thread, and the only work that leaves it is the `axQueue`
+/// block, which is handed local copies and reaches back through `MainActor.assumeIsolated`. Under
+/// Swift 5 that was a convention a new `DispatchQueue.async` could quietly break; now it is checked.
+@MainActor
 final class TargetProvider {
-    private var mru: [pid_t] = []
+    // Every `static` below is `nonisolated`: they are pure helpers and Accessibility/CGS reads that
+    // touch no instance state, and several are called from `axQueue` on purpose — keeping that work
+    // off the main thread is the entire reason this class exists. Without the annotation the
+    // `@MainActor` above would drag them onto the thread they were written to avoid.
+
+    /// Cross-app order. See `RecencyList` for the two rules it enforces and why each matters.
+    private var mru = RecencyList<pid_t>(limit: TargetProvider.mruLimit)
     /// Most-recently-focused window ids, newest first — the per-window analogue of `mru`.
-    private var windowMRU: [CGWindowID] = []
+    private var windowMRU = RecencyList<CGWindowID>(limit: TargetProvider.mruLimit)
     private var cache: [SwitchTarget] = []
     private let axQueue = DispatchQueue(label: "com.cmdtab.accessibility", qos: .userInteractive)
 
@@ -67,7 +78,9 @@ final class TargetProvider {
     private static let mruLimit = 256
 
     init() {
-        mru = Self.zOrderedPIDs()
+        // Seeded in reverse: `touch` prepends, so replaying the z-order back-to-front leaves the
+        // frontmost app at the head where it belongs.
+        for pid in Self.zOrderedPIDs().reversed() { mru.touch(pid) }
         let center = NSWorkspace.shared.notificationCenter
         for name: NSNotification.Name in [
             NSWorkspace.didActivateApplicationNotification,
@@ -95,7 +108,7 @@ final class TargetProvider {
         case NSWorkspace.didTerminateApplicationNotification:
             // Drop the pid outright. Nothing else ever removed one, so the list only grew — see
             // `mruLimit`, which is the backstop rather than the fix.
-            if let pid = app?.processIdentifier { mru.removeAll { $0 == pid } }
+            if let pid = app?.processIdentifier { mru.remove(pid) }
         default:
             break
         }
@@ -103,9 +116,7 @@ final class TargetProvider {
     }
 
     private func touch(_ pid: pid_t) {
-        mru.removeAll { $0 == pid }
-        mru.insert(pid, at: 0)
-        if mru.count > Self.mruLimit { mru.removeLast(mru.count - Self.mruLimit) }
+        mru.touch(pid)
     }
 
     /// How many times to re-ask a just-launched app for its focused window, and how long to wait
@@ -117,8 +128,8 @@ final class TargetProvider {
     /// so window mode ranks it last (`Int.max`) and falls back to AX z-order until they switch away
     /// and back. Five seconds covers a cold launch; it costs nothing on the ordinary case, because
     /// an app that is already up answers on the first try and never reaches the retry at all.
-    private static let focusedWindowAttempts = 25
-    private static let focusedWindowRetryDelay: TimeInterval = 0.2
+    private nonisolated static let focusedWindowAttempts = 25
+    private nonisolated static let focusedWindowRetryDelay: TimeInterval = 0.2
 
     /// How recently an app must have launched for "no focused window" to mean "has not drawn one
     /// yet" rather than "has none".
@@ -129,7 +140,7 @@ final class TargetProvider {
     /// five-second Accessibility poll on `axQueue`, the same serial queue a refresh and the same-app
     /// cycle run on. Generous, because it has to cover the whole poll plus however long the app took
     /// to get from process start to the activation that starts it.
-    private static let focusedWindowLaunchGrace: TimeInterval = 30
+    private nonisolated static let focusedWindowLaunchGrace: TimeInterval = 30
 
     /// Bumped on every activation. A poll carries the value it started under and stops as soon as a
     /// newer activation supersedes it.
@@ -174,14 +185,14 @@ final class TargetProvider {
                 "focused window: pid \(pid, privacy: .public) -> win \(id, privacy: .public) on try \(TargetProvider.focusedWindowAttempts - remaining + 1, privacy: .public)"
             )
             DispatchQueue.main.async {
-                // `windowMRU`'s head is meant to be the window in focus now, so an answer the user
-                // has already switched away from must not insert itself there — however long the
-                // read above took to come back.
-                guard let self, generation == self.activationGeneration else { return }
-                self.windowMRU.removeAll { $0 == id }
-                self.windowMRU.insert(id, at: 0)
-                if self.windowMRU.count > Self.mruLimit {
-                    self.windowMRU.removeLast(self.windowMRU.count - Self.mruLimit)
+                // `assumeIsolated` rather than a `Task`: this is already on the main thread, and a
+                // `Task` hop would let a later activation's answer land first.
+                MainActor.assumeIsolated {
+                    // `windowMRU`'s head is meant to be the window in focus now, so an answer the
+                    // user has already switched away from must not insert itself there — however
+                    // long the read above took to come back.
+                    guard let self, generation == self.activationGeneration else { return }
+                    self.windowMRU.touch(id)
                 }
             }
         }
@@ -194,7 +205,10 @@ final class TargetProvider {
     /// moment attention moves on and covers an app quit mid-poll, since a dead pid is not frontmost
     /// either. And the app has to have launched recently enough for a missing window to be a window
     /// that has not arrived yet rather than one that does not exist — see `focusedWindowLaunchGrace`.
-    private func retryFocusedWindow(
+    /// `nonisolated` because it is called from `axQueue`. Nothing in it touches instance state:
+    /// it consults two `nonisolated` statics, logs, and posts the next attempt to the main thread,
+    /// where `assumeIsolated` re-enters the actor for the part that does.
+    private nonisolated func retryFocusedWindow(
         of pid: pid_t, generation: Int, remaining: Int, after error: AXError
     ) {
         guard remaining > 1, Self.isRetryable(error) else {
@@ -206,12 +220,14 @@ final class TargetProvider {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusedWindowRetryDelay) {
             [weak self] in
-            guard let self, generation == self.activationGeneration,
-                let app = NSWorkspace.shared.frontmostApplication,
-                app.processIdentifier == pid,
-                Self.isJustLaunched(app)
-            else { return }
-            self.touchFocusedWindow(of: pid, generation: generation, remaining: remaining - 1)
+            MainActor.assumeIsolated {
+                guard let self, generation == self.activationGeneration,
+                    let app = NSWorkspace.shared.frontmostApplication,
+                    app.processIdentifier == pid,
+                    Self.isJustLaunched(app)
+                else { return }
+                self.touchFocusedWindow(of: pid, generation: generation, remaining: remaining - 1)
+            }
         }
     }
 
@@ -222,7 +238,7 @@ final class TargetProvider {
     /// trust, so an ungranted user would otherwise buy a five-second poll behind every app switch on
     /// the machine for as long as they left the prompt unanswered. `.notImplemented` is an app that
     /// does not answer the Accessibility API at all. Neither changes inside five seconds.
-    private static func isRetryable(_ error: AXError) -> Bool {
+    private nonisolated static func isRetryable(_ error: AXError) -> Bool {
         switch error {
         case .apiDisabled, .notImplemented: return false
         default: return true
@@ -234,7 +250,7 @@ final class TargetProvider {
     /// An unknown launch date is treated as recent: the date is missing rarely and only for
     /// processes that could not be read, and losing the retry there would quietly reintroduce the
     /// ordering bug it exists to fix. The bounded attempt count is the backstop.
-    private static func isJustLaunched(_ app: NSRunningApplication) -> Bool {
+    private nonisolated static func isJustLaunched(_ app: NSRunningApplication) -> Bool {
         guard let launched = app.launchDate else { return true }
         return Date().timeIntervalSince(launched) < focusedWindowLaunchGrace
     }
@@ -255,7 +271,7 @@ final class TargetProvider {
     private let coalesceWindow: TimeInterval = 0.15
     private var coalesceWork: DispatchWorkItem?
     /// Callers waiting on the next pass; all are answered with the same result.
-    private var pendingHandlers: [([SwitchTarget]) -> Void] = []
+    private var pendingHandlers: [@Sendable ([SwitchTarget]) -> Void] = []
     /// A pass is on the queue. Never enqueue a second — the queue is serial, so it would only
     /// deepen the backlog the coalescing above exists to prevent.
     private var isRefreshing = false
@@ -264,7 +280,7 @@ final class TargetProvider {
 
     /// Recomputes the list off-thread, then hands the result back on main. Coalesced — see
     /// `coalesceWindow`. `handler`, if given, fires when the next completed pass lands.
-    func refresh(then handler: (([SwitchTarget]) -> Void)? = nil) {
+    func refresh(then handler: ((@Sendable ([SwitchTarget]) -> Void))? = nil) {
         if let handler { pendingHandlers.append(handler) }
         guard coalesceWork == nil else { return }
         let work = DispatchWorkItem { [weak self] in
@@ -292,10 +308,10 @@ final class TargetProvider {
         let wantsBadges = self.notificationBadges
         let mode = self.mode
         let apps = switchableApps()
-        let order = mru
+        let order = mru.entries
         // Both read on the main thread, like everything else in this prelude: the window builder
         // needs them and they are only used when the mode asks for windows.
-        let windowMRU = self.windowMRU
+        let windowMRU = self.windowMRU.entries
         let rules = self.appRules
         // Apps the user has asked to always see window-by-window, even in app mode.
         let expanding = mode == .apps
@@ -316,6 +332,13 @@ final class TargetProvider {
             : [:]
 
         axQueue.async { [weak self] in
+            // The work the tap callback is kept away from. Paired with the `tap` signpost, this is
+            // what makes the separation visible in a trace: a refresh interval overlapping a tap
+            // interval is the design working, one *inside* it is the bug this arrangement exists to
+            // prevent.
+            let refresh = Signpost.targets.beginInterval(
+                "refresh", id: Signpost.targets.makeSignpostID())
+
             // On the background queue: reading the Dock is Accessibility IPC to another process.
             let badges = wantsBadges ? DockBadges.current() : [:]
             var targets: [SwitchTarget]
@@ -372,14 +395,21 @@ final class TargetProvider {
                 // make a user's pin vanish on a setting they changed for an unrelated reason.
                 targets += launchTargets.map(\.1)
             }
+            // Ended before the hop back, so the interval is the enumeration itself rather than the
+            // enumeration plus however long the main thread took to get round to us. The count is
+            // the scaling factor: a refresh is per-app Accessibility IPC, so "slow" and "a lot of
+            // windows open" are the same reading and the trace should say which.
+            Signpost.targets.endInterval("refresh", refresh, "targets=\(targets.count)")
             DispatchQueue.main.async {
-                guard let self else { return }
-                self.cache = targets
-                self.isRefreshing = false
-                handlers.forEach { $0(targets) }
-                if self.wantsAnotherRefresh {
-                    self.wantsAnotherRefresh = false
-                    self.refresh()
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.cache = targets
+                    self.isRefreshing = false
+                    handlers.forEach { $0(targets) }
+                    if self.wantsAnotherRefresh {
+                        self.wantsAnotherRefresh = false
+                        self.refresh()
+                    }
                 }
             }
         }
@@ -391,15 +421,17 @@ final class TargetProvider {
     /// Deliberately not cached like `snapshot()`. The cache exists so the trigger can draw the panel
     /// without waiting; this trigger is rarer, and keeping a second list warm would mean running the
     /// per-window Accessibility walk on every refresh for a feature most sessions never use.
-    func frontAppWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
+    func frontAppWindowTargets(then handler: @escaping @Sendable ([SwitchTarget]) -> Void) {
         // Hops off the caller's turn before touching anything. The only caller is the same-app
         // hotkey, which is handled inside the CGEventTap callback, and the prelude below is not
         // cheap: `switchableApps()` enumerates every running application and faults in each one's
         // icon. Run inline that is the same overrun hazard `showWith` moves `provider.refresh` off
         // the callback to avoid — and an overrun costs the user every keystroke on the machine.
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return handler([]) }
-            self.collectFrontAppWindowTargets(then: handler)
+            MainActor.assumeIsolated {
+                guard let self else { return handler([]) }
+                self.collectFrontAppWindowTargets(then: handler)
+            }
         }
     }
 
@@ -408,32 +440,34 @@ final class TargetProvider {
     /// Uncached for the same reason `frontAppWindowTargets` is: this is the per-window Accessibility
     /// walk, and keeping a second list warm would mean paying it on every refresh for a feature most
     /// sessions never use. Hops off the caller's turn first — the caller is the event-tap callback.
-    func allWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
+    func allWindowTargets(then handler: @escaping @Sendable ([SwitchTarget]) -> Void) {
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return handler([]) }
-            let apps = self.switchableApps()
-            let sortOrder = self.sortOrder
-            let order = self.mru
-            let windowMRU = self.windowMRU
-            let screenFrames = Self.screenCGFrames()
+            MainActor.assumeIsolated {
+                guard let self else { return handler([]) }
+                let apps = self.switchableApps()
+                let sortOrder = self.sortOrder
+                let order = self.mru.entries
+                let windowMRU = self.windowMRU.entries
+                let screenFrames = Self.screenCGFrames()
 
-            self.axQueue.async {
-                let targets = Self.windowTargets(
-                    apps, order: order, sortOrder: sortOrder,
-                    windowMRU: windowMRU, screenFrames: screenFrames)
-                let badged = Self.withSpaceBadges(targets)
-                DispatchQueue.main.async { handler(badged) }
+                self.axQueue.async {
+                    let targets = Self.windowTargets(
+                        apps, order: order, sortOrder: sortOrder,
+                        windowMRU: windowMRU, screenFrames: screenFrames)
+                    let badged = Self.withSpaceBadges(targets)
+                    DispatchQueue.main.async { handler(badged) }
+                }
             }
         }
     }
 
-    private func collectFrontAppWindowTargets(then handler: @escaping ([SwitchTarget]) -> Void) {
+    private func collectFrontAppWindowTargets(then handler: @escaping @Sendable ([SwitchTarget]) -> Void) {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
             let app = switchableApps().first(where: { $0.pid == pid })
         else { return handler([]) }
 
         let sortOrder = self.sortOrder
-        let windowMRU = self.windowMRU
+        let windowMRU = self.windowMRU.entries
         let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
 
         axQueue.async {
@@ -460,7 +494,7 @@ final class TargetProvider {
     ///
     /// Deliberately no `.optionOnScreenOnly`: the entire point of a move-to-Space is that the window
     /// may be on a Space you are not currently looking at, which that flag excludes.
-    static func windowID(matching element: AXUIElement, pid: pid_t) -> CGWindowID? {
+    nonisolated static func windowID(matching element: AXUIElement, pid: pid_t) -> CGWindowID? {
         guard let origin = AX.position(element), let size = AX.size(element) else { return nil }
         guard
             let info = CGWindowListCopyWindowInfo([.excludeDesktopElements], kCGNullWindowID)
@@ -493,7 +527,7 @@ final class TargetProvider {
     /// owns a window" and has to stay distinguishable: the caller filters every app out of the
     /// switcher on an empty set, and this read does fail transiently — across a Space switch, on
     /// wake, and under window-server pressure.
-    private static func windowOwningPIDs() -> Set<pid_t>? {
+    private nonisolated static func windowOwningPIDs() -> Set<pid_t>? {
         guard let info = CGWindowListCopyWindowInfo(
             [.excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
         var pids = Set<pid_t>()
@@ -507,7 +541,7 @@ final class TargetProvider {
 
     /// Parses the `CGWindowID` back out of a `"win:<id>"` target id, if it carries one.
     /// `SwitchTarget.windowID` forwards here so the format is understood in exactly one place.
-    static func windowID(fromTargetID id: String) -> CGWindowID? {
+    nonisolated static func windowID(fromTargetID id: String) -> CGWindowID? {
         let parts = id.split(separator: ":")
         guard parts.count == 2, parts[0] == "win", let value = UInt32(parts[1]) else { return nil }
         return value
@@ -517,7 +551,7 @@ final class TargetProvider {
 
     /// Metadata snapshotted on the main thread; `NSRunningApplication` is not safe to poke at
     /// from the Accessibility queue.
-    private struct AppInfo {
+    struct AppInfo {
         let pid: pid_t
         let name: String
         let bundleID: String?
@@ -587,7 +621,7 @@ final class TargetProvider {
     /// A favourite contributes whatever tiles it already has — one for the app, or several if it is
     /// an app the user has asked to see window-by-window. Everything else keeps the order the sort
     /// gave it, between the two blocks.
-    static func pinningFavorites(
+    nonisolated static func pinningFavorites(
         _ targets: [SwitchTarget], order: [String], bundleIDs: [pid_t: String],
         launchTiles: [String: SwitchTarget]
     ) -> [SwitchTarget] {
@@ -619,12 +653,12 @@ final class TargetProvider {
         guard !targets.isEmpty else { return 0 }
         let natural = min(1, targets.count - 1)
         guard pinFavoritesFirst, mode == .apps, !favoriteBundleIDs.isEmpty else { return natural }
-        return Self.previousAppIndex(in: targets, mru: mru) ?? natural
+        return Self.previousAppIndex(in: targets, mru: mru.entries) ?? natural
     }
 
     /// The tile for the app used before the current one, by MRU. Launch tiles are skipped: they all
     /// share a placeholder pid, and an app that is not running was not used before this one either.
-    static func previousAppIndex(in targets: [SwitchTarget], mru: [pid_t]) -> Int? {
+    nonisolated static func previousAppIndex(in targets: [SwitchTarget], mru: [pid_t]) -> Int? {
         var seenFront = false
         for pid in mru {
             guard let index = targets.firstIndex(where: { !$0.isLaunchable && $0.pid == pid })
@@ -641,7 +675,7 @@ final class TargetProvider {
         return nil
     }
 
-    private static func launchTarget(
+    private nonisolated static func launchTarget(
         id: String, info: (url: URL, name: String, icon: NSImage)
     ) -> SwitchTarget {
         SwitchTarget(
@@ -652,7 +686,7 @@ final class TargetProvider {
     /// Apps that currently own an on-screen window, front to back. Only used to seed the MRU
     /// list at launch — this needs no Screen Recording permission because we read pids and
     /// layers, never window titles.
-    private static func zOrderedPIDs() -> [pid_t] {
+    private nonisolated static func zOrderedPIDs() -> [pid_t] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
         else { return [] }
@@ -667,7 +701,7 @@ final class TargetProvider {
         return ordered
     }
 
-    private static func sorted(
+    nonisolated static func sorted(
         _ apps: [AppInfo], by order: [pid_t], sortOrder: SortOrder
     ) -> [AppInfo] {
         if sortOrder == .alphabetical {
@@ -689,7 +723,7 @@ final class TargetProvider {
 
     // MARK: - Target construction
 
-    private static func appTargets(
+    private nonisolated static func appTargets(
         _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder, badges: [String: String]
     ) -> [SwitchTarget] {
         sorted(apps, by: order, sortOrder: sortOrder).map { app in
@@ -705,7 +739,7 @@ final class TargetProvider {
         }
     }
 
-    private static func windowTargets(
+    private nonisolated static func windowTargets(
         _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder,
         windowMRU: [CGWindowID], screenFrames: [CGRect], badges: [String: String] = [:]
     ) -> [SwitchTarget] {
@@ -749,7 +783,7 @@ final class TargetProvider {
 
     /// Tags each window with the Space it lives on. A no-op with a single Space, which is what keeps
     /// the badge off the tiles for everyone who doesn't use them.
-    private static func withSpaceBadges(_ targets: [SwitchTarget]) -> [SwitchTarget] {
+    private nonisolated static func withSpaceBadges(_ targets: [SwitchTarget]) -> [SwitchTarget] {
         let indices = SpaceMover.spaceIndices(of: targets.compactMap { windowID(fromTargetID: $0.id) })
         guard !indices.isEmpty else { return targets }
         return targets.map { target in
@@ -769,7 +803,7 @@ final class TargetProvider {
     /// all — dragged half off an edge, or stranded where a monitor used to be — and answering "no
     /// display" for those dropped them from the current-display scope entirely, which is a list
     /// whose whole job is to show the windows over there.
-    private static func displayIndex(of window: AXUIElement, in frames: [CGRect]) -> Int? {
+    private nonisolated static func displayIndex(of window: AXUIElement, in frames: [CGRect]) -> Int? {
         guard let origin = AX.position(window), let size = AX.size(window) else { return nil }
         // Shared with the in-switcher move and the tiling chords, so the badge on a tile and the
         // display the move counts from can no longer disagree. Full frames here rather than visible
@@ -784,7 +818,7 @@ final class TargetProvider {
     /// menu bar and the Dock are part of the display a window is on. Anything that has to place a
     /// window *within* one — tiling, the cross-display move — wants `WindowTiler.visibleAreas()`
     /// instead, or it will put the window under the menu bar.
-    static func screenCGFrames() -> [CGRect] {
+    nonisolated static func screenCGFrames() -> [CGRect] {
         let primaryHeight =
             NSScreen.primary?.frame.height ?? 0
         return NSScreen.screens.map { screen in
@@ -802,7 +836,7 @@ final class TargetProvider {
     private typealias GetWindowFn = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>)
         -> AXError
 
-    private static let getWindow: GetWindowFn? = {
+    private nonisolated static let getWindow: GetWindowFn? = {
         // The global handle only exposes it once ApplicationServices is actually loaded, so
         // fall back to the framework by path.
         let paths: [String?] = [
@@ -819,7 +853,7 @@ final class TargetProvider {
 
     /// The `CGWindowID` for an AX window element (via the private `_AXUIElementGetWindow`). Internal
     /// so the Space move can turn a resolved window element into a window number.
-    static func windowID(_ window: AXUIElement) -> CGWindowID? {
+    nonisolated static func windowID(_ window: AXUIElement) -> CGWindowID? {
         guard let getWindow else { return nil }
         var id: CGWindowID = 0
         guard getWindow(window, &id) == .success, id != 0 else { return nil }
@@ -832,7 +866,7 @@ final class TargetProvider {
     /// empty — or fail to line up with the captured windows — for apps whose AX windows don't map to
     /// a resolvable `CGWindowID`; the caller falls back accordingly. Runs Accessibility IPC, so keep
     /// it off the tap.
-    static func switchableWindowIDs(for pid: pid_t) -> [CGWindowID] {
+    nonisolated static func switchableWindowIDs(for pid: pid_t) -> [CGWindowID] {
         AX.windows(of: AX.application(pid)).filter(AX.isSwitchableWindow).compactMap(windowID)
     }
 }
