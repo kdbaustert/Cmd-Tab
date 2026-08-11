@@ -496,6 +496,28 @@ extension SwitchTarget {
         }
     }
 
+    /// `activate`, held until `deadline` when that is still ahead of us.
+    ///
+    /// The one call in this file that can gather an app's windows onto the Desktop in front of the
+    /// user is `activate`, and the one time it does so unbidden is while a Desktop transition is
+    /// still running. Callers that may be inside one hand over the moment it is certainly finished;
+    /// everyone else passes a deadline already in the past and goes straight through, which is why
+    /// this is not simply an `asyncAfter` — a same-Desktop pick must not pick up a queue hop it has
+    /// no reason to wait for.
+    ///
+    /// Deferring rather than dropping: this is a fallback path, reached only once fronting a single
+    /// window has already failed, so skipping it would leave the pick dead. Late is the trade.
+    private static func activate(pid: pid_t, notBefore deadline: DispatchTime, generation: UInt64) {
+        guard DispatchTime.now() < deadline else {
+            activate(pid: pid)
+            return
+        }
+        focusQueue.asyncAfter(deadline: deadline) {
+            guard generation == focusGeneration else { return }
+            activate(pid: pid)
+        }
+    }
+
     /// Counts picks. A `settle` chain captures this at its start and stops the moment it no longer
     /// matches, so a pick still waiting for its Desktop to arrive cannot activate its app up to two
     /// seconds later and yank the user off whatever they picked in the meantime. Activation used to
@@ -692,8 +714,13 @@ extension SwitchTarget {
         // Only the display's current Space is read per turn — see `SpaceMover.currentSpace`. Asking
         // for the *window's* placement here instead would rebuild the whole display/Space map on
         // every one of these turns, which is the loop `spaceState` documents as the thing not to do.
-        for _ in 0..<14 {
-            usleep(50_000)
+        // That is also what makes a fine-grained poll affordable: the turn is one round-trip, so the
+        // interval can be set by how promptly we want to notice the arrival rather than by what each
+        // check costs. It used to be 50ms, which put up to a full 50ms of pure granularity between
+        // macOS landing on the Desktop and this noticing — measured across 144 switches, arrival
+        // clusters at 377-446ms, so that overshoot was a fifth of the wait and none of it was work.
+        for _ in 0..<35 {
+            usleep(20_000)
             guard generation == focusGeneration else { return .superseded }
             guard SpaceMover.currentSpace(ofDisplay: state.display) == state.windowSpace else {
                 continue
@@ -705,7 +732,23 @@ extension SwitchTarget {
                 """)
             // The app is up and on the right Desktop; this puts the *picked* window in front of its
             // siblings. Safe here in a way it is not before arrival — see `focusAndActivate`.
-            focusAndActivate(window: id, pid: pid, generation: generation)
+            //
+            // "Arrived" is a weaker claim here than on the fallback path, and the deadline is what
+            // accounts for the difference. The gate above is the window server's `Current Space`
+            // field, which `spaceSettleDelay` documents as flipping while the transition still has
+            // several hundred milliseconds to run — so this line can be reached mid-transition,
+            // where the fallback path has waited the delay out before it acts.
+            //
+            // The raise and the front are sent anyway, because neither is what relocates a window:
+            // an off-Space `AXRaise` is measured to do nothing, and `FrontProcess` names one window
+            // by id rather than gathering an app's. Only the *activation fallbacks* inside are the
+            // gathering call, and only those are held until the transition is certainly over. On the
+            // 152 logged picks that reached here `FrontProcess` succeeded every time, so the
+            // deadline costs the common case nothing at all — it is the failure branch that would
+            // otherwise activate into a running transition and haul the app's other windows over.
+            focusAndActivate(
+                window: id, pid: pid, generation: generation,
+                activationNotBefore: .now() + spaceSettleDelay)
             return .arrived
         }
 
@@ -929,7 +972,16 @@ extension SwitchTarget {
     /// Order matters: the raise goes first, measured to be harmless off-Space and here making the
     /// picked window the app's front one, so the activation that follows has nothing else to
     /// surface. Runs on `focusQueue`.
-    private static func focusAndActivate(window id: CGWindowID, pid: pid_t, generation: UInt64) {
+    ///
+    /// `activationNotBefore` holds the two `activate` fallbacks — and only those — until a Desktop
+    /// transition the caller knows may still be running has certainly finished. Defaults to now,
+    /// which is right for every caller that already waited: `settle` opens on `spaceSettleDelay`,
+    /// and a same-Desktop pick has no transition to sit out. Only `settleBySystemSwitch` passes a
+    /// real one; see the note at its call.
+    private static func focusAndActivate(
+        window id: CGWindowID, pid: pid_t, generation: UInt64,
+        activationNotBefore: DispatchTime = .now()
+    ) {
         let raised = raise(window: id, pid: pid)
         // Front *this window*, not its app. `NSRunningApplication.activate()` is app-level, and on a
         // machine with several Desktops that is the very relocation the Space gate above exists to
@@ -940,9 +992,10 @@ extension SwitchTarget {
         // activation is wrong about Spaces, but a pick that does nothing at all is worse.
         let fronted = FrontProcess.focus(window: id, pid: pid)
         if !fronted {
-            activate(pid: pid)
+            activate(pid: pid, notBefore: activationNotBefore, generation: generation)
         } else {
-            verifyFront(window: id, pid: pid, generation: generation)
+            verifyFront(
+                window: id, pid: pid, generation: generation, notBefore: activationNotBefore)
         }
         // Where things actually ended up, half a second after the dust settles. The difference that
         // matters: `window == current` on the Desktop we switched *to* means the pick worked, while
@@ -989,8 +1042,14 @@ extension SwitchTarget {
     /// made it the app's front window — so there is nothing left elsewhere for a plain activation to
     /// drag over. That is exactly what makes it usable as a backstop rather than a reintroduction of
     /// the bug the fronting exists to avoid.
-    private static func verifyFront(window id: CGWindowID, pid: pid_t, generation: UInt64) {
-        focusQueue.asyncAfter(deadline: .now() + 0.2) {
+    ///
+    /// `notBefore` is the caller's transition deadline. The 0.2s here is time enough for the front
+    /// to take, not time enough for a Desktop transition to end, so the later of the two is what the
+    /// fallback activation waits for.
+    private static func verifyFront(
+        window id: CGWindowID, pid: pid_t, generation: UInt64, notBefore: DispatchTime
+    ) {
+        focusQueue.asyncAfter(deadline: max(DispatchTime.now() + 0.2, notBefore)) {
             guard generation == focusGeneration else { return }
             // `frontmostApplication` is AppKit state, so it is asked for on the main thread.
             DispatchQueue.main.async {
