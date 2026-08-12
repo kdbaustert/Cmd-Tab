@@ -57,7 +57,7 @@ if [[ -z "$IDENTITY" ]]; then
       3. Confirm it landed:  security find-identity -v -p codesigning
 
     Until then, ./build.sh --install is the way to run this app on this machine: it signs with the
-    local "Overtab Local" certificate, which keeps the Accessibility grant stable across rebuilds
+    local "Cmd-Tab Local" certificate, which keeps the Accessibility grant stable across rebuilds
     but is trusted by nothing else.
 EOF
     exit 1

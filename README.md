@@ -121,12 +121,12 @@ Start at login lives in the system's Login Items, not our defaults.
 
 ## Signing and release
 
-`build.sh` signs with a **self-signed** certificate called `Overtab Local`. That is deliberate for
+`build.sh` signs with a **self-signed** certificate called `Cmd-Tab Local`. That is deliberate for
 local use: macOS keys the Accessibility and Screen Recording grants to the app's *designated
 requirement*, so signing with the same certificate every time keeps both permissions across
 rebuilds. Ad-hoc signing has no certificate, so the requirement falls back to the code hash, which
 changes on every build — hence the re-granting. Create it once in Keychain Access → Certificate
-Assistant → Create a Certificate (name `Overtab Local`, type *Code Signing*, self-signed).
+Assistant → Create a Certificate (name `Cmd-Tab Local`, type *Code Signing*, self-signed).
 
 That certificate is trusted by nothing else. Distributing the app needs a **Developer ID
 Application** certificate (a paid Apple Developer Program membership), the hardened runtime, a
@@ -617,9 +617,11 @@ SIGHUP all restore it on the way out. SIGKILL and hard crashes cannot — log ou
 
 ## Signing
 
-`build.sh` signs with a self-signed certificate called **Overtab Local** — the name is left over
-from before the app was renamed, and is only a keychain label. Replacing it would change the
-designated requirement and cost an Accessibility re-grant for no gain.
+`build.sh` signs with a self-signed certificate called **Cmd-Tab Local**. It was reissued under
+that name from the earlier **Overtab Local** one: a certificate's common name is bound into the
+certificate itself, so renaming meant issuing a new one, which changed the designated requirement
+and cost a single Accessibility re-grant. The old certificate is referenced by nothing and can be
+deleted from Keychain Access.
 
 The certificate is what keeps the Accessibility grant alive across rebuilds. macOS keys the
 permission to the app's *designated requirement*; signed with a certificate, that requirement is
@@ -637,7 +639,7 @@ To recreate the identity on another machine (or after deleting it):
 ```sh
 openssl req -x509 -newkey rsa:2048 -sha256 -days 7300 -nodes \
   -keyout key.pem -out cert.pem \
-  -subj "/CN=Overtab Local" \
+  -subj "/CN=Cmd-Tab Local" \
   -addext "basicConstraints=critical,CA:false" \
   -addext "keyUsage=critical,digitalSignature" \
   -addext "extendedKeyUsage=critical,codeSigning"
@@ -645,7 +647,7 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 7300 -nodes \
 # -legacy and a non-empty password are both required; the security tool cannot read
 # OpenSSL 3's default PKCS#12 encryption, and rejects an empty-password MAC.
 openssl pkcs12 -export -legacy -inkey key.pem -in cert.pem \
-  -out cmdtab.p12 -name "Overtab Local" -passout pass:cmdtab
+  -out cmdtab.p12 -name "Cmd-Tab Local" -passout pass:cmdtab
 
 security import cmdtab.p12 -k ~/Library/Keychains/login.keychain-db \
   -P cmdtab -T /usr/bin/codesign

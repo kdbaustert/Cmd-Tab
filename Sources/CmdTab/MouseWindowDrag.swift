@@ -310,6 +310,21 @@ final class MouseWindowDrag: @unchecked Sendable {
 
     // MARK: Tap
 
+    /// Re-attempts an install that Accessibility refused.
+    ///
+    /// `CGEvent.tapCreate` fails outright without the grant, and `settings` is edge-triggered — it
+    /// installs only when the value *changes*, so re-pushing the same settings once trust lands does
+    /// nothing at all and the gesture stays dead for the life of the process. Granting Accessibility
+    /// to an app that is already running is the ordinary first-run path rather than an edge case:
+    /// `AppDelegate` waits for exactly that and brings the keyboard tap up on it. This is the same
+    /// call for the mouse one.
+    ///
+    /// A no-op when a tap already stands, so the launch-already-trusted path pays nothing for it.
+    func retryInstallIfNeeded() {
+        guard settings.isEnabled else { return }
+        install()
+    }
+
     private func install() {
         guard tap == nil else { return }
         let mask: CGEventMask =
@@ -797,6 +812,23 @@ final class ModifierTargetHighlight {
     private var target: (pid: pid_t, bounds: CGRect)?
     /// The destination currently being offered.
     private var zone: WindowArrangement?
+
+    /// Rebuilds the monitors after an install made without the Accessibility grant.
+    ///
+    /// A *partial* install is the failure mode here, not an absent one, and that is what makes the
+    /// guard below the wrong thing to lean on: key-related events — `.flagsChanged` among them —
+    /// are only delivered to a global monitor when the process is trusted, while the local monitor
+    /// is handed over as normal. So an untrusted install leaves `flagsMonitors` non-empty, `install`
+    /// reads that as work already done, and the outline ends up appearing over Cmd-Tab's own windows
+    /// and nowhere else — the half of the gesture the local monitor covers.
+    ///
+    /// Torn down and rebuilt rather than topped up, so it is correct whether an untrusted global
+    /// monitor comes back nil or comes back inert.
+    func retryInstallIfNeeded() {
+        guard settings.isEnabled else { return }
+        uninstall()
+        install()
+    }
 
     private func install() {
         guard flagsMonitors.isEmpty else { return }

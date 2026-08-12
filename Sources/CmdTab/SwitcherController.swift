@@ -144,6 +144,18 @@ final class SwitcherController {
     private let mouseWindowDrag = MouseWindowDrag()
     /// Outlines the window the chord would grab, before anything is pressed.
     private let targetHighlight = ModifierTargetHighlight()
+
+    /// Brings up the two mouse gestures if an earlier attempt was refused for want of Accessibility.
+    ///
+    /// Called alongside `start()`, because both need the same grant and neither notices it arriving:
+    /// the settings that install them are pushed once, at construction, which on a first run is
+    /// before the user has answered the system prompt. `start()` is the keyboard tap's equivalent
+    /// and is already wired to the trust handler; this is the rest of what that handler has to
+    /// revive. Idempotent — on a launch that was trusted all along, both calls do nothing.
+    func retryMouseGestures() {
+        mouseWindowDrag.retryInstallIfNeeded()
+        targetHighlight.retryInstallIfNeeded()
+    }
     /// Per-app jump chords, same arrangement.
     var activations = DirectActivations()
     /// The hide-all / show-all chords.

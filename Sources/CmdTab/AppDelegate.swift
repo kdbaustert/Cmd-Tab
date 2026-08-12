@@ -176,6 +176,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !controller.start() {
             presentTapFailure()
         }
+        // The keyboard tap is not the only thing that needed the grant. Both mouse gestures are
+        // installed from settings pushed in `init`, which on a first run happens before the user has
+        // answered the system prompt — and neither is re-pushed afterwards, so without this they
+        // stay dead until the app is relaunched.
+        controller.retryMouseGestures()
         refreshMenu()
     }
 

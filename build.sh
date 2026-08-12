@@ -120,10 +120,12 @@ fi
 # permission survives a rebuild. Ad-hoc signing has no certificate, so the requirement falls back to
 # the code hash, which changes on every build — hence the re-granting.
 #
-# The default identity is still called "Overtab Local" from before the rename: it is only a keychain
-# label, and replacing it would change the requirement and cost another re-grant for nothing. See
-# README for how to create it. `release.sh` overrides it with a Developer ID.
-IDENTITY="${CODESIGN_IDENTITY:-Overtab Local}"
+# The certificate's common name is cryptographically part of it, so this is not a label that can be
+# edited — the identity was reissued under the app's own name, and the previous "Overtab Local" one
+# is simply no longer referenced. That reissue changed the designated requirement and cost one
+# Accessibility re-grant, which is the price of the rename and is paid once. See README for how to
+# create it. `release.sh` overrides it with a Developer ID.
+IDENTITY="${CODESIGN_IDENTITY:-Cmd-Tab Local}"
 SIGN_ARGS=(--force)
 if [[ "${HARDENED:-0}" == "1" ]]; then
     # Both are notarisation requirements, not nice-to-haves: the Notary Service rejects a submission
