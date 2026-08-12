@@ -571,23 +571,44 @@ final class MouseWindowDrag: @unchecked Sendable {
         guard go else { return }
         queue.async { [weak self] in
             guard let self else { return }
-            if let window = Self.draggedWindow {
-                if isMove {
-                    AX.setPosition(window, frame.origin)
-                } else {
-                    // Position first, then size: a resize from a top or left corner moves the origin
-                    // as well, and an app that clamps a move against its current size needs the
-                    // origin set before the size that makes room for it.
-                    AX.setPosition(window, frame.origin)
-                    AX.setSize(window, frame.size)
+            // Drained in a loop, holding the claim on `isWriting` for the whole of it.
+            //
+            // Putting it down between frames and re-entering `write` with the pending one looked
+            // equivalent and was not: the lock is released in between, so a tap-thread event landing
+            // in that gap finds the slot free, claims it with a *newer* frame, and the older one
+            // being handed back is then stored as `pending` behind it. The stale frame is written
+            // last and the window snaps to a position the cursor has already passed — mid-gesture
+            // the next event corrects it, but on the final event before the release that is where
+            // the window stays, a little off from where it was dropped. The very reordering the
+            // coalescing exists to prevent, arriving by another route.
+            var frame = frame
+            while true {
+                if let window = Self.draggedWindow {
+                    if isMove {
+                        AX.setPosition(window, frame.origin)
+                    } else {
+                        // Position first, then size: a resize from a top or left corner moves the
+                        // origin as well, and an app that clamps a move against its current size
+                        // needs the origin set before the size that makes room for it.
+                        AX.setPosition(window, frame.origin)
+                        AX.setSize(window, frame.size)
+                    }
                 }
+                let next: CGRect? = self.lock.withLock {
+                    if let pending = self.pending {
+                        self.pending = nil
+                        return pending
+                    }
+                    // Released only here — under the same lock that established there is nothing
+                    // left to write, which is what makes the ordering above hold. `end()` clears
+                    // `pending`, so a released gesture drops out on its next turn rather than
+                    // spinning on frames the user can no longer be producing.
+                    self.isWriting = false
+                    return nil
+                }
+                guard let next else { return }
+                frame = next
             }
-            let next: CGRect? = self.lock.withLock {
-                self.isWriting = false
-                defer { self.pending = nil }
-                return self.pending
-            }
-            if let next { self.write(next, isMove: isMove) }
         }
     }
 

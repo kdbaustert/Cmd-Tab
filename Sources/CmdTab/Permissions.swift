@@ -65,25 +65,38 @@ enum Permissions {
         }
     }
 
+    /// The one poll, and everyone waiting on it.
+    ///
+    /// Held here rather than in a local so a second `waitForTrust` joins the timer already running
+    /// instead of starting another. Nothing has two callers today, but the untrusted case is the
+    /// one where a stray timer lives longest — a user who leaves the system prompt unanswered keeps
+    /// every one of them waking the main run loop for the life of the process.
+    @MainActor private static var trustPoll: Timer?
+    @MainActor private static var trustHandlers: [@MainActor () -> Void] = []
+
     /// Polls until the user flips the switch. There is no notification for this, so polling is
-    /// the only option; the interval is slow enough to be free.
+    /// the only option; the interval is slow enough to be free. A caller arriving while a poll is
+    /// already running joins it, and `interval` is then the first caller's.
+    ///
     /// `@MainActor` because the timer is scheduled on the main run loop and the handler starts the
-    /// event tap. The callers are `AppDelegate` and the settings window, both already on it.
+    /// event tap. The only caller is `AppDelegate`, already on it.
     @MainActor
     static func waitForTrust(
         interval: TimeInterval = 1.0, then handler: @escaping @MainActor () -> Void
     ) {
         guard !isTrusted else { return handler() }
-        // `nonisolated(unsafe)` on the box rather than sending the `timer` parameter into the
-        // closure: `Timer` is not `Sendable`, and `scheduledTimer`'s callback is nonisolated even
-        // though it is delivered on the main run loop. One reference, written once before the timer
-        // can fire and read only from the run loop it is scheduled on.
-        nonisolated(unsafe) var poll: Timer?
-        poll = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+        trustHandlers.append(handler)
+        guard trustPoll == nil else { return }
+        trustPoll = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
             MainActor.assumeIsolated {
                 guard isTrusted else { return }
-                poll?.invalidate()
-                handler()
+                trustPoll?.invalidate()
+                trustPoll = nil
+                // Taken and cleared before any of them runs: a handler that calls back in must
+                // arm a fresh poll rather than land in the list being drained.
+                let handlers = trustHandlers
+                trustHandlers = []
+                handlers.forEach { $0() }
             }
         }
     }

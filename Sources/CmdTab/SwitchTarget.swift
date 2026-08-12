@@ -1076,15 +1076,26 @@ extension SwitchTarget {
     ) {
         focusQueue.asyncAfter(deadline: max(DispatchTime.now() + 0.2, notBefore)) {
             guard generation == focusGeneration else { return }
-            // `frontmostApplication` is AppKit state, so it is asked for on the main thread.
+            // `frontmostApplication` is AppKit state, so it is asked for on the main thread — and
+            // the answer is carried back here rather than acted on there.
+            //
+            // The guard above cannot cover the hop, and the frontmost test does not stand in for it:
+            // a later pick having already brought another app forward is *exactly* the reading
+            // `frontmost != pid`, so acting on it activates the superseded pick and hauls the user
+            // back off whatever they picked instead — the two-second yank `focusGeneration` exists
+            // to prevent, at a fifth of a second. The gap is short, but it is widest under a fast
+            // repeated ⌘-Tab, when the main thread is busy with the panel's own layout pass and a
+            // new pick is most likely to be arriving. So the generation is re-checked after the
+            // round trip, back on `focusQueue` — the only thread it may be read from.
             DispatchQueue.main.async {
-                guard NSWorkspace.shared.frontmostApplication?.processIdentifier != pid else {
-                    return
+                let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                focusQueue.async {
+                    guard generation == focusGeneration, front != pid else { return }
+                    Log.general.notice(
+                        "focus window \(id, privacy: .public): front did not take, activating pid \(pid, privacy: .public)"
+                    )
+                    activate(pid: pid)
                 }
-                Log.general.notice(
-                    "focus window \(id, privacy: .public): front did not take, activating pid \(pid, privacy: .public)"
-                )
-                activate(pid: pid)
             }
         }
     }

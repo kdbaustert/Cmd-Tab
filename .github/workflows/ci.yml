@@ -1,6 +1,6 @@
 name: CI
 
-# The test suite is 221 pure-logic tests that run in about 30 milliseconds — no window server, no
+# The test suite is pure logic and runs in a few tens of milliseconds — no window server, no
 # Accessibility grant, no running apps. That is precisely why it is worth running on every push:
 # it costs nothing, and the parts of this app that *cannot* be tested that way (the event tap, the
 # Accessibility walk) are the parts where a silent regression is most expensive.

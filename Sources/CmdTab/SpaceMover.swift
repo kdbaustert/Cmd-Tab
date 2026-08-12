@@ -103,12 +103,20 @@ enum SpaceMover {
     /// One window-server round trip per Space. Callers that need many windows placed should take the
     /// whole map once rather than calling `spaceState` in a loop.
     static func windowSpaces() -> [CGWindowID: SpaceState] {
-        guard let mainConnection, let copyManaged, let copyWindowsForSpaces else { return [:] }
+        windowSpaces(in: managedDisplays())
+    }
+
+    /// `windowSpaces` over a display list the caller has already read.
+    ///
+    /// Split out for `spaceIndices`, which needs the Space *order* as well and would otherwise pay
+    /// for the display walk twice over — once here and once in `userSpaceIDs`.
+    private static func windowSpaces(in displays: [[String: Any]]) -> [CGWindowID: SpaceState] {
+        guard let mainConnection, let copyWindowsForSpaces, !displays.isEmpty else { return [:] }
         let cid = mainConnection()
-        guard let displays = copyManaged(cid)?.takeRetainedValue() as? [[String: Any]] else {
-            return [:]
-        }
         var out: [CGWindowID: SpaceState] = [:]
+        // Windows placed by a Space that was in front on its own display. A second display's
+        // current Space must not take one of these back — see the note at the assignment.
+        var settled: Set<CGWindowID> = []
         for display in displays {
             guard let spaces = display["Spaces"] as? [[String: Any]],
                 let identifier = display["Display Identifier"] as? String
@@ -131,8 +139,19 @@ enum SpaceMover {
                     // them. Whichever copy is on the Space already in front wins: reporting a window
                     // the user is looking at as living elsewhere would have `reveal` animate them
                     // off the Desktop they are on to "reach" it.
+                    //
+                    // `current` is per display, so on two monitors an "All Desktops" window is in
+                    // front on *both* and matched this twice — with the later display overwriting
+                    // the earlier, which is how a window visible on the monitor you are looking at
+                    // came back naming the other one and had `reveal` switch the wrong display. The
+                    // first such match is kept instead. Which display wins is genuinely arbitrary —
+                    // the window really is on both, and nothing cheap distinguishes them — but it is
+                    // now stable, and a Space in front is never displaced by another Space in front.
                     let id = number.uint32Value
-                    if out[id] == nil || space == current { out[id] = state }
+                    guard !settled.contains(id) else { continue }
+                    let isCurrent = space == current
+                    if out[id] == nil || isCurrent { out[id] = state }
+                    if isCurrent { settled.insert(id) }
                 }
             }
         }
@@ -215,13 +234,22 @@ enum SpaceMover {
     ///
     /// nil when the layout cannot be read, which a caller must not confuse with "not there yet".
     static func currentSpace(ofDisplay display: String) -> UInt64? {
-        guard let mainConnection, let copyManaged,
-            let displays = copyManaged(mainConnection())?.takeRetainedValue() as? [[String: Any]]
-        else { return nil }
-        for entry in displays where (entry["Display Identifier"] as? String) == display {
+        for entry in managedDisplays() where (entry["Display Identifier"] as? String) == display {
             return (entry["Current Space"] as? [String: Any]).flatMap(spaceID(from:))
         }
         return nil
+    }
+
+    /// The window server's display/Space layout, one round trip.
+    ///
+    /// The single read every query in this file is built from, so a caller that needs two of them
+    /// takes the list once and passes it down rather than asking twice for the same answer. Empty
+    /// when the layout cannot be read at all, which every caller treats the same way as no displays.
+    private static func managedDisplays() -> [[String: Any]] {
+        guard let mainConnection, let copyManaged,
+            let displays = copyManaged(mainConnection())?.takeRetainedValue() as? [[String: Any]]
+        else { return [] }
+        return displays
     }
 
     /// Whether macOS is set to travel to a window's Desktop when its app is activated — the Mission
@@ -249,11 +277,8 @@ enum SpaceMover {
     /// Flattened deliberately: the badge numbers Spaces the way the user counts them ("Desktop 3"),
     /// and on the single-display setups where Spaces are actually numbered that is exactly right.
     /// `move` does *not* use this — it has to stay within one display's list to clamp correctly.
-    private static func userSpaceIDs() -> [UInt64] {
-        guard let mainConnection, let copyManaged,
-            let displays = copyManaged(mainConnection())?.takeRetainedValue() as? [[String: Any]]
-        else { return [] }
-        return displays.flatMap { display -> [UInt64] in
+    private static func userSpaceIDs(in displays: [[String: Any]]) -> [UInt64] {
+        displays.flatMap { display -> [UInt64] in
             guard let spaces = display["Spaces"] as? [[String: Any]] else { return [] }
             return spaces.filter { ($0["type"] as? Int) == 0 }.compactMap(spaceID(from:))
         }
@@ -269,12 +294,18 @@ enum SpaceMover {
     /// Placed from one `windowSpaces()` map rather than a query per window: the per-window call this
     /// used to make reported nothing for any window that was not on the Desktop in front, so the
     /// badge went missing on precisely the windows it exists to label.
+    ///
+    /// The display list is read once and handed to both halves. Each used to take its own copy of
+    /// the same layout, so every badge pass that got past the single-Space guard below read it
+    /// twice — and the two readings could disagree, since a Desktop switch between them would order
+    /// the Spaces against one layout and place the windows against another.
     static func spaceIndices(of windows: [CGWindowID]) -> [CGWindowID: Int] {
         guard !windows.isEmpty else { return [:] }
-        let ordered = userSpaceIDs()
+        let displays = managedDisplays()
+        let ordered = userSpaceIDs(in: displays)
         guard ordered.count > 1 else { return [:] }
 
-        let placed = windowSpaces()
+        let placed = windowSpaces(in: displays)
         var out: [CGWindowID: Int] = [:]
         for window in windows {
             guard let space = placed[window]?.windowSpace,
