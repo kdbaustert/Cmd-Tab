@@ -474,8 +474,15 @@ final class SwitcherController {
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
         // hotkey leaves the native switcher alone.
         let disabled = hotkey.isCommandTab ? SystemSwitcher.setNativeEnabled(false) : false
+        // Screen Recording is reported here because it is the one permission that can be revoked
+        // without the user doing anything: it is pinned to the code signature, so a re-signed build
+        // loses it silently and the only symptom is that hover previews stop appearing.
         Log.general.notice(
-            "started: tap=ok nativeDisabled=\(disabled) symbolAvailable=\(SystemSwitcher.isAvailable)")
+            """
+            started: tap=ok nativeDisabled=\(disabled) \
+            symbolAvailable=\(SystemSwitcher.isAvailable) \
+            screenRecording=\(Permissions.canCaptureScreen)
+            """)
         provider.refresh { targets in
             Log.targets.notice("initial refresh: \(targets.count) targets")
         }

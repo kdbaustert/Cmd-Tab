@@ -990,7 +990,62 @@ struct BehaviorSettings: View {
                     .onChange(of: behavior.windowPreview) {
                         if behavior.windowPreview { Permissions.ensureScreenCaptureForPreview() }
                     }
+                if behavior.windowPreview || behavior.windowThumbnailTiles {
+                    ScreenRecordingWarning()
+                }
             }
+        }
+    }
+}
+
+/// Shown when a capture feature is switched on but Screen Recording is not granted.
+///
+/// The two toggles above prompt when they are switched *on*, which covers the first run and nothing
+/// else. The grant is pinned to the code signature, so a rebuilt or updated app loses it with no
+/// prompt and no error, and the only symptom is that captures quietly return nothing — which looks
+/// exactly like an app that has no windows to show. Previews "just stopping" with no way to tell why
+/// is the failure this exists to prevent.
+///
+/// Re-checked when the app comes forward rather than only on appear, so returning from System
+/// Settings updates the banner instead of leaving a stale warning under a permission that has just
+/// been granted. Nothing polls: the notification is the only trigger, and there is no cost while the
+/// window sits open.
+private struct ScreenRecordingWarning: View {
+    @State private var granted = Permissions.canCaptureScreen
+
+    var body: some View {
+        Group {
+            if !granted {
+                SettingsWideRow {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.system(size: 13))
+                        VStack(alignment: .leading, spacing: 2) {
+                            SettingsChrome.text("Screen Recording is not granted")
+                                .font(.system(size: 13))
+                            SettingsChrome.text(
+                                "Captures come back empty, so tiles fall back to icons and hover "
+                                    + "previews show nothing. Turn Cmd-Tab off and on again in the "
+                                    + "Screen Recording list, then relaunch — the grant is tied to "
+                                    + "the app's signature, so a rebuilt or updated copy loses it."
+                            )
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Button("Open Settings") { Permissions.openScreenRecordingSettings() }
+                    }
+                }
+            }
+        }
+        .onAppear { granted = Permissions.canCaptureScreen }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            granted = Permissions.canCaptureScreen
         }
     }
 }

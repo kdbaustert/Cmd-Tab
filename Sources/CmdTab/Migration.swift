@@ -15,9 +15,46 @@ enum Migration {
     /// Must run before anything reads a setting.
     static func run() {
         splitBadgeToggle()
+        reviveSnapHighlightColor()
         dropSavedLayouts()
         renameFromOvertab()
     }
+
+    /// `windowSnapHighlightColorHex` set the snap outline and landing block together, until both
+    /// were fixed to grey-on-black and the key was retired. They are settings again — two of them
+    /// now, one per overlay — so anyone who had chosen a colour back then gets it back.
+    ///
+    /// Seeded into both new keys, because the old single setting drove both overlays: splitting one
+    /// value in two is what preserves the appearance the user actually had, where seeding only one
+    /// would leave them with a half-recoloured gesture they never asked for.
+    ///
+    /// Neither key is written if the user has already set one on this build — a value chosen now is
+    /// a later statement of intent than one chosen before the feature was withdrawn, and must not be
+    /// overwritten by it.
+    ///
+    /// The old key is left on disk. It is in `retiredDefaultsKeys`, which is what clears it on the
+    /// next reset, and deleting it here would make this migration unrepeatable if it ever needed
+    /// fixing — the same reasoning as `splitBadgeToggle`.
+    private static func reviveSnapHighlightColor() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: snapColorRevivedKey) else { return }
+        defaults.set(true, forKey: snapColorRevivedKey)
+        guard let legacy = defaults.string(forKey: "windowSnapHighlightColorHex") else { return }
+        var revived: [String] = []
+        for key in ["windowSnapOutlineColorHex", "windowSnapLandingColorHex"]
+        where defaults.object(forKey: key) == nil {
+            defaults.set(legacy, forKey: key)
+            revived.append(key)
+        }
+        guard !revived.isEmpty else { return }
+        Log.general.notice(
+            """
+            migrated: revived the retired snap highlight colour \(legacy, privacy: .public) into \
+            \(revived.joined(separator: ", "), privacy: .public)
+            """)
+    }
+
+    private static let snapColorRevivedKey = "migratedRevivedSnapHighlightColor"
 
     /// Saved layouts were removed, and the stored list went with the feature.
     ///

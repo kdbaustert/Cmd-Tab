@@ -101,13 +101,40 @@ actor WindowCapture {
     /// blur already costs the compositor. Four keeps the round-trips overlapping without the spike.
     private let maxConcurrentCaptures = 4
 
-    /// Thumbnails of `pid`'s windows, front to back. Empty when Screen Recording is not granted or
-    /// the app genuinely has nothing on screen.
+    /// Thumbnails of `pid`'s windows, front to back. Empty when Screen Recording is not granted, when
+    /// ScreenCaptureKit refuses to enumerate, or when the app genuinely has nothing on screen.
+    ///
+    /// Those three were indistinguishable from outside, and the caller's log line — "0 window(s) for
+    /// pid N" — read the same for all of them. That is exactly the shape of "previews stopped
+    /// working" with nothing to say why, so each now announces itself. Logged at `.error` because
+    /// the first two are broken states rather than ordinary ones, and rate-limited because this runs
+    /// on every hover and a withheld permission would otherwise write a line per tile per sweep.
     func thumbnails(for pid: pid_t, maxCount: Int = 12, maxHeight: CGFloat = 150) async
         -> [WindowThumb]
     {
-        guard Permissions.canCaptureScreen, !Task.isCancelled else { return [] }
-        guard let content = await shareableContent(), !Task.isCancelled else { return [] }
+        guard Permissions.canCaptureScreen else {
+            reportOnce(
+                .permission,
+                """
+                preview: Screen Recording is not granted to this build, so no window can be \
+                captured. Re-grant it in System Settings → Privacy & Security → Screen Recording \
+                and relaunch — a re-signed build loses the grant even under the same identity.
+                """)
+            return []
+        }
+        guard !Task.isCancelled else { return [] }
+        guard let content = await shareableContent() else {
+            reportOnce(
+                .enumeration,
+                "preview: ScreenCaptureKit would not enumerate windows; the capture is unavailable")
+            return []
+        }
+        guard !Task.isCancelled else { return [] }
+        // Back to healthy — say so, so a log read after the fact shows the recovery rather than
+        // leaving the last word as the failure.
+        if reported.remove(.permission) != nil || reported.remove(.enumeration) != nil {
+            Log.general.notice("preview: capture is working again")
+        }
 
         // ScreenCaptureKit decides which windows exist. Accessibility deliberately does not.
         //
@@ -283,6 +310,16 @@ actor WindowCapture {
         return WindowThumb(
             id: index, windowID: entry.id, image: fallback, title: entry.title, pid: pid,
             isMinimized: entry.isMinimized, displayIndex: entry.displayIndex)
+    }
+
+    /// The broken states worth one line each rather than one per hover.
+    private enum CaptureFault { case permission, enumeration }
+    private var reported: Set<CaptureFault> = []
+
+    /// Logs `message` the first time a fault is seen, and stays quiet until it clears.
+    private func reportOnce(_ fault: CaptureFault, _ message: String) {
+        guard reported.insert(fault).inserted else { return }
+        Log.general.error("\(message, privacy: .public)")
     }
 
     /// The full window list, reused for `ttl` so a sweep across tiles doesn't re-run the whole

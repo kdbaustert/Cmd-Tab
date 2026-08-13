@@ -89,10 +89,13 @@ struct AppearanceSettings: View {
                 }
                 SettingsRow(
                     title: "Highlight",
-                    subtitle: "Tint behind the selected tile."
+                    subtitle: "Tint behind the selected tile.",
+                    controlWidth: 250
                 ) {
-                    ColorPicker("", selection: $behavior.highlightColor, supportsOpacity: false)
-                        .labelsHidden()
+                    ColorSettingControl(
+                        color: $behavior.highlightColor,
+                        reset: Color(hex: BehaviorStore.defaultHighlightHex)
+                            ?? BehaviorStore.defaultHighlight)
                 }
             }
 

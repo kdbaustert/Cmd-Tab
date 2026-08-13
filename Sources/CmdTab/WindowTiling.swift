@@ -331,6 +331,8 @@ final class WindowTilingStore: ObservableObject {
         static let gapLeft = "windowTilingGapLeft"
         static let gapRight = "windowTilingGapRight"
         static let dotHex = "windowSnapDotColorHex"
+        static let outlineHex = "windowSnapOutlineColorHex"
+        static let landingHex = "windowSnapLandingColorHex"
         static let mouseDrag = "windowMouseDragEnabled"
         static let mouseMove = "windowMouseDragMoveModifiers"
         static let mouseResize = "windowMouseDragResizeModifiers"
@@ -340,7 +342,7 @@ final class WindowTilingStore: ObservableObject {
     static let defaultsKeys = [
         Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap,
         Key.gap, Key.gapTop, Key.gapBottom, Key.gapLeft, Key.gapRight,
-        Key.dotHex,
+        Key.dotHex, Key.outlineHex, Key.landingHex,
         Key.mouseDrag, Key.mouseMove, Key.mouseResize,
     ]
 
@@ -386,28 +388,55 @@ final class WindowTilingStore: ObservableObject {
         mouseDrag.chord(for: action)
     }
 
-    /// The colour of the anchor dot the hold-and-point gesture starts from. Kept here rather than
-    /// in `AppearanceStore`, which is about the switcher panel: this is a Windows-tab setting that
-    /// only exists while a snap gesture is in flight.
-    ///
-    /// The dot alone. The outline and the destination block stay on the system accent — they are
-    /// large, translucent, and read as the system's own highlighting; the dot is 14pt of solid
-    /// colour and the one mark here worth making yours.
+    // The three colours the snap overlays are drawn in. Kept here rather than in `AppearanceStore`,
+    // which is about the switcher panel: these are Windows-tab settings that only exist while a snap
+    // gesture is in flight.
+    //
+    // Three settings rather than one, because the overlays say three different things — which
+    // window, where it will land, and what the direction is measured from — and someone who wants to
+    // tell them apart at a glance needs them to differ. They share a default so the untouched case
+    // still reads as one system.
+
+    /// The border drawn around the window a gesture is about to act on.
+    @Published var outlineColor: Color = SnapAppearance.defaultOutline {
+        didSet {
+            guard outlineColor != oldValue else { return }
+            persist(outlineColor, forKey: Key.outlineHex)
+            SnapAppearance.shared.apply(outline: outlineColor)
+        }
+    }
+
+    /// The block showing where the window will land. Drawn as a full-strength border with the fill
+    /// washed to `SnapAppearance.blockAlpha`, so one colour covers both.
+    @Published var landingColor: Color = SnapAppearance.defaultLanding {
+        didSet {
+            guard landingColor != oldValue else { return }
+            persist(landingColor, forKey: Key.landingHex)
+            SnapAppearance.shared.apply(landing: landingColor)
+        }
+    }
+
+    /// The anchor dot the hold-and-point gesture measures its direction from.
     @Published var dotColor: Color = SnapAppearance.defaultDot {
         didSet {
             guard dotColor != oldValue else { return }
-            // Nil for a pattern or catalog colour the macOS panel can hand back; the stored value
-            // is left as it was rather than overwritten with a substitute.
-            if let hex = dotColor.hexString {
-                UserDefaults.standard.set(hex, forKey: Key.dotHex)
-            }
+            persist(dotColor, forKey: Key.dotHex)
             SnapAppearance.shared.apply(dot: dotColor)
         }
     }
 
-    private static func loadDotColor() -> Color {
-        UserDefaults.standard.string(forKey: Key.dotHex).flatMap(Color.init(hex:))
-            ?? SnapAppearance.defaultDot
+    /// Writes a colour as hex, skipping the write when it has none.
+    ///
+    /// The macOS colour panel can hand back a pattern or catalog colour, which has no RGB to encode.
+    /// The stored value is then left exactly as it was rather than overwritten with a substitute —
+    /// a silently-wrong colour on the next launch is worse than one that did not take.
+    private func persist(_ color: Color, forKey key: String) {
+        guard let hex = color.hexString else { return }
+        UserDefaults.standard.set(hex, forKey: key)
+    }
+
+    private static func loadColor(_ key: String, default fallback: Color) -> Color {
+        UserDefaults.standard.string(forKey: key).flatMap(Color.init(hex:)) ?? fallback
     }
 
     var gap: CGFloat {
@@ -450,9 +479,22 @@ final class WindowTilingStore: ObservableObject {
     private init() {
         tiling = Self.load()
         mouseDrag = Self.loadMouseDrag()
-        let dot = Self.loadDotColor()
+        loadSnapColors()
+    }
+
+    /// Reads the three snap colours and pushes them into `SnapAppearance` in one go.
+    ///
+    /// Assigned to the stored properties directly, which means the `didSet`s do not run — so this
+    /// deliberately does the push itself. Doing it in one `apply` rather than three keeps the load
+    /// path and the reload path identical, and is why `apply` takes all three optionally.
+    private func loadSnapColors() {
+        let outline = Self.loadColor(Key.outlineHex, default: SnapAppearance.defaultOutline)
+        let landing = Self.loadColor(Key.landingHex, default: SnapAppearance.defaultLanding)
+        let dot = Self.loadColor(Key.dotHex, default: SnapAppearance.defaultDot)
+        outlineColor = outline
+        landingColor = landing
         dotColor = dot
-        SnapAppearance.shared.apply(dot: dot)
+        SnapAppearance.shared.apply(outline: outline, landing: landing, dot: dot)
     }
 
     /// The chord bound to `arrangement`, or nil when the user has cleared it.
@@ -542,9 +584,7 @@ final class WindowTilingStore: ObservableObject {
     func reload() {
         tiling = Self.load()
         mouseDrag = Self.loadMouseDrag()
-        let dot = Self.loadDotColor()
-        dotColor = dot
-        SnapAppearance.shared.apply(dot: dot)
+        loadSnapColors()
         onChange?(tiling)
         onMouseDragChange?(mouseDrag)
     }

@@ -286,31 +286,52 @@ final class DragSnap {
 final class SnapAppearance {
     static let shared = SnapAppearance()
 
-    /// The outline around the window a gesture is targeting: **light grey**, the colour Rectangle
-    /// draws its own snap footprint's border in (`FootprintWindow.boxView.borderColor = .lightGray`).
+    /// Rectangle Pro's highlight colour: **#BF5AF2**, which is Apple's system purple in its dark
+    /// variant.
     ///
-    /// Neutral on purpose, and not the accent: a grey border sits over a window's own content
-    /// without tinting it, and it stays distinct from `landing` below — one marks *which* window,
-    /// the other *where it goes*, and telling those apart at a glance is the whole job of the two
-    /// overlays.
-    var outline: NSColor { .lightGray }
-
-    /// The block showing where the window will land: black, shown at `blockAlpha`, with the same
-    /// light-grey border as `outline`. Rectangle's footprint exactly — `fillColor = NSColor.black`,
-    /// `borderColor = .lightGray`, `borderWidth = 2`, alpha 0.3 — rather than an accent tint, which
-    /// paints the destination a colour the window itself will not be.
-    var landing: NSColor { .black }
-
-    /// Rectangle's `footprintAlpha` default — but applied to the **fill only**, where Rectangle
-    /// puts it on the whole footprint window.
+    /// Taken from Rectangle Pro's own `reticleColor` preference rather than sampled off a
+    /// screenshot, and that is the stronger source: the stored value is the colour *before* it is
+    /// composited, where a pixel read back off the screen has the overlay's own alpha and whatever
+    /// was behind it already mixed in, and un-mixing that is guesswork. Read on macOS 26 from
+    /// `com.knollsoft.Hookshot` as `{"red":0.7490196078431373, "green":0.35294117647058826,
+    /// "blue":0.9490196078431372, "alpha":1}`.
     ///
-    /// The one deliberate departure from copying them. Alpha on the window fades the border with
-    /// the fill, and on a dark backdrop that leaves a black block at 30% (indistinguishable from
-    /// what is behind it) edged by a grey hairline at 30% (measured at #38383A — visible, but only
-    /// just). The destination is the thing the user is deciding on, so its edge is drawn at full
-    /// strength and only the fill is washed: same colours, same weight, same radius as Rectangle,
-    /// with the one line you actually navigate by left legible.
-    static let blockAlpha: CGFloat = 0.3
+    /// Copied as a literal, deliberately: reading another app's preferences at runtime would make
+    /// this app's appearance depend on one it does not ship with, break silently the day that key
+    /// is renamed, and leave someone without Rectangle Pro installed with no colour at all.
+    static let rectangleHighlight = NSColor(
+        srgbRed: 191 / 255, green: 90 / 255, blue: 242 / 255, alpha: 1)
+
+    /// The outline around the window a gesture is targeting.
+    ///
+    /// This was light grey — the border colour the *free* Rectangle uses
+    /// (`FootprintWindow.boxView.borderColor = .lightGray`) — on the reasoning that a neutral edge
+    /// sits over a window's own content without tinting it. Rectangle Pro moved on: it tints its
+    /// snap UI with a single configurable colour, and matching what is actually on this machine's
+    /// screen matters more than matching an older version's source — including the *configurable*
+    /// part, which is why this and `landing` are settings now rather than constants.
+    private(set) var outline: NSColor = SnapAppearance.rectangleHighlight
+
+    /// The block showing where the window will land, washed down to `blockAlpha` inside a
+    /// full-strength border of the same colour.
+    ///
+    /// Defaults to matching `outline`, and the two are separate settings rather than one because
+    /// they answer different questions — one says "this is the window", the other "this is where it
+    /// goes" — and someone who wants to tell them apart at a glance can now give them two colours.
+    /// The wash is what keeps the block from pretending to *be* the window: you can still see what
+    /// is underneath, which is the thing you are deciding to cover.
+    private(set) var landing: NSColor = SnapAppearance.rectangleHighlight
+
+    /// Applied to the **fill only**, never to the border.
+    ///
+    /// Alpha on the window would fade the border with the fill, and a hairline at a quarter
+    /// strength over a busy backdrop is the one line you actually navigate by, lost. So the edge is
+    /// drawn full and only the fill is washed.
+    ///
+    /// Lower than the 0.3 this used when the fill was black. Black at 30% darkens whatever is
+    /// behind it and reads as shadow; a saturated purple at the same value reads as paint, and at
+    /// that strength it swamps the window content underneath rather than tinting it.
+    static let blockAlpha: CGFloat = 0.22
     /// Rectangle's `footprintBorderWidth` default.
     static let borderWidth: CGFloat = 2
 
@@ -332,15 +353,30 @@ final class SnapAppearance {
     /// leaving four wedges of window outside the highlight.
     static let outlineCornerRadius: CGFloat = 10
 
-    /// The anchor dot. Always full strength: it is 14pt across, and at `blockAlpha` — the 30% the
-    /// larger overlays are shown at — it would be invisible.
-    private(set) var dot: NSColor = .controlAccentColor
+    /// The anchor dot. Always full strength: it is 14pt across, and at `blockAlpha` — the fraction
+    /// the larger overlays are washed to — it would be invisible.
+    ///
+    /// Rectangle Pro's equivalent is its reticle, which its own `reticleSize` puts at 15pt — near
+    /// enough the same object at near enough the same size, which is why the two now share a
+    /// colour as well.
+    private(set) var dot: NSColor = SnapAppearance.rectangleHighlight
 
-    /// macOS's own accent, which is what the dot was before it was configurable.
-    static var defaultDot: Color { Color(nsColor: .controlAccentColor) }
+    /// What an unconfigured install gets for all three. One value behind them, so the snap UI ships
+    /// looking like one system and only diverges if someone deliberately pulls it apart.
+    static var defaultOutline: Color { Color(nsColor: rectangleHighlight) }
+    static var defaultLanding: Color { Color(nsColor: rectangleHighlight) }
+    static var defaultDot: Color { Color(nsColor: rectangleHighlight) }
 
-    func apply(dot: Color) {
-        self.dot = NSColor(dot)
+    /// Pushed by `WindowTilingStore` whenever a colour changes, and read again by each overlay on
+    /// its next `show` — every one of them restyles per-show, so a change made mid-session lands on
+    /// the next gesture without anything having to be torn down or redrawn.
+    ///
+    /// Individually optional so a caller can set one without having to know the other two, which is
+    /// how the store's three separate `didSet`s use it.
+    func apply(outline: Color? = nil, landing: Color? = nil, dot: Color? = nil) {
+        if let outline { self.outline = NSColor(outline) }
+        if let landing { self.landing = NSColor(landing) }
+        if let dot { self.dot = NSColor(dot) }
     }
 }
 

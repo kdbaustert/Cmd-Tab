@@ -205,6 +205,67 @@ struct SettingsRow<Control: View>: View {
     }
 }
 
+/// A colour setting: the system colour well, a hex field, and a reset.
+///
+/// Every colour in Settings uses this, so they all gain the same three affordances at once and
+/// cannot drift apart. The well alone was the whole control before, which is fine for choosing a
+/// colour and useless for *reproducing* one — matching a value from a design system, another app's
+/// preferences, or a hex someone sent you means typing it, and the macOS colour panel buries its
+/// own hex field two clicks deep under a mode switch.
+///
+/// The field and the well are two views of one binding, and the focus check is what keeps them from
+/// fighting: while the field has focus the well may still update it (the user can drag in the panel
+/// and watch the hex follow), but a half-typed `#BF5` must never be parsed and written back as the
+/// user reaches the fourth character. So the text is committed on Enter or on losing focus, and
+/// anything that does not parse snaps back to the colour still in force rather than being left as
+/// invalid text pretending to be a setting.
+///
+/// `supportsOpacity: false` and a six-digit field, deliberately paired: `Color.hexString` emits
+/// `#RRGGBB` and `Color(hex:)` accepts exactly that, so an alpha the well could produce would be
+/// silently dropped on the next round trip through storage.
+struct ColorSettingControl: View {
+    @Binding var color: Color
+    /// The value the reset returns to. The button disables itself when there is nothing to undo.
+    let reset: Color
+
+    @State private var text = ""
+    @FocusState private var editing: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ColorPicker("", selection: $color, supportsOpacity: false)
+                .labelsHidden()
+            TextField("", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(width: 78)
+                .focused($editing)
+                .onSubmit(commit)
+                .accessibilityLabel(SettingsChrome.text("Hex colour"))
+            Button("Reset") { color = reset }
+                .disabled(color == reset)
+        }
+        .onAppear { text = color.hexString ?? "" }
+        // Follows the well, and the picker panel while it is open.
+        .onChange(of: color) { _, new in text = new.hexString ?? text }
+        // Focus leaving the field is a commit: clicking straight onto another control should apply
+        // what was typed, not discard it.
+        .onChange(of: editing) { wasEditing, isEditing in
+            if wasEditing, !isEditing { commit() }
+        }
+    }
+
+    private func commit() {
+        guard let parsed = Color(hex: text) else {
+            text = color.hexString ?? ""
+            return
+        }
+        color = parsed
+        // Normalised, so `bf5af2` and `#BF5AF2` both settle on the canonical form.
+        text = parsed.hexString ?? text
+    }
+}
+
 /// A row that is one full-width control rather than a label/control pair — a segmented picker, a
 /// button bar, a list of apps.
 struct SettingsWideRow<Content: View>: View {

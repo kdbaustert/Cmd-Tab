@@ -11,6 +11,10 @@ struct WindowSettings: View {
     @ObservedObject var store: WindowTilingStore
     @ObservedObject private var globals = GlobalActionsStore.shared
 
+    /// Wider than the 168 the recorders use: a `ColorSettingControl` is three controls in a row, not
+    /// one, and the hex field is unusable squeezed into a recorder's width.
+    private static let colorControlWidth: CGFloat = 250
+
     /// The order the rows read in: the four halves, then the four corners, then the three that are
     /// not a fraction of the screen at all.
     private static let groups: [(title: String, arrangements: [WindowArrangement])] = [
@@ -107,17 +111,28 @@ struct WindowSettings: View {
                     }
                 }
                 SettingsRow(
-                    title: "Dot",
-                    subtitle: "The anchor the hold-and-point gesture measures its direction from. "
-                        + "The outline and the landing block are not configurable — they match "
-                        + "Rectangle's snap footprint: light grey on black.",
-                    controlWidth: 168
+                    title: "Target outline",
+                    subtitle: "The border drawn around the window a gesture is about to act on.",
+                    controlWidth: Self.colorControlWidth
                 ) {
-                    HStack(spacing: 8) {
-                        ColorPicker("", selection: $store.dotColor, supportsOpacity: false)
-                            .labelsHidden()
-                        Button("Reset") { store.dotColor = SnapAppearance.defaultDot }
-                    }
+                    ColorSettingControl(
+                        color: $store.outlineColor, reset: SnapAppearance.defaultOutline)
+                }
+                SettingsRow(
+                    title: "Landing block",
+                    subtitle: "The block showing where the window will end up. Drawn as a solid "
+                        + "border with the fill washed back, so one colour covers both.",
+                    controlWidth: Self.colorControlWidth
+                ) {
+                    ColorSettingControl(
+                        color: $store.landingColor, reset: SnapAppearance.defaultLanding)
+                }
+                SettingsRow(
+                    title: "Anchor dot",
+                    subtitle: "The mark the hold-and-point gesture measures its direction from.",
+                    controlWidth: Self.colorControlWidth
+                ) {
+                    ColorSettingControl(color: $store.dotColor, reset: SnapAppearance.defaultDot)
                 }
             }
 

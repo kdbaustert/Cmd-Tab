@@ -691,9 +691,11 @@ final class BehaviorStore: ObservableObject {
     ///   its matching field with it.
     /// - `showBadges`: one switch over both the display and the Space marker. Split into
     ///   `showDisplayBadges` and `showSpaceBadges`, which `Migration.run` seeds from it.
-    /// - `windowSnapHighlightColorHex`: a colour for the snap outline and landing block. Those are
-    ///   fixed now — light grey on black, matching Rectangle's footprint — and only the anchor dot
-    ///   is configurable.
+    /// - `windowSnapHighlightColorHex`: one colour for both the snap outline and the landing block.
+    ///   Retired when both were fixed to grey-on-black; they are configurable again, but as two
+    ///   separate keys rather than the one this was, so the name stays retired.
+    ///   `Migration.reviveSnapHighlightColor` seeds both new keys from it once, so a colour chosen
+    ///   before the withdrawal is not lost.
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
         "alwaysShowTitles", "panelOpacity", "windowSnapHighlightColorHex", "showBadges",
