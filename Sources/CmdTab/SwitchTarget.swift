@@ -272,6 +272,10 @@ extension SwitchTarget {
                     app pick: pid \(pid, privacy: .public) fronting window \
                     \(here, privacy: .public), already on this Desktop
                     """)
+                // The siblings first, so the app arrives as a group rather than as one window with
+                // the rest still buried — see `raiseGroupHere`. Ordered before the pick's own front
+                // so the picked window finishes on top of them.
+                raiseGroupHere(pid: pid, except: here, placement: placement)
                 focusAndActivate(window: here, pid: pid, generation: generation)
                 return
             }
@@ -396,6 +400,47 @@ extension SwitchTarget {
             guard let state = placement[window] else { return false }
             return state.windowSpace == state.currentSpace
         }
+    }
+
+    /// Raises the app's *other* windows that are already on the Desktop in front of the user, so an
+    /// app pick surfaces the whole group the way ⌘-Tab always has.
+    ///
+    /// Fronting one window was right about Spaces and wrong about what picking an app means: an app
+    /// with two windows on this Desktop, one of them covered by something else, came forward with
+    /// the covered one still covered. The app was "in front" and half of it was not.
+    ///
+    /// This is the group raise `mayRaiseWholeWindowGroup` describes and declines to do with
+    /// `.activateAllWindows`, and the reason it is safe here is that it never asks for a *group*.
+    /// `.activateAllWindows` hands the window server a process and lets it decide what to gather,
+    /// which is how windows got hauled off Desktops nobody was looking at. This names specific
+    /// windows, one at a time, and names only those the placement map already puts on the current
+    /// Space — so a window on another Desktop is not merely unlikely to move, it is never mentioned.
+    /// An unreadable placement map means an empty list and no group raise at all, which degrades to
+    /// exactly the previous behaviour.
+    ///
+    /// Back to front, so the app's own stacking survives: each call puts one window on top, so
+    /// replaying them in reverse z-order rebuilds the same order above everything else. `except` is
+    /// the picked window, left out because `focusAndActivate` fronts it immediately afterwards and
+    /// it has to finish on top.
+    private static func raiseGroupHere(
+        pid: pid_t, except target: CGWindowID, placement: [CGWindowID: SpaceMover.SpaceState]
+    ) {
+        let siblings = ownedWindows(
+            pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]
+        )
+        .filter { window in
+            guard window != target, let state = placement[window] else { return false }
+            return state.windowSpace == state.currentSpace
+        }
+        guard !siblings.isEmpty else { return }
+        for window in siblings.reversed() {
+            FrontProcess.raise(window: window, pid: pid)
+        }
+        Log.general.notice(
+            """
+            app pick: pid \(pid, privacy: .public) raised \(siblings.count, privacy: .public) \
+            sibling window(s) already on this Desktop
+            """)
     }
 
     /// The app's frontmost window that the window server actually places on a Desktop.

@@ -71,13 +71,30 @@ enum FrontProcess {
         setFront != nil && postEvent != nil && getProcessForPID != nil
     }
 
+    /// Brings `window` forward **without making it key** — the front change on its own.
+    ///
+    /// The half of `focus` that reorders windows, split out for raising an app's *other* windows
+    /// when its tile is picked. Only one window of the group can be key, so the siblings get this
+    /// and the picked window gets the full `focus` treatment; sending the key-state events to each
+    /// in turn would tell the app it had several windows becoming key one after another, which is
+    /// not something a real click can produce and not something apps are written to expect.
+    ///
+    /// False on the same terms as `focus`: the private symbols are gone, or the process has no
+    /// serial number.
+    @discardableResult
+    static func raise(window: CGWindowID, pid: pid_t) -> Bool {
+        guard let setFront, let getProcessForPID, window != 0 else { return false }
+        var psn = ProcessSerialNumber()
+        guard getProcessForPID(pid, &psn) == noErr else { return false }
+        return setFront(&psn, window, userGenerated) == .success
+    }
+
     /// Fronts `window` without disturbing the rest of `pid`'s windows. False when the private
     /// symbols are gone or the process has no serial number, both of which mean "fall back".
     static func focus(window: CGWindowID, pid: pid_t) -> Bool {
-        guard let setFront, let postEvent, let getProcessForPID, window != 0 else { return false }
+        guard let postEvent, raise(window: window, pid: pid) else { return false }
         var psn = ProcessSerialNumber()
-        guard getProcessForPID(pid, &psn) == noErr else { return false }
-        guard setFront(&psn, window, userGenerated) == .success else { return false }
+        guard let getProcessForPID, getProcessForPID(pid, &psn) == noErr else { return false }
         // The front change alone moves the window server's idea of what is in front; the app's own
         // idea follows only from the events a click would have sent it. Without these, apps that
         // track key state themselves (which is most of them) draw the window as inactive — focused
