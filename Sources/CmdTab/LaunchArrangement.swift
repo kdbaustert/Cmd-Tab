@@ -13,8 +13,23 @@ import ApplicationServices
 ///
 /// Deliberately fires once per launch and never again. Tiling an app's *second* window would fight
 /// the user, who by then is arranging things themselves.
+///
+/// The poll's *state* lives on the main actor; the readiness check itself does not — see `axQueue`.
 @MainActor
 final class LaunchArrangementWatcher {
+    /// Where the readiness check runs.
+    ///
+    /// `hasSwitchableWindow` is Accessibility IPC, several round-trips of it, aimed at an app that
+    /// launched moments ago — the least likely thing on the machine to answer promptly, and each
+    /// call can burn the full `AX` messaging timeout. Run on the main thread that is the run loop
+    /// servicing the keyboard event tap, and a tap that overruns the system's deadline is disabled
+    /// outright, taking every keystroke on the machine with it until it is switched back on. Same
+    /// rule as every other Accessibility call in this app; this one used to be the exception.
+    ///
+    /// `.userInitiated` to match `WindowTiler.queue`, which is what a ready app is handed to.
+    private static let axQueue = DispatchQueue(
+        label: "com.cmdtab.launcharrangement", qos: .userInitiated)
+
     /// Per-app rules, pushed by the controller.
     var appRules: [String: AppRule] = [:]
     /// Gap to leave around the tiled window, from the tiling settings.
@@ -77,7 +92,28 @@ final class LaunchArrangementWatcher {
             watching.remove(pid)
             return
         }
-        guard hasSwitchableWindow(pid: pid) else {
+        // The check leaves the main thread; only its answer comes back, to `resume`, where the
+        // state it acts on lives. See `axQueue`.
+        Self.axQueue.async { [weak self] in
+            let isReady = Self.hasSwitchableWindow(pid: pid)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // `watching` is what says this poll is still wanted: every way one ends —
+                    // giving up, the app quitting, the tile being applied — takes the pid out of
+                    // it, and an answer that lands after any of those has nothing left to do.
+                    guard let self, self.watching.contains(pid) else { return }
+                    self.resume(
+                        pid: pid, arrangement: arrangement, remaining: remaining, isReady: isReady)
+                }
+            }
+        }
+    }
+
+    /// The readiness answer, back on the main thread: tile now, or wait out `delay` and ask again.
+    private func resume(
+        pid: pid_t, arrangement: WindowArrangement, remaining: Int, isReady: Bool
+    ) {
+        guard isReady else {
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay) { [weak self] in
                 self?.poll(pid: pid, arrangement: arrangement, remaining: remaining - 1)
             }
@@ -96,7 +132,10 @@ final class LaunchArrangementWatcher {
 
     /// Whether the app owns a window worth tiling. The role filter is what keeps a splash screen or
     /// a lone dialog from being treated as the app's real window and snapped into a corner.
-    private func hasSwitchableWindow(pid: pid_t) -> Bool {
+    ///
+    /// `nonisolated static` because it runs on `axQueue` and must not be reachable from the main
+    /// thread by accident: it touches no instance state, and the pid is all it needs.
+    private nonisolated static func hasSwitchableWindow(pid: pid_t) -> Bool {
         AX.windows(of: AX.application(pid)).contains(where: AX.isSwitchableWindow)
     }
 }

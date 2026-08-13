@@ -204,9 +204,17 @@ private final class TapThread: Thread, @unchecked Sendable {
         }
     }
 
-    /// Blocks until `runLoop` is set. Called once, from `install`.
-    func waitUntilReady() {
-        ready.wait()
+    /// Blocks until `runLoop` is set, or the deadline passes. Called once, from `install`.
+    ///
+    /// Bounded, because the caller is the main thread — the one servicing the keyboard tap, where an
+    /// unbounded wait on another thread's start-up is the stall the system answers by killing the
+    /// tap. A thread that has not reached `main()` in a second is not about to, and `install` has a
+    /// failure branch for exactly that.
+    ///
+    /// The return value is also what makes reading `runLoop` legal: the signal is the only
+    /// happens-before between the two threads, so a caller that did not get it must not look.
+    func waitUntilReady() -> Bool {
+        ready.wait(timeout: .now() + 1) == .success
     }
 }
 
@@ -349,8 +357,7 @@ final class MouseWindowDrag: @unchecked Sendable {
         thread.qualityOfService = .userInteractive
         thread.name = "com.cmdtab.mousedrag.tap"
         thread.start()
-        thread.waitUntilReady()
-        guard let runLoop = thread.runLoop else {
+        guard thread.waitUntilReady(), let runLoop = thread.runLoop else {
             Log.general.error("mouse drag: tap thread has no run loop")
             CFMachPortInvalidate(tap)
             thread.cancel()

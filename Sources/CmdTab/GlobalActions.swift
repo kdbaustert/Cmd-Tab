@@ -254,10 +254,19 @@ final class GlobalActionsStore: ObservableObject {
 /// The only caller is the event-tap callback, and `SwitcherController`'s invariant is explicit that
 /// NSWorkspace and LaunchServices belong behind a `DispatchQueue.main.async`: a tap that overruns
 /// the system's deadline is disabled outright, and while it is down *every* keystroke on the machine
-/// is dropped. `perform(.hide)` walks every running application and sends each one an IPC `hide()`,
-/// and `activate` can reach LaunchServices for an app that is not running — neither is anywhere near
+/// is dropped. `perform(.hide)` walks every running application and sends each one a `hide()`, and
+/// `activate` can reach LaunchServices for an app that is not running — neither is anywhere near
 /// cheap enough for the callback. Deferring costs nothing: nothing here reports back, and the key is
 /// already swallowed by the time these run.
+///
+/// It also does not, on its own, make them safe — the tap is serviced by the main run loop, so this
+/// moves the work off the callback without moving it off the callback's *thread*. See the second
+/// half of `SwitcherController`'s doc comment for what that distinction means. These stay on main
+/// because the alternative is worse rather than because they are free: `NSWorkspace` and
+/// `NSRunningApplication` are main-thread APIs, and both calls below are asynchronous in the sense
+/// that matters — `hide()` posts a request to the app and returns rather than waiting on it, so the
+/// walk is bounded by the number of running apps and not by the slowest one. Anything added here
+/// that would *wait* on another process belongs on a queue of its own instead.
 enum GlobalActions {
     /// Brings an app forward, launching it if it is not running.
     ///

@@ -36,6 +36,20 @@ private enum Key {
 /// else.** A tap that overruns the system's deadline is disabled outright, and while it is down
 /// every keystroke on the machine is dropped — so SwiftUI layout, Accessibility calls, LaunchServices
 /// and NSWorkspace all belong behind a `DispatchQueue.main.async`, never inline.
+///
+/// What that `async` does and does not buy, because the difference is easy to get wrong and the
+/// failure it hides is the loudest one this app has: it gets the *callback* to return, which is the
+/// only thing the callback itself can control. It does not take the work off the tap's thread. The
+/// run-loop source is added to `CFRunLoopGetMain()` (see `EventTap.start`), so posted work runs on
+/// the very loop the tap is serviced from, ahead of the *next* event — and the system's deadline
+/// runs from when an event is posted, not from when the callback is entered, so a main thread busy
+/// elsewhere starves the tap just as effectively as a slow callback would. Posting is therefore
+/// necessary and not sufficient: anything landing on main has to be short as well. Work that cannot
+/// promise that gets a queue of its own — `TargetProvider.axQueue`, `WindowTiler.queue`,
+/// `SwitchTarget.focusQueue`, `LaunchArrangementWatcher.axQueue` — which is where every
+/// Accessibility call in this app lives, and the mouse tap goes one further and takes a whole
+/// thread (`MouseWindowDrag.TapThread`). The keyboard tap cannot follow it there: `handle` touches
+/// main-actor state throughout, so its home is main and the burden stays on keeping main free.
 @MainActor
 final class SwitcherController {
     private let model = SwitcherModel()
