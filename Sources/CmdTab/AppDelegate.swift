@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // First, so the measurement covers launch too — the busiest the main thread ever gets, and
+        // the one stretch where a stall is expected rather than alarming. See the type.
+        MainLoopMonitor.start()
+
         // Before any store is touched: the first read of one is what would bake in the defaults.
         Migration.run()
 
