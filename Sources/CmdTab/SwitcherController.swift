@@ -68,25 +68,25 @@ final class SwitcherController {
     /// happened to complete before the panel drew, which on a cold list is nothing.
     private var thumbnailSubscription: AnyCancellable?
     private var tap: EventTap?
-    private var isVisible = false
+    private var isVisible = false { didSet { publishTapState() } }
     /// Second source of truth for "is the trigger still down". See `startWatchdog`.
     private var watchdog: Timer?
 
     // Quick-switch arming: between a trigger press and the show-delay firing, the panel is not yet
     // on screen. Releasing the modifier in that window switches straight to the previous target.
-    private var armed = false
+    private var armed = false { didSet { publishTapState() } }
     private var armedBackwards = false
     private var armedTargets: [SwitchTarget] = []
     private var armWorkItem: DispatchWorkItem?
     /// Modifiers of whichever hotkey opened the current session; releasing them ends it.
-    private var activeHeld: CGEventFlags = [.maskCommand]
+    private var activeHeld: CGEventFlags = [.maskCommand] { didSet { publishTapState() } }
 
     // A same-app cycle whose window list is still being fetched. The list can't be built on the tap
     // callback (per-window Accessibility walk), so the trigger is swallowed before there is anything
     // to show — which means a modifier released inside that window has to be remembered and acted on
     // when the list lands. Without that, a quick tap — by far the most common way this key is used —
     // would do nothing at all.
-    private var pendingSameApp = false
+    private var pendingSameApp = false { didSet { publishTapState() } }
     private var pendingSameAppReleased = false
     private var sameAppDeadline: DispatchWorkItem?
     /// How long to wait for the frontmost app's window list before abandoning the cycle.
@@ -98,7 +98,7 @@ final class SwitcherController {
     private var sessionToken = 0
 
     /// Whether this session is *allowed* to stay up after the trigger is released.
-    private var isSticky = false
+    private var isSticky = false { didSet { publishTapState() } }
 
     /// The session's end-of-life rules, as a value. See `SessionRelease` — the logic lives there so
     /// it can be tested without an event tap, a panel or Accessibility.
@@ -138,6 +138,7 @@ final class SwitcherController {
     /// Pushed by `AppDelegate` whenever they change.
     var tiling: WindowTilingBindings = .defaults {
         didSet {
+            publishTapState()
             dragSnap.gap = tiling.gap
             mouseWindowDrag.gap = tiling.gap
             targetHighlight.gap = tiling.gap
@@ -171,18 +172,21 @@ final class SwitcherController {
         targetHighlight.retryInstallIfNeeded()
     }
     /// Per-app jump chords, same arrangement.
-    var activations = DirectActivations()
+    var activations = DirectActivations() { didSet { publishTapState() } }
     /// The hide-all / show-all chords.
-    var allWindows = AllWindowsShortcuts()
+    var allWindows = AllWindowsShortcuts() { didSet { publishTapState() } }
     /// Extra triggers that open a narrowed window list.
-    var scopedTriggers = ScopedTriggers()
+    var scopedTriggers = ScopedTriggers() { didSet { publishTapState() } }
 
     /// User-configurable key bindings for the in-switcher window actions.
     var shortcuts: SwitcherShortcuts = .defaults {
-        didSet { warnAboutShadowedActions() }
+        didSet {
+            publishTapState()
+            warnAboutShadowedActions()
+        }
     }
     /// Whether those bindings are live at all. Off leaves every ⌥-key to type-to-filter.
-    var actionsEnabled = false
+    var actionsEnabled = false { didSet { publishTapState() } }
     /// Confirm before quit / force-quit.
     var confirmsDestructiveActions = true
 
@@ -303,16 +307,101 @@ final class SwitcherController {
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
     /// themselves.
-    var sameAppHotkey: Hotkey?
+    var sameAppHotkey: Hotkey? { didSet { publishTapState() } }
 
     /// The combination that opens the switcher. Changing it re-syncs the system ⌘-Tab: the native
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
     var hotkey: Hotkey = .commandTab {
         didSet {
+            publishTapState()
             warnAboutShadowedActions()
             guard hotkey != oldValue, isRunning else { return }
             SystemSwitcher.setNativeEnabled(!hotkey.isCommandTab)
         }
+    }
+
+    // MARK: - Tap state mirror
+
+    /// The decision inputs, published where a tap on another thread could read them. See `TapState`.
+    ///
+    /// Not yet load-bearing: the tap still runs on the main run loop and `handle` still reads the
+    /// live properties. What it does today is prove itself — every keystroke checks the mirror
+    /// against the truth, so a mutation that forgets to publish is a log line now rather than an
+    /// intermittent misroute later.
+    private let tapMirror = TapStateMirror()
+
+    private var activeObservers: [NSObjectProtocol] = []
+
+    /// Starts mirroring whether Cmd-Tab is frontmost. Called from `start()`, alongside the tap.
+    ///
+    /// `NSApp.isActive` is the one main-thread-only AppKit read on the decision path, so it is the
+    /// one input a tap on another thread could not simply take with it — it has to be observed
+    /// instead.
+    ///
+    /// The notifications re-*publish* rather than cache a bool of their own, which is what makes
+    /// this self-checking. `liveTapState` reads the AppKit truth; the mirror holds the truth as of
+    /// the last publish; so a notification that fails to arrive shows up in `verify` as a stale
+    /// `isAppActive`, named in the log, instead of as a tiling chord that silently stops working.
+    /// Caching the value from the notification name would have made the two agree by construction
+    /// and checked nothing.
+    private func startActiveMirror() {
+        guard activeObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        let republish: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.publishTapState() }
+        }
+        activeObservers = [
+            center.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main,
+                using: republish),
+            center.addObserver(
+                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main,
+                using: republish),
+        ]
+        // Seeded rather than assumed: the notifications report only *changes*, and Settings can
+        // already be frontmost by the time trust is granted and this runs.
+        publishTapState()
+    }
+
+    private func stopActiveMirror() {
+        activeObservers.forEach(NotificationCenter.default.removeObserver)
+        activeObservers = []
+    }
+
+    /// The decision inputs as they are right now, read from the live properties.
+    ///
+    /// The single place that knows how a `TapState` is assembled, so the published copy and the copy
+    /// `verify` compares against can never be built two different ways.
+    private var liveTapState: TapState {
+        TapState(
+            isVisible: isVisible,
+            armed: armed,
+            pendingSameApp: pendingSameApp,
+            isSticky: isSticky,
+            activeHeldRaw: activeHeld.rawValue,
+            hotkey: hotkey,
+            sameAppHotkey: sameAppHotkey,
+            scopedTriggers: scopedTriggers,
+            activations: activations,
+            allWindows: allWindows,
+            tiling: tiling,
+            shortcuts: shortcuts,
+            actionsEnabled: actionsEnabled,
+            // The AppKit truth, deliberately — see `startActiveMirror` for why this one field is
+            // read live rather than taken from a cache the notifications maintain.
+            isAppActive: NSApp.isActive,
+            hasQuery: !model.query.isEmpty)
+    }
+
+    /// Publishes the current inputs to the mirror.
+    ///
+    /// Called from `didSet` on every property in the set rather than from the places that assign
+    /// them, and that is deliberate: there are sixteen assignment sites for the five session flags
+    /// alone, and a rule that lives on the property cannot be forgotten by a new call site the way a
+    /// rule that lives at the call sites can. The one thing `didSet` cannot cover is state owned
+    /// elsewhere — `model.query` — which publishes from `setQuery`.
+    private func publishTapState() {
+        tapMirror.publish(liveTapState)
     }
 
     /// Logs a trigger/action modifier collision.
@@ -349,6 +438,8 @@ final class SwitcherController {
             return false
         }
         self.tap = tap
+        // Alongside the tap, since it feeds the same decision and is only needed once one is live.
+        startActiveMirror()
         panels.onPick = { [weak self] index in self?.pick(index) }
         panels.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
@@ -395,6 +486,7 @@ final class SwitcherController {
         cancel()
         tap?.stop()
         tap = nil
+        stopActiveMirror()
         SystemSwitcher.restoreNativeIfNeeded()
     }
 
@@ -410,6 +502,19 @@ final class SwitcherController {
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
+        // The mirror earning its keep. Both sides are readable from this thread for as long as the
+        // tap lives on the main run loop, so this is the window in which a missed publish can be
+        // caught for free — see `TapStateMirror.verify`. It is also the line to delete when the tap
+        // moves: at that point the mirror *is* the input and there is nothing left to compare to.
+        //
+        // Key-downs only. This is scaffolding on the hottest path in the app, where the rule is that
+        // nothing but trivial state changes hands, and building a `TapState` walks a few small
+        // collections to compare them. Key-down is where every routing decision is actually taken —
+        // `flagsChanged` returns above and a key-up is either swallowed or ignored — so restricting
+        // it costs no coverage: any publish a modifier event failed to make is caught by the next
+        // key-down, which is the first event that could act on it.
+        if type == .keyDown { tapMirror.verify(against: liveTapState) }
+
         // Mask event.flags to device-independent bits only — on macOS 26, event.flags can include
         // device-dependent bits that don't match the device-independent masks we check against.
         // Polling CGEventSource.flagsState avoids those bits but races: the modifier state can
@@ -673,6 +778,9 @@ final class SwitcherController {
     /// Applies a new filter query and relays out — the list, and often its column count, change.
     private func setQuery(_ query: String) {
         model.setQuery(query)
+        // The one decision input `didSet` cannot reach, since the query lives on the model. Only
+        // whether there *is* one is mirrored — see `TapState.hasQuery`.
+        publishTapState()
         updateLaunchSuggestions(for: query)
         scheduleLayout()
     }
