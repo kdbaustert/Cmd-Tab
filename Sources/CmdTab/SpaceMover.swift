@@ -188,10 +188,36 @@ enum SpaceMover {
             Log.general.notice("space reveal: cannot switch Space, private symbol unavailable")
             return Reveal(state: state, switched: false)
         }
-        Log.general.notice(
-            "space reveal: window \(window, privacy: .public) space \(state.currentSpace, privacy: .public) -> \(state.windowSpace, privacy: .public)"
-        )
         let cid = mainConnection()
+        // The Space to hide is read here rather than taken from `state`, and that is the whole of
+        // the difference between one Desktop on screen and two.
+        //
+        // `state` is a snapshot, and on the path that reaches this call it is an old one by
+        // construction: the caller has just spent the better part of a second activating the app and
+        // watching to see whether macOS would travel on its own. A Desktop change during that second
+        // — the user's own, or macOS's switch landing just after the caller gave up on it — moves
+        // the Desktop out from under the reading, and hiding the Space that *was* current then
+        // leaves the one that actually is composited on screen with the destination shown on top of
+        // it. Both Desktops are drawn at once, the picked window among them, and the next genuine
+        // transition re-composites and takes it away again: "the window came over to my Desktop, and
+        // went back the moment I switched Desktops by hand".
+        //
+        // Only the hide is affected. The destination and the display belong to the window, not to
+        // wherever the user happens to be standing when the switch is issued.
+        let origin = currentSpace(ofDisplay: state.display) ?? state.currentSpace
+        let fresh = SpaceState(
+            windowSpace: state.windowSpace, currentSpace: origin, display: state.display)
+        guard origin != state.windowSpace else {
+            Log.general.notice(
+                """
+                space reveal: window \(window, privacy: .public) is already on space \
+                \(origin, privacy: .public); no switch
+                """)
+            return Reveal(state: fresh, switched: false)
+        }
+        Log.general.notice(
+            "space reveal: window \(window, privacy: .public) space \(origin, privacy: .public) -> \(state.windowSpace, privacy: .public)"
+        )
         // Show the destination and hide the origin *around* the current-Space write, rather than
         // making that write the whole of the switch.
         //
@@ -215,13 +241,13 @@ enum SpaceMover {
         // better served by the old bookkeeping-only switch than by no switch at all.
         if let showSpaces, let hideSpaces {
             showSpaces(cid, [NSNumber(value: state.windowSpace)] as CFArray)
-            hideSpaces(cid, [NSNumber(value: state.currentSpace)] as CFArray)
+            hideSpaces(cid, [NSNumber(value: origin)] as CFArray)
         } else {
             Log.general.notice(
                 "space reveal: no show/hide symbols; the switch may not re-composite the display")
         }
         setCurrentSpace(cid, state.display as CFString, state.windowSpace)
-        return Reveal(state: state, switched: true)
+        return Reveal(state: fresh, switched: true)
     }
 
     /// Which Space `display` is showing right now, and nothing else.

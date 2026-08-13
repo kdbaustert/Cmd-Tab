@@ -752,7 +752,8 @@ extension SwitchTarget {
         case superseded
     }
 
-    /// Activates `pid` and waits to see whether macOS travels to the window's Desktop by itself.
+    /// Activates `pid` — twice, if the first ask goes unanswered — and waits to see whether macOS
+    /// travels to the window's Desktop by itself.
     ///
     /// Activation has two possible outcomes and they are opposites: travel to the window, or drag
     /// the window here. Which one you get is the Mission Control setting the caller checks. The
@@ -775,11 +776,24 @@ extension SwitchTarget {
             focus window \(id, privacy: .public): asking macOS to travel to space \
             \(state.windowSpace, privacy: .public) from \(state.currentSpace, privacy: .public)
             """)
-        activate(pid: pid)
-
-        // Blocks `focusQueue` while it waits, which is why the cap is 700ms rather than the couple of
-        // seconds the rest of this file allows itself: a pick that lands during the wait queues
-        // behind it, and a switcher that stutters under fast repeated picks would be its own bug.
+        // Blocks `focusQueue` while it waits, which is why the whole budget is under a second rather
+        // than the couple of seconds the rest of this file allows itself: a pick that lands during
+        // the wait queues behind it, and a switcher that stutters under fast repeated picks would be
+        // its own bug.
+        //
+        // Spent in two rounds rather than one long wait, and the round boundary is where the
+        // activation is re-issued. A decline is far more often a request macOS dropped than macOS
+        // refusing to travel, and the log is unambiguous about it: every declined pick recorded so
+        // far was repeated within a few minutes and travelled on the retry — Ghostty 6 -> 1 declining
+        // after the full wait at 10:47:58, the identical pick landing in 410ms at 10:50:46. Nothing
+        // about the two picks differs, so a second ask is the difference between them. Asking twice
+        // is also the *only* fix worth making here: the private switch below re-points the window
+        // server's current Space without the Dock's involvement, and every way it can leave the
+        // display half-composited is a way for the picked window to appear on the Desktop the user
+        // was already on. Fewer trips down that path is worth more than any hardening of it.
+        //
+        // The first round is the longer one. Arrival clusters at 377-446ms measured across 144
+        // switches, so a switch that is coming must not have a second request thrown at it.
         //
         // Only the display's current Space is read per turn — see `SpaceMover.currentSpace`. Asking
         // for the *window's* placement here instead would rebuild the whole display/Space map on
@@ -787,39 +801,49 @@ extension SwitchTarget {
         // That is also what makes a fine-grained poll affordable: the turn is one round-trip, so the
         // interval can be set by how promptly we want to notice the arrival rather than by what each
         // check costs. It used to be 50ms, which put up to a full 50ms of pure granularity between
-        // macOS landing on the Desktop and this noticing — measured across 144 switches, arrival
-        // clusters at 377-446ms, so that overshoot was a fifth of the wait and none of it was work.
-        for _ in 0..<35 {
-            usleep(20_000)
-            guard generation == focusGeneration else { return .superseded }
-            guard SpaceMover.currentSpace(ofDisplay: state.display) == state.windowSpace else {
-                continue
+        // macOS landing on the Desktop and this noticing — a fifth of the wait, and none of it work.
+        for round in 0..<2 {
+            if round > 0 {
+                Log.general.notice(
+                    """
+                    focus window \(id, privacy: .public): no travel yet, asking pid \
+                    \(pid, privacy: .public) a second time
+                    """)
             }
-            Log.general.notice(
-                """
-                focus window \(id, privacy: .public): macOS switched to space \
-                \(state.windowSpace, privacy: .public) on its own
-                """)
-            // The app is up and on the right Desktop; this puts the *picked* window in front of its
-            // siblings. Safe here in a way it is not before arrival — see `focusAndActivate`.
-            //
-            // "Arrived" is a weaker claim here than on the fallback path, and the deadline is what
-            // accounts for the difference. The gate above is the window server's `Current Space`
-            // field, which `spaceSettleDelay` documents as flipping while the transition still has
-            // several hundred milliseconds to run — so this line can be reached mid-transition,
-            // where the fallback path has waited the delay out before it acts.
-            //
-            // The raise and the front are sent anyway, because neither is what relocates a window:
-            // an off-Space `AXRaise` is measured to do nothing, and `FrontProcess` names one window
-            // by id rather than gathering an app's. Only the *activation fallbacks* inside are the
-            // gathering call, and only those are held until the transition is certainly over. On the
-            // 152 logged picks that reached here `FrontProcess` succeeded every time, so the
-            // deadline costs the common case nothing at all — it is the failure branch that would
-            // otherwise activate into a running transition and haul the app's other windows over.
-            focusAndActivate(
-                window: id, pid: pid, generation: generation,
-                activationNotBefore: .now() + spaceSettleDelay)
-            return .arrived
+            activate(pid: pid)
+            for _ in 0..<(round == 0 ? 20 : 16) {
+                usleep(20_000)
+                guard generation == focusGeneration else { return .superseded }
+                guard SpaceMover.currentSpace(ofDisplay: state.display) == state.windowSpace else {
+                    continue
+                }
+                Log.general.notice(
+                    """
+                    focus window \(id, privacy: .public): macOS switched to space \
+                    \(state.windowSpace, privacy: .public) on its own
+                    """)
+                // The app is up and on the right Desktop; this puts the *picked* window in front of
+                // its siblings. Safe here in a way it is not before arrival — see `focusAndActivate`.
+                //
+                // "Arrived" is a weaker claim here than on the fallback path, and the deadline is
+                // what accounts for the difference. The gate above is the window server's `Current
+                // Space` field, which `spaceSettleDelay` documents as flipping while the transition
+                // still has several hundred milliseconds to run — so this line can be reached
+                // mid-transition, where the fallback path has waited the delay out before it acts.
+                //
+                // The raise and the front are sent anyway, because neither is what relocates a
+                // window: an off-Space `AXRaise` is measured to do nothing, and `FrontProcess` names
+                // one window by id rather than gathering an app's. Only the *activation fallbacks*
+                // inside are the gathering call, and only those are held until the transition is
+                // certainly over. On the 152 logged picks that reached here `FrontProcess` succeeded
+                // every time, so the deadline costs the common case nothing at all — it is the
+                // failure branch that would otherwise activate into a running transition and haul
+                // the app's other windows over.
+                focusAndActivate(
+                    window: id, pid: pid, generation: generation,
+                    activationNotBefore: .now() + spaceSettleDelay)
+                return .arrived
+            }
         }
 
         // It did not travel. One full placement read now — the only one this function takes — both
