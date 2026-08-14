@@ -31,8 +31,15 @@ struct WindowThumb: Identifiable {
     let title: String
     /// The owning app, so a clicked thumbnail can be raised and activated.
     let pid: pid_t
-    /// Minimized windows have no pixels to capture — `image` is the app icon for those.
+    /// Whether the window is sitting in the Dock. Drives the badge only — a minimized window
+    /// usually still captures, so this says nothing about what `image` holds.
     let isMinimized: Bool
+    /// Whether `image` is real window pixels rather than the app icon standing in for them.
+    ///
+    /// Separate from `isMinimized` because the two came apart: the icon is the fallback for any
+    /// window that would not capture, minimized or not, and a minimized window that *did* capture
+    /// must still be laid out — and badged — as the real thing.
+    let hasCapture: Bool
     /// Which display the window is on, or nil with a single display (or when it can't be placed).
     /// An app's windows are routinely spread across monitors, and the strip gathers all of them —
     /// so without this there is no way to tell which screen a thumbnail will take you to.
@@ -63,7 +70,8 @@ actor WindowCapture {
     private struct Entry: @unchecked Sendable {
         let id: CGWindowID
         let title: String
-        /// The capture source, or nil for a minimized window — which has no surface to capture.
+        /// The capture source, or nil for a window Accessibility named but ScreenCaptureKit did not
+        /// list — there is nothing to point a filter at for those.
         let window: SCWindow?
         let isMinimized: Bool
         let displayIndex: Int?
@@ -219,10 +227,14 @@ actor WindowCapture {
         var entries = live.map { window -> Entry in
             let isDocked = dockedIDs.contains(window.windowID)
             return Entry(
-                // No capture source for a docked window: its surface is gone, and asking for one
-                // costs a failed SC round-trip per tile to arrive at the icon fallback anyway.
+                // Docked windows are captured like any other. The comment that used to sit here
+                // said their surface was gone and the round-trip would only fail its way to the
+                // icon — measured against the docked set this code computes, that is wrong: the
+                // window server keeps the backing surface, and every genuinely minimized window
+                // returned real, non-blank pixels in 15-60ms. `isBlank` still catches the ones that
+                // don't, so the icon remains the fallback rather than the default.
                 id: window.windowID, title: window.title ?? "",
-                window: isDocked ? nil : window, isMinimized: isDocked,
+                window: window, isMinimized: isDocked,
                 // A docked window's frame is where it *was*, which on a multi-display setup is not
                 // where clicking it will take you. Badge nothing rather than the wrong monitor.
                 displayIndex: isDocked
@@ -297,7 +309,7 @@ actor WindowCapture {
                 let size = NSSize(width: image.width, height: image.height)
                 return WindowThumb(
                     id: index, windowID: entry.id, image: NSImage(cgImage: image, size: size),
-                    title: entry.title, pid: pid, isMinimized: false,
+                    title: entry.title, pid: pid, isMinimized: entry.isMinimized, hasCapture: true,
                     displayIndex: entry.displayIndex)
             }
             // Captured blank: one of the invisible helper surfaces Electron and friends keep around
@@ -309,7 +321,7 @@ actor WindowCapture {
             icon ?? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) ?? NSImage()
         return WindowThumb(
             id: index, windowID: entry.id, image: fallback, title: entry.title, pid: pid,
-            isMinimized: entry.isMinimized, displayIndex: entry.displayIndex)
+            isMinimized: entry.isMinimized, hasCapture: false, displayIndex: entry.displayIndex)
     }
 
     /// The broken states worth one line each rather than one per hover.
@@ -582,9 +594,9 @@ private struct PreviewStripView: View {
 
     @ViewBuilder
     private func image(_ thumb: WindowThumb) -> some View {
-        if thumb.isMinimized {
-            // The app icon, padded into a tile the size a real capture would be, so a minimized
-            // window doesn't collapse the row it is in.
+        if !thumb.hasCapture {
+            // The app icon, padded into a tile the size a real capture would be, so a window that
+            // wouldn't capture doesn't collapse the row it is in.
             Image(nsImage: thumb.image)
                 .resizable()
                 .aspectRatio(contentMode: .fit)

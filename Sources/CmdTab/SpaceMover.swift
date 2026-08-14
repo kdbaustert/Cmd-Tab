@@ -278,9 +278,22 @@ enum SpaceMover {
     static func travel(toSpace space: UInt64, onDisplay display: String, budget: Int = 12) -> Bool {
         let ordered = userSpaces(ofDisplay: display)
         guard ordered.contains(space) else { return false }
-        for _ in 0..<budget {
+        let start = currentSpace(ofDisplay: display)
+        for step in 0..<budget {
             guard let now = currentSpace(ofDisplay: display) else { return false }
             if now == space { return true }
+            // The first step is also the test of whether the shortcut works here at all, and a
+            // failure is the common case rather than the exotic one: macOS refuses synthetic events
+            // for system hotkeys, measured both from a scratch binary and from this app with
+            // Accessibility granted. Walking the whole budget to discover that costs the pick five
+            // and a half seconds of doing nothing, which the user experiences as the switcher having
+            // hung. One step is enough to know.
+            if step == 1, now == start {
+                Log.general.notice(
+                    "space travel: the Mission Control shortcut moved nothing; giving up after one step"
+                )
+                return false
+            }
             guard let from = ordered.firstIndex(of: now),
                 let to = ordered.firstIndex(of: space)
             else { return false }
