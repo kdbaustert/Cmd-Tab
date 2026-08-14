@@ -865,11 +865,14 @@ final class SwitcherController {
             guard let self else { return }
             self.layoutQueued = false
             guard self.isVisible else { return }
-            self.panels.layout()
-            // The list under a stationary cursor may have changed — a tile quit, closed or hidden,
-            // or a background refresh folded in a new one — so the strip has to follow whatever is
-            // under the pointer now. Deduped downstream, so an unchanged target costs nothing.
-            self.panels.refreshPreview()
+            MainLoopMonitor.marking("panel layout") {
+                self.panels.layout()
+                // The list under a stationary cursor may have changed — a tile quit, closed or
+                // hidden, or a background refresh folded in a new one — so the strip has to follow
+                // whatever is under the pointer now. Deduped downstream, so an unchanged target
+                // costs nothing.
+                self.panels.refreshPreview()
+            }
         }
     }
 
@@ -1132,7 +1135,7 @@ final class SwitcherController {
 
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
-            self.panels.show()
+            MainLoopMonitor.marking("panel show") { self.panels.show() }
             // `.public` deliberately: interpolation redacts by default, and this line reading
             // `frame=<private>` is exactly why a log full of apparently healthy shows could not
             // tell a panel that drew from one that came up 0×0 or fully transparent. There is

@@ -25,6 +25,14 @@ enum AX {
     /// Our own windows are ordinary tiling targets, so rather than making every caller know which
     /// process it is about to touch, the hop lives here. Safe from deadlock because nothing on the
     /// main thread ever waits on the queues these calls run from; they are all `async`.
+    ///
+    /// Nesting is free and deliberate. The inner call finds `Thread.isMainThread` already true —
+    /// the outer hop put it there — and runs inline, so wrapping a whole walk in one of these
+    /// collapses what would otherwise be one `main.sync` per read into a single hop. That is what
+    /// `frame`, `setFrame` and `window(ofApplication:matching:)` below are for: a modifier-drag of
+    /// this app's *own* settings window writes at up to 120Hz, and paying two synchronous hops onto
+    /// the main thread per frame — on the very thread the keyboard tap is serviced from — is the one
+    /// place this wrapper's convenience turned into a cost worth measuring.
     @discardableResult
     private static func onOwningThread<T>(_ element: AXUIElement, _ work: () -> T) -> T {
         var owner: pid_t = 0
@@ -188,6 +196,31 @@ enum AX {
         }
     }
 
+    /// Position and size as one rectangle, read in a single hop. See `onOwningThread`.
+    static func frame(_ window: AXUIElement) -> CGRect? {
+        onOwningThread(window) {
+            guard let origin = position(window), let size = size(window) else { return nil }
+            return CGRect(origin: origin, size: size)
+        }
+    }
+
+    /// Writes a frame in a single hop.
+    ///
+    /// `repositionAfterSizing` is the "position, size, position" dance the tilers do: some apps
+    /// clamp a move against their current size and others clamp a resize against the screen edge
+    /// from their old origin, and setting the origin on both sides of the resize is what makes both
+    /// land. A move needs none of it — the size is not changing — so it asks for neither.
+    static func setFrame(
+        _ window: AXUIElement, _ frame: CGRect, sizing: Bool, repositionAfterSizing: Bool = false
+    ) {
+        onOwningThread(window) {
+            setPosition(window, frame.origin)
+            guard sizing else { return }
+            setSize(window, frame.size)
+            if repositionAfterSizing { setPosition(window, frame.origin) }
+        }
+    }
+
     /// The app's frontmost *real* window — the one a window-management action should act on.
     ///
     /// Two things this cannot be a bare `kAXFocusedWindow` read. First, focus lands on palettes,
@@ -222,12 +255,18 @@ enum AX {
     static func window(ofApplication pid: pid_t, matching bounds: CGRect, tolerance: CGFloat = 4)
         -> AXUIElement?
     {
-        windows(of: application(pid)).first { window in
-            guard let origin = AX.position(window), let size = AX.size(window) else { return false }
-            return abs(origin.x - bounds.minX) < tolerance
-                && abs(origin.y - bounds.minY) < tolerance
-                && abs(size.width - bounds.width) < tolerance
-                && abs(size.height - bounds.height) < tolerance
+        let app = application(pid)
+        // The whole walk inside one hop. For another process this changes nothing — `onOwningThread`
+        // runs inline there — but for this app's own windows it is the difference between one
+        // `main.sync` and `2n + 1` of them, on the thread the keyboard tap is serviced from.
+        return onOwningThread(app) {
+            windows(of: app).first { window in
+                guard let frame = AX.frame(window) else { return false }
+                return abs(frame.origin.x - bounds.minX) < tolerance
+                    && abs(frame.origin.y - bounds.minY) < tolerance
+                    && abs(frame.width - bounds.width) < tolerance
+                    && abs(frame.height - bounds.height) < tolerance
+            }
         }
     }
 

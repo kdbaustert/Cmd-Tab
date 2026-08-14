@@ -13,6 +13,16 @@ import XCTest
 /// caught by using the app.
 final class TapStateTests: XCTestCase {
 
+    /// A mirror that reports nowhere.
+    ///
+    /// Every verification test below deliberately makes the mirror disagree, and with the production
+    /// reporter each one writes an `.error` line into `com.cmdtab.CmdTab` from `xctest`. Those are
+    /// indistinguishable in `log show` from the real report, which is the one this whole mechanism
+    /// exists to make findable — so the tests stay silent and assert on `mismatches` instead.
+    private func silentMirror() -> TapStateMirror {
+        TapStateMirror(report: { _ in })
+    }
+
     // MARK: - Publishing
 
     func testAFreshMirrorHoldsDefaults() {
@@ -20,7 +30,7 @@ final class TapStateTests: XCTestCase {
     }
 
     func testPublishingReplacesWhatIsRead() {
-        let mirror = TapStateMirror()
+        let mirror = silentMirror()
         var state = TapState()
         state.isVisible = true
         state.hasQuery = true
@@ -29,7 +39,7 @@ final class TapStateTests: XCTestCase {
     }
 
     func testTheLastPublishWins() {
-        let mirror = TapStateMirror()
+        let mirror = silentMirror()
         var first = TapState()
         first.armed = true
         var second = TapState()
@@ -42,7 +52,7 @@ final class TapStateTests: XCTestCase {
     // MARK: - Verification
 
     func testAgreementIsNotCountedAsAMismatch() {
-        let mirror = TapStateMirror()
+        let mirror = silentMirror()
         var state = TapState()
         state.isVisible = true
         mirror.publish(state)
@@ -51,7 +61,7 @@ final class TapStateTests: XCTestCase {
     }
 
     func testAStalePublishIsCaught() {
-        let mirror = TapStateMirror()
+        let mirror = silentMirror()
         mirror.publish(TapState())
         var live = TapState()
         live.isVisible = true
@@ -60,7 +70,7 @@ final class TapStateTests: XCTestCase {
     }
 
     func testEveryMismatchIsCounted() {
-        let mirror = TapStateMirror()
+        let mirror = silentMirror()
         mirror.publish(TapState())
         var live = TapState()
         live.armed = true
@@ -93,7 +103,7 @@ final class TapStateTests: XCTestCase {
             ("hasQuery", { $0.hasQuery = true }),
         ]
         for (name, mutate) in mutations {
-            let mirror = TapStateMirror()
+            let mirror = silentMirror()
             mirror.publish(TapState())
             var live = TapState()
             mutate(&live)

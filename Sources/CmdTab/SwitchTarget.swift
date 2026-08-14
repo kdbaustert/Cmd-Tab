@@ -313,7 +313,9 @@ extension SwitchTarget {
                 """)
             // With the placement already in hand: `placedFrontWindow` picked `front` *because* the
             // map places it, so re-reading it there could only lose the answer, never improve it.
-            focusWindow(id: front, pid: pid, placement: state)
+            // The whole map goes down rather than `state` alone — `focusWindow` needs this app's
+            // other windows to tell a Desktop switch from a gather.
+            focusWindow(id: front, pid: pid, placement: placement)
         }
     }
 
@@ -466,6 +468,28 @@ extension SwitchTarget {
             .first { placement[$0] != nil }
     }
 
+    /// Whether `pid` already has a window on a Space that is currently being displayed.
+    ///
+    /// The question activation's behaviour turns on: an app with something on screen is one macOS
+    /// will not travel for, so activating it can only bring it forward where the user is standing —
+    /// gathering whatever it owns elsewhere. See the call in `focusWindow`.
+    ///
+    /// `currentSpace` is per display in this map, which is what makes the answer right on a
+    /// multi-monitor setup: a window on the second display's visible Space counts as on screen even
+    /// though it is nowhere near the Desktop the pick came from. That is precisely the case this
+    /// exists for, and a single-display reading of "is it on the current Desktop" would miss it.
+    ///
+    /// Takes the map rather than reading one, so the caller's single enumeration answers both this
+    /// and the placement — see `windowSpaces`, which costs a round trip per Space.
+    private static func hasWindowOnScreen(
+        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState]
+    ) -> Bool {
+        ownedWindows(pid: pid, options: [.excludeDesktopElements]).contains { window in
+            guard let state = placement[window] else { return false }
+            return state.windowSpace == state.currentSpace
+        }
+    }
+
     /// The ordinary windows `pid` owns, front to back.
     ///
     /// Layer 0 only, and desktop elements excluded, so Finder's desktop — which it owns for the
@@ -608,13 +632,18 @@ extension SwitchTarget {
     /// window when it can be found; for apps whose AX window list is empty (Electron/Catalyst) it
     /// falls back to just activating the app.
     ///
-    /// `placement` is for a caller that has already read one — `focusApp` builds the whole map to
-    /// choose this window in the first place. Handing it over is not only the round trips saved: a
-    /// re-read here can come back nil for a window that is demonstrably on a Desktop, and a nil is
-    /// read below as "no Space to switch to", which ends in the blind raise that gathers the window
-    /// onto the Desktop in front of the user.
+    /// `placement` is the whole window/Space map, for a caller that has already read one — `focusApp`
+    /// builds it to choose this window in the first place. Handing it over is not only the round
+    /// trips saved: a re-read here can come back nil for a window that is demonstrably on a Desktop,
+    /// and a nil is read below as "no Space to switch to", which ends in the blind raise that gathers
+    /// the window onto the Desktop in front of the user.
+    ///
+    /// The whole map rather than this one window's entry, because the decision below turns on the
+    /// app's *other* windows: whether any of them is already on screen is what decides whether macOS
+    /// travels to this one or drags it here. It is the same single enumeration either way — `spaceState`
+    /// builds the map, answers for one window and throws the rest away.
     static func focusWindow(
-        id: CGWindowID, pid: pid_t, placement known: SpaceMover.SpaceState? = nil
+        id: CGWindowID, pid: pid_t, placement known: [CGWindowID: SpaceMover.SpaceState]? = nil
     ) {
         focusQueue.async {
             let generation = beginFocus()
@@ -644,7 +673,8 @@ extension SwitchTarget {
             let isHidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
             // `var` because the system-switch attempt below can move the window and hand back a
             // fresher reading; everything after that point must use the new one.
-            var placement = known ?? SpaceMover.spaceState(of: id)
+            let placed = known ?? SpaceMover.windowSpaces()
+            var placement = placed[id]
             if SpaceMover.isAvailable, !isHidden, placement == nil, !isOnScreen(window: id) {
                 restoreFromDock(window: id, pid: pid, generation: generation)
                 return
@@ -691,8 +721,27 @@ extension SwitchTarget {
             // checkbox off the same call does the opposite, which is the behaviour every "gathering"
             // note in this file describes. `settleBySystemSwitch` polls for the arrival and reports
             // whether it got one; the private switch below is the fallback when it did not.
+            //
+            // And only when the app has nothing on screen already, which is the difference between
+            // the two things activation can do. The Mission Control rule is "switch to a Space with
+            // open windows for that application" — *a* Space, *any* of its windows. An app with a
+            // window on some Space that is currently showing already satisfies it, so macOS has
+            // nothing to travel to, and what the activation does instead is bring the app forward
+            // right here and haul its off-Desktop windows over with it. That is the whole of the
+            // reported bug, and it is why it needs two screens to appear: a second display is what
+            // lets an app have a window on screen *and* a window a Desktop away at the same time.
+            // Measured on it — Chrome with a window fullscreen on the second display and another on
+            // Desktop 4, picked from Desktop 1: declined both rounds, twice, and the Desktop 4
+            // window came over. The same build travelled in under 400ms for Teams, Ghostty, Spotify
+            // and DataGrip in the same minute, and what distinguishes those is only that none of
+            // them had a window on screen anywhere.
+            //
+            // So the test is not "will macOS travel", which cannot be asked, but "can it" — and when
+            // it cannot, asking anyway is not a wasted second, it is the gather itself. The private
+            // switch below handles this case correctly and is measured to composite properly.
             if let state = placement, state.windowSpace != state.currentSpace,
-                SpaceMover.systemSwitchesSpaceOnActivate
+                SpaceMover.systemSwitchesSpaceOnActivate,
+                !hasWindowOnScreen(pid: pid, placement: placed)
             {
                 switch settleBySystemSwitch(
                     window: id, pid: pid, state: state, generation: generation)
@@ -714,6 +763,71 @@ extension SwitchTarget {
                     // falls back to the private switch instead, which is what the fallback is for.
                     placement = refreshed ?? placement
                 }
+            }
+
+            // Out of ways to move the display — so stop, rather than move the bookkeeping and leave
+            // the screen behind.
+            //
+            // `reveal` below is the private switch, and on a two-display machine it is measured not
+            // to switch anything. `CGSShowSpaces` + `CGSHideSpaces` + `CGSManagedDisplaySetCurrentSpace`
+            // update the window server's *record* of which Desktop is current and never make the
+            // display perform a transition: every query afterwards reports the destination while the
+            // panel keeps compositing the Desktop the user was already on, with the window fronted
+            // after it painted on top. That is the whole of the reported bug — "I clicked Chrome on
+            // Desktop 3 and it came over to Desktop 1, and went back the moment I switched Desktops
+            // by hand". Nothing moved either time; the second half was the next genuine transition
+            // re-compositing and revealing where the window had been all along.
+            //
+            // Confirmed against the one instrument that cannot be fooled here. Every API — including
+            // `screencapture`, which renders what the window server *believes* — reported the switch
+            // as a success; the user's eyes reported the opposite, and a switch performed four ways
+            // (show/hide/set, hide/show/set, set alone, and a real Mission Control transition) moved
+            // the display only on the last of them.
+            //
+            // And there is no fourth way from here. Synthetic ⌃-arrow is ignored — macOS does not
+            // let synthesised events fire system hotkeys — and activation will not travel for this
+            // app whatever it is asked: plain, fronted-first, and hidden-first were all measured to
+            // stay put. Reaching the window would need the Dock's own connection, which is what the
+            // tools that manage it inject into, and that needs SIP partly disabled. So this is a
+            // real limit, not a missing trick.
+            //
+            // Doing nothing is the better failure. A pick that silently does not happen is a dead
+            // click; a pick that smears a window across the Desktop the user is looking at reads as
+            // the switcher having *moved their window*, and sends them hunting for it. The fronting
+            // is skipped with it, which costs nothing — off-Space it is measured inert, and it is
+            // only in company with the half-switch above that it paints anything.
+            if let state = placement, state.windowSpace != state.currentSpace,
+                hasWindowOnScreen(pid: pid, placement: placed)
+            {
+                Log.general.notice(
+                    """
+                    focus window \(id, privacy: .public): pid \(pid, privacy: .public) has a window \
+                    on screen, so macOS will not travel; walking to space \
+                    \(state.windowSpace, privacy: .public) with Mission Control
+                    """)
+                guard
+                    SpaceMover.travel(toSpace: state.windowSpace, onDisplay: state.display)
+                else {
+                    // Nothing left that can move the display, so stop rather than half-move it. See
+                    // `SpaceMover.travel` for why there is no third option: the private switch below
+                    // does not switch anything, and a pick that smears a window across the Desktop
+                    // the user is looking at reads as the switcher having *moved their window*.
+                    Log.general.notice(
+                        """
+                        focus window \(id, privacy: .public): could not reach space \
+                        \(state.windowSpace, privacy: .public); leaving the Desktop alone
+                        """)
+                    return
+                }
+                guard generation == focusGeneration else { return }
+                // Arrived, and by the system's own transition — so this is the ordinary on-Desktop
+                // case now, with nothing in flight to wait out. No `settle`: the Desktop is already
+                // composited, which is the whole thing `spaceSettleDelay` exists to wait for.
+                Log.general.notice(
+                    "focus window \(id, privacy: .public): arrived on space \(state.windowSpace, privacy: .public)"
+                )
+                focusAndActivate(window: id, pid: pid, generation: generation)
+                return
             }
 
             let changesBefore = spaceChanges.value

@@ -199,9 +199,16 @@ final class SwitcherModel: ObservableObject {
     ///
     /// Both fields are scored and the better taken, rather than concatenating them: a query matching
     /// the *title* strongly should not be diluted by the app name trailing after it.
+    ///
+    /// A query with no words in it — the space bar, which type-to-filter accepts as an ordinary
+    /// character — is **no match**, not a free one. It used to score 0, which every target tied on,
+    /// so `bestMatch` handed back index 0 and a tap of the space bar threw the highlight back to the
+    /// frontmost app in the middle of cycling. `matchingIndices` had always guarded this by
+    /// trimming first; `bestMatch` did not, and the two disagreeing is what made the bug invisible —
+    /// nothing was marked as matching while the selection had already moved.
     private static func score(_ target: SwitchTarget, query: String) -> Int? {
         let words = query.lowercased().split(separator: " ").map(String.init)
-        guard !words.isEmpty else { return 0 }
+        guard !words.isEmpty else { return nil }
         var total = 0
         for word in words {
             let title = FuzzyMatch.score(target.title, query: word)

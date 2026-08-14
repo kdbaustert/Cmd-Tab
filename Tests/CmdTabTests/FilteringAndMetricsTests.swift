@@ -32,6 +32,32 @@ final class FilteringAndMetricsTests: XCTestCase {
         XCTAssertEqual(SwitcherModel.filtered(sample, query: "   ").count, 3)
     }
 
+    /// The space bar must not move the highlight.
+    ///
+    /// Space is an ordinary type-to-filter character, so it arrives as a query — and a query of one
+    /// space has no words in it. `matchingIndices` had always trimmed first and answered "nothing
+    /// matches"; `bestMatch` had not, and every target tied on a score of 0, so it handed back index
+    /// 0. Pressing space part-way through a cycle threw the selection back to the frontmost app with
+    /// nothing marked as matching to explain why.
+    func testWhitespaceOnlyQueryLeavesTheSelectionAlone() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.selection = 2
+        model.setQuery(" ")
+        XCTAssertEqual(model.selection, 2)
+        XCTAssertTrue(model.matchingIndices.isEmpty)
+    }
+
+    /// The other half of the same rule, from the other direction: a query that does match still
+    /// moves the highlight to the best match, so the guard above did not simply disable selection.
+    func testARealQueryStillMovesTheSelection() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.selection = 0
+        model.setQuery("chrome")
+        XCTAssertEqual(model.selected?.title, "Google Chrome")
+    }
+
     func testMatchIsCaseInsensitive() {
         XCTAssertEqual(SwitcherModel.filtered(sample, query: "SAFARI").map(\.title), ["Safari"])
     }

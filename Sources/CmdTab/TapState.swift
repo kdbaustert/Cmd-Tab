@@ -84,6 +84,27 @@ final class TapStateMirror: @unchecked Sendable {
     private let lock = NSLock()
     private var stored = TapState()
 
+    /// Where a disagreement is announced.
+    ///
+    /// Injectable for one reason, and it is not testing the report text. `verify` failing to notice
+    /// a drift is the defect that matters most here, so the tests have to call it — and calling it
+    /// writes `.error` lines into `com.cmdtab.CmdTab`, the app's own subsystem, from `xctest`. A
+    /// week of ordinary development left 156 of them in the unified log, all of them deliberate, all
+    /// of them indistinguishable at a glance from the real thing that this mechanism exists to
+    /// report. Handing the tests a silent reporter keeps `log show` on this subsystem meaning what
+    /// it says.
+    private let report: @Sendable (String) -> Void
+
+    init(report: @escaping @Sendable (String) -> Void = TapStateMirror.warn) {
+        self.report = report
+    }
+
+    /// The production reporter. `.public` because the message is field names and a count — there is
+    /// nothing here that came from a window title.
+    static func warn(_ message: String) {
+        Log.tap.error("\(message, privacy: .public)")
+    }
+
     /// The last published state. Safe from any thread — the point of the type.
     var current: TapState { lock.withLock { stored } }
 
@@ -112,12 +133,12 @@ final class TapStateMirror: @unchecked Sendable {
         let published = current
         guard published != live else { return }
         mismatches += 1
-        Log.tap.error(
+        report(
             """
-            tap state mirror is stale (\(self.mismatches, privacy: .public) so far): \
-            \(TapStateMirror.difference(published, live), privacy: .public) — a mutation published \
-            nothing. The tap is still reading live state, so behaviour is unaffected; fix before \
-            moving the tap off the main run loop.
+            tap state mirror is stale (\(mismatches) so far): \
+            \(TapStateMirror.difference(published, live)) — a mutation published nothing. The tap \
+            is still reading live state, so behaviour is unaffected; fix before moving the tap off \
+            the main run loop.
             """)
     }
 

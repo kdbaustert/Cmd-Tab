@@ -194,14 +194,34 @@ private final class TapThread: Thread, @unchecked Sendable {
     private let ready = DispatchSemaphore(value: 0)
     private(set) var runLoop: CFRunLoop?
 
+    /// How long a slice of the run loop lasts before `isCancelled` is re-tested.
+    ///
+    /// This was 0.25s, which is a timeout expiring and the thread waking four times a second for
+    /// the entire life of the process — on a machine where the gesture may go all day without being
+    /// used. Nothing about the interval was load-bearing: it existed only so a cancelled thread
+    /// would notice, and `cancel()` now wakes the loop directly, so the slice can be long enough to
+    /// be irrelevant to the power budget.
+    private static let slice: CFTimeInterval = 30
+
     override func main() {
         runLoop = CFRunLoopGetCurrent()
         ready.signal()
         // A run loop with no sources returns immediately, and the source is added by the caller a
-        // moment after this signals — so the loop is run in short slices rather than left to exit.
+        // moment after this signals — so the loop is run in slices rather than left to exit.
         while !isCancelled {
-            CFRunLoopRunInMode(.defaultMode, 0.25, false)
+            CFRunLoopRunInMode(.defaultMode, Self.slice, false)
         }
+    }
+
+    /// Ends the slice in progress rather than leaving the thread alive until it times out.
+    ///
+    /// `CFRunLoopStop` is one of the few run-loop calls documented as safe from another thread, and
+    /// the caller has already removed the only source by the time this runs — so there is nothing
+    /// left for the loop to service on its way out. Without it, a `slice` this long would keep the
+    /// thread alive for up to half a minute after the gesture was switched off.
+    override func cancel() {
+        super.cancel()
+        if let runLoop { CFRunLoopStop(runLoop) }
     }
 
     /// Blocks until `runLoop` is set, or the deadline passes. Called once, from `install`.
@@ -251,10 +271,28 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
     private var storedAppRules: [String: AppRule] = [:]
 
-    private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
-    private var thread: TapThread?
+    // The installation, all four fields under `lock` like everything else here.
+    //
+    // They were not, and the type's own claim — "everything mutable below is private and taken
+    // under it" — was false for exactly the three that matter most: `install` and `uninstall` wrote
+    // `tap`, `source` and `thread` unsynchronised from the main thread while `dispatch` read `tap`
+    // from the tap thread on every disabled-tap event. Narrow (the setting has to be toggled off as
+    // the system disables the tap) but real, and the sort of race that reads as "the gesture
+    // stopped working once" rather than as a crash.
+    private var storedTap: CFMachPort?
+    private var storedSource: CFRunLoopSource?
+    private var storedThread: TapThread?
     private var screenObserver: NSObjectProtocol?
+    /// Set for the length of an `install` so a second caller cannot start a parallel one.
+    ///
+    /// `install` is reachable from the settings setter and from `retryInstallIfNeeded`, which the
+    /// trust handler calls — and its `guard tap == nil` was a check-then-act with the whole of the
+    /// thread start-up in between, long enough for both to pass it and build two taps with only one
+    /// of them ever torn down.
+    private var isInstalling = false
+
+    /// The live tap, for the callback thread. nil once `uninstall` has claimed it.
+    private var tap: CFMachPort? { lock.withLock { storedTap } }
     /// Whether an installation is currently standing and so still wants a screen observer. Read by
     /// the install task, which registers one asynchronously and can land after an uninstall.
     private var wantsScreenObserver = false
@@ -334,7 +372,16 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
 
     private func install() {
-        guard tap == nil else { return }
+        // Claimed under the lock before any of the work below, so two callers racing cannot both
+        // get past it. Released on every exit, whether or not a tap ends up standing.
+        let claimed: Bool = lock.withLock {
+            guard !isInstalling, storedTap == nil else { return false }
+            isInstalling = true
+            return true
+        }
+        guard claimed else { return }
+        defer { lock.withLock { isInstalling = false } }
+
         let mask: CGEventMask =
             (1 << CGEventType.leftMouseDown.rawValue)
             | (1 << CGEventType.leftMouseDragged.rawValue)
@@ -392,9 +439,37 @@ final class MouseWindowDrag: @unchecked Sendable {
             if !kept { NotificationCenter.default.removeObserver(observer) }
         }
 
-        self.tap = tap
-        self.thread = thread
-        source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        // The setting can have been switched off while the thread was starting — `waitUntilReady`
+        // is up to a second of it. `uninstall` running in that window finds the fields still nil,
+        // tears nothing down, and returns; storing unconditionally here would then leave a live
+        // session-wide mouse tap standing behind a setting the user has turned off. Testing the
+        // claim under the same lock that stores is what makes the two orderings agree — the same
+        // shape as `wantsScreenObserver` above, for the same race.
+        let kept: Bool = lock.withLock {
+            guard storedSettings.isEnabled else { return false }
+            storedTap = tap
+            storedThread = thread
+            storedSource = source
+            return true
+        }
+        guard kept else {
+            // Never added to a run loop, so there is nothing to remove — just give the port and the
+            // thread back, and withdraw the observer request this install made on its way in.
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+            thread.cancel()
+            let orphan: NSObjectProtocol? = lock.withLock {
+                defer {
+                    screenObserver = nil
+                    wantsScreenObserver = false
+                }
+                return screenObserver
+            }
+            if let orphan { NotificationCenter.default.removeObserver(orphan) }
+            Log.general.notice("mouse drag: install abandoned, the gesture was switched off")
+            return
+        }
         CFRunLoopAddSource(runLoop, source, .defaultMode)
         CGEvent.tapEnable(tap: tap, enable: true)
         let current = settings
@@ -407,6 +482,27 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
 
     private func uninstall() {
+        // Claimed in one pass: after this the fields are nil, so a `dispatch` racing on the tap
+        // thread sees the installation as gone and declines to re-enable a port that is about to be
+        // invalidated. The CF teardown then happens *outside* the lock — the tap callback takes it
+        // on every event, and holding it across a port invalidation would be the one place this
+        // class could stall its own tap thread.
+        let (tap, source, thread, observer): (
+            CFMachPort?, CFRunLoopSource?, TapThread?, NSObjectProtocol?
+        ) = lock.withLock {
+            defer {
+                storedTap = nil
+                storedSource = nil
+                storedThread = nil
+                screenObserver = nil
+                // Clearing this is what tells an install task still in flight that the installation
+                // it was registering for is gone.
+                wantsScreenObserver = false
+            }
+            return (storedTap, storedSource, storedThread, screenObserver)
+        }
+        // Source first, then cancel: the thread's run loop is only valid while the thread is alive,
+        // so removing the source afterwards would be a use-after-free on the loop.
         if let source, let runLoop = thread?.runLoop {
             CFRunLoopRemoveSource(runLoop, source, .defaultMode)
         }
@@ -415,19 +511,7 @@ final class MouseWindowDrag: @unchecked Sendable {
             CFMachPortInvalidate(tap)
         }
         thread?.cancel()
-        let observer: NSObjectProtocol? = lock.withLock {
-            defer {
-                screenObserver = nil
-                // Clearing this is what tells an install task still in flight that the installation
-                // it was registering for is gone.
-                wantsScreenObserver = false
-            }
-            return screenObserver
-        }
         if let observer { NotificationCenter.default.removeObserver(observer) }
-        source = nil
-        tap = nil
-        thread = nil
         end()
     }
 
@@ -458,8 +542,15 @@ final class MouseWindowDrag: @unchecked Sendable {
             guard let action = current.action(for: event.flags) else {
                 // Only when something was held: an unmodified click is every click on the machine,
                 // and logging those would be a line per click forever.
+                //
+                // At the trace level rather than `.notice`, which is the lowest level the persistent
+                // store keeps: ⌘-click is not a rare gesture — open-in-new-tab, Finder
+                // multi-select — so a notice here wrote a line into the store for a great many
+                // perfectly ordinary clicks. It is diagnostic output for "my chord does nothing",
+                // which is exactly what verbose logging is for.
                 if !held.isEmpty {
-                    Log.general.notice(
+                    Log.general.log(
+                        level: Log.traceLevel,
                         "mouse drag: no action for \(ModifierChord(held).displayString, privacy: .public)")
                 }
                 return false
@@ -557,7 +648,7 @@ final class MouseWindowDrag: @unchecked Sendable {
                 return
             }
             let element = Self.axWindow(pid: target.pid, bounds: target.bounds)
-            guard let element, let origin = AX.position(element), let size = AX.size(element) else {
+            guard let element, let frame = AX.frame(element) else {
                 Log.general.notice(
                     "mouse drag: no accessible window for pid \(target.pid, privacy: .public)")
                 self.end()
@@ -566,7 +657,6 @@ final class MouseWindowDrag: @unchecked Sendable {
             Self.draggedWindow = element
             Log.general.notice(
                 "mouse drag: resolved window for pid \(target.pid, privacy: .public)")
-            let frame = CGRect(origin: origin, size: size)
             self.lock.withLock {
                 guard self.isArmed else { return }
                 self.session = Session(
@@ -606,15 +696,12 @@ final class MouseWindowDrag: @unchecked Sendable {
             var frame = frame
             while true {
                 if let window = Self.draggedWindow {
-                    if isMove {
-                        AX.setPosition(window, frame.origin)
-                    } else {
-                        // Position first, then size: a resize from a top or left corner moves the
-                        // origin as well, and an app that clamps a move against its current size
-                        // needs the origin set before the size that makes room for it.
-                        AX.setPosition(window, frame.origin)
-                        AX.setSize(window, frame.size)
-                    }
+                    // Position first, then size: a resize from a top or left corner moves the origin
+                    // as well, and an app that clamps a move against its current size needs the
+                    // origin set before the size that makes room for it. A move writes the origin
+                    // alone. Both go through `setFrame` so a drag of this app's own window costs one
+                    // hop onto the main thread per frame rather than two — see `AX.onOwningThread`.
+                    AX.setFrame(window, frame, sizing: !isMove)
                 }
                 let next: CGRect? = self.lock.withLock {
                     if let pending = self.pending {
@@ -874,7 +961,11 @@ final class ModifierTargetHighlight {
         guard anchor == nil else { return }  // already in a gesture; a qualifier changed, no more
 
         let point = NSEvent.mouseLocation
-        guard let target = Self.windowUnderCursor(at: point) else { return }
+        // A window-server round trip on the main thread, taken on every press of the chord — which
+        // for the ⌃⌥/⌃⌘ defaults is not a rare combination. Marked so a stall inside it says so.
+        guard let target = MainLoopMonitor.marking("point-gesture window lookup", {
+            Self.windowUnderCursor(at: point)
+        }) else { return }
         anchor = point
         self.target = target
         outline.show(target.bounds)

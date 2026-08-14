@@ -31,13 +31,51 @@ enum MainLoopMonitor {
     private static let threshold: TimeInterval = 0.15
 
     private static var observer: CFRunLoopObserver?
-    /// When the current turn began. Nil between turns — the loop is asleep and owes us nothing.
-    private static var wokeAt: CFAbsoluteTime?
+    /// When the current turn began, on the uptime clock. Nil between turns — the loop is asleep and
+    /// owes us nothing.
+    ///
+    /// `DispatchTime`, not `CFAbsoluteTimeGetCurrent`, and the difference is the whole reason this
+    /// line can be believed. `CFAbsoluteTimeGetCurrent` is wall clock: it steps when NTP corrects it
+    /// and it keeps running across a lid close, so a turn that merely *straddled* a sleep or a clock
+    /// adjustment was reported as a main thread busy for the whole of it. That is not a hypothetical
+    /// — the first week of these reports contained fifteen stalls up to 892ms and not one
+    /// `tapDisabledByTimeout` beside them, which is the pairing a real stall of that length would be
+    /// expected to produce. `uptimeNanoseconds` is `mach_absolute_time`: monotonic, unaffected by
+    /// clock adjustments, and frozen while the machine is asleep, so a sleep-straddling turn now
+    /// measures the work either side of it rather than the nap in between.
+    private static var wokeAt: UInt64?
 
     /// The worst turn since launch, and how many crossed the threshold. Logged as a running total
     /// beside each crossing so a single line says both "this happened" and "how often".
     private(set) static var worst: TimeInterval = 0
     private(set) static var stalls = 0
+
+    /// The last labelled piece of main-thread work to run, and when it started.
+    ///
+    /// A duration on its own is not actionable, which is what the first week of these reports
+    /// demonstrated: fifteen crossings, no two adjacent to anything in the log, and so nothing to
+    /// investigate. The label is the other half — `marking` wraps the main-thread work this app
+    /// already knows to be expensive, and a crossing names whichever of them ran inside the turn it
+    /// is reporting.
+    ///
+    /// `StaticString` so a mark costs a pointer store and no allocation: these wrap paths that run
+    /// per keystroke and per click, where anything that allocates would be a worse problem than the
+    /// one being measured.
+    private static var lastMark: StaticString?
+    private static var lastMarkAt: UInt64 = 0
+
+    /// Labels a stretch of main-thread work, so a stall that happens inside it says so.
+    ///
+    /// Deliberately records the *start* rather than bracketing the call: the report is written at
+    /// `beforeWaiting`, long after `work` has returned, so a mark that cleared itself on the way out
+    /// would never be there to read. What the timestamp buys is the discipline of only naming a mark
+    /// that actually ran inside the turn being reported.
+    @discardableResult
+    static func marking<T>(_ label: StaticString, _ work: () -> T) -> T {
+        lastMark = label
+        lastMarkAt = DispatchTime.now().uptimeNanoseconds
+        return work()
+    }
 
     static func start() {
         guard observer == nil else { return }
@@ -53,10 +91,11 @@ enum MainLoopMonitor {
             // the same formality `EventTap.dispatch` documents.
             MainActor.assumeIsolated {
                 if activity.contains(.afterWaiting) {
-                    wokeAt = CFAbsoluteTimeGetCurrent()
+                    wokeAt = DispatchTime.now().uptimeNanoseconds
                 } else if activity.contains(.beforeWaiting), let start = wokeAt {
                     wokeAt = nil
-                    record(CFAbsoluteTimeGetCurrent() - start)
+                    let elapsed = DispatchTime.now().uptimeNanoseconds &- start
+                    record(TimeInterval(elapsed) / 1_000_000_000, since: start)
                 }
             }
         }
@@ -72,15 +111,43 @@ enum MainLoopMonitor {
             "main loop monitor: watching, threshold \(Int(Self.threshold * 1000), privacy: .public)ms")
     }
 
-    private static func record(_ duration: TimeInterval) {
+    private static func record(_ duration: TimeInterval, since turnStart: UInt64) {
         if duration > worst { worst = duration }
         guard duration >= threshold else { return }
         stalls += 1
         Log.general.error(
             """
-            main loop busy \(Int(duration * 1000), privacy: .public)ms — the tap was unserviceable \
-            for that long (stall \(Self.stalls, privacy: .public), worst \
+            main loop busy \(Int(duration * 1000), privacy: .public)ms in \
+            \(Self.currentMode(), privacy: .public) during \(Self.suspect(since: turnStart), privacy: .public) \
+            — the tap was unserviceable for that long (stall \(Self.stalls, privacy: .public), worst \
             \(Int(Self.worst * 1000), privacy: .public)ms)
             """)
+    }
+
+    /// Whichever labelled work ran inside the turn being reported, or a placeholder.
+    ///
+    /// The timestamp check is what keeps this honest: `lastMark` is never cleared, so without it a
+    /// stall in some unlabelled code would inherit the name of the last panel layout to have
+    /// happened, which is worse than saying nothing — it would send the reader after the one path
+    /// that was demonstrably not involved.
+    ///
+    /// Internal rather than private so that guard can be tested directly. The alternative is a test
+    /// that sleeps through a real run-loop turn to provoke a crossing, which is half a second of
+    /// wall clock and a timing dependency for a rule that is two comparisons.
+    static func suspect(since turnStart: UInt64) -> String {
+        guard let lastMark, lastMarkAt >= turnStart else { return "unlabelled work" }
+        return "\(lastMark)"
+    }
+
+    /// The run-loop mode the stalled turn was running in.
+    ///
+    /// Read here rather than per turn: this allocates a string, and the observer fires on every turn
+    /// the loop takes whereas this runs only on the handful that cross the threshold. Still accurate
+    /// — the mode is current until `beforeWaiting` returns, and that is where this is called from.
+    /// Worth having because the modes mean quite different things: a stall in `kCFRunLoopDefaultMode`
+    /// is this app's own work, while one in a tracking or modal mode is a menu, a drag or a sheet
+    /// holding the loop, which is AppKit's to answer for and not a bug here.
+    private static func currentMode() -> String {
+        (CFRunLoopCopyCurrentMode(CFRunLoopGetMain())?.rawValue as String?) ?? "an unknown mode"
     }
 }

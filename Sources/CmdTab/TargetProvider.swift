@@ -559,7 +559,15 @@ final class TargetProvider {
         let isHidden: Bool
     }
 
+    /// Marked for the main-loop monitor rather than at each of its three call sites: this is the
+    /// NSWorkspace walk plus an icon fault per running app, it is the most expensive thing this
+    /// class does on the main thread, and marking it here means a stall names it whichever entry
+    /// point asked.
     private func switchableApps() -> [AppInfo] {
+        MainLoopMonitor.marking("app enumeration") { uncheckedSwitchableApps() }
+    }
+
+    private func uncheckedSwitchableApps() -> [AppInfo] {
         let mine = ProcessInfo.processInfo.processIdentifier
         let excluded = excludedBundleIDs
         return NSWorkspace.shared.runningApplications.compactMap { app in
@@ -592,6 +600,10 @@ final class TargetProvider {
     /// Paired with the bundle identifier each tile came from: pinning has to slot a tile in at its
     /// favourite's position, and a `SwitchTarget` carries no bundle id of its own.
     private func launchFavorites() -> [(String, SwitchTarget)] {
+        MainLoopMonitor.marking("favourite resolution") { uncheckedLaunchFavorites() }
+    }
+
+    private func uncheckedLaunchFavorites() -> [(String, SwitchTarget)] {
         guard !favoriteBundleIDs.isEmpty else { return [] }
         let excluded = excludedBundleIDs
         let running = Set(

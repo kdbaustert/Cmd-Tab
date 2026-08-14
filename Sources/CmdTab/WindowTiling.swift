@@ -770,10 +770,8 @@ enum WindowTiler {
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
-            guard let window = resolve(target, pid: pid),
-                let origin = AX.position(window), let size = AX.size(window)
+            guard let window = resolve(target, pid: pid), let current = AX.frame(window)
             else { return }
-            let current = CGRect(origin: origin, size: size)
             let key = WindowKey(element: window)
 
             // The screen the window is mostly on, rather than the one it merely touches: a window
@@ -848,9 +846,10 @@ enum WindowTiler {
             // first position lands short) and others clamp a resize against the screen edge from
             // their old origin. Setting position twice around the resize is what makes both land,
             // and it is what every window manager on this platform ends up doing.
-            AX.setPosition(window, target.origin)
-            AX.setSize(window, target.size)
-            AX.setPosition(window, target.origin)
+            //
+            // One call rather than three, so tiling this app's own settings window takes a single
+            // hop onto the main thread instead of three — see `AX.onOwningThread`.
+            AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
         }
     }
 

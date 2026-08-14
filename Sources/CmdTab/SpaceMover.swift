@@ -250,6 +250,85 @@ enum SpaceMover {
         return Reveal(state: fresh, switched: true)
     }
 
+    /// Travels to `space` on `display` by driving Mission Control's own "move one Space left/right",
+    /// one Desktop at a time, checking after each step.
+    ///
+    /// The only mechanism measured to actually move a display from this process. `reveal`'s private
+    /// calls re-point the window server's record and never make the display perform a transition —
+    /// see the note there — and macOS declines to travel on activation for precisely the app this
+    /// exists to reach. Mission Control's own shortcut is the Dock's own switch, animation and all,
+    /// which is the thing that re-composites.
+    ///
+    /// Synthesised events can only fire a system hotkey from a process the user has granted
+    /// Accessibility, which this app has for its event tap and a scratch binary does not — the same
+    /// posting code that does nothing from a test harness works from here. That is worth stating
+    /// because it is why this looks, from outside, like an API that does not work.
+    ///
+    /// One step at a time with a read between, rather than a computed count posted in a burst. The
+    /// count is the obvious way and it is wrong twice over: a burst can be coalesced or repeated —
+    /// measured overshooting by exactly double — and the step is a relative move, so a single miss
+    /// leaves every later step aimed at the wrong Desktop. Re-reading each turn makes the walk
+    /// self-correcting and lets it stop the moment it arrives.
+    ///
+    /// Returns whether it got there. False is a real answer and the caller must honour it: the
+    /// shortcut can be rebound or switched off in System Settings, in which case nothing moves and
+    /// the pick must decline rather than fall back to a switch that only pretends.
+    ///
+    /// Blocking, and only ever called from `focusQueue`. `budget` bounds both the walk and the wait.
+    static func travel(toSpace space: UInt64, onDisplay display: String, budget: Int = 12) -> Bool {
+        let ordered = userSpaces(ofDisplay: display)
+        guard ordered.contains(space) else { return false }
+        for _ in 0..<budget {
+            guard let now = currentSpace(ofDisplay: display) else { return false }
+            if now == space { return true }
+            guard let from = ordered.firstIndex(of: now),
+                let to = ordered.firstIndex(of: space)
+            else { return false }
+            // 123/124 are the arrow keys the default bindings use. A user who has rebound these to
+            // something else gets `false` out of the arrival check below, which is the honest answer.
+            postSpaceStep(key: to > from ? 124 : 123)
+            // Long enough for the Dock's transition to finish before the next reading. Measured at
+            // 377-446ms for the system's own travel, so the read lands after the move rather than
+            // during it — a short interval here reports the old Desktop and spends a step correcting
+            // a move that was already on its way.
+            usleep(450_000)
+        }
+        return currentSpace(ofDisplay: display) == space
+    }
+
+    /// One press of ⌃← / ⌃→.
+    ///
+    /// The modifier goes on the arrow's own flags rather than being pressed as a separate key. A
+    /// `flagsChanged` pair around it is the faithful emulation of a hand on the keyboard, and it is
+    /// also a way to leave Control stuck down if anything between here and the window server drops
+    /// the release — every other app on the machine would see a held modifier. The flags alone are
+    /// what the hotkey matcher reads.
+    private static func postSpaceStep(key: CGKeyCode) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+            let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
+        else { return }
+        down.flags = .maskControl
+        up.flags = .maskControl
+        down.post(tap: .cghidEventTap)
+        usleep(40_000)
+        up.post(tap: .cghidEventTap)
+    }
+
+    /// The user Spaces of one display, in the order Mission Control arranges them — which is the
+    /// order the left/right shortcut steps through, and so the only ordering `travel` may count in.
+    ///
+    /// Deliberately *not* `userSpaceIDs`, which flattens every display into one list for the Space
+    /// badge. Counting steps in a flattened list would walk off the end of one display and into
+    /// another's Spaces, which is not a move the shortcut can make.
+    static func userSpaces(ofDisplay display: String) -> [UInt64] {
+        for entry in managedDisplays() where (entry["Display Identifier"] as? String) == display {
+            return ((entry["Spaces"] as? [[String: Any]]) ?? [])
+                .filter { ($0["type"] as? Int) == 0 }.compactMap(spaceID(from:))
+        }
+        return []
+    }
+
     /// Which Space `display` is showing right now, and nothing else.
     ///
     /// One window-server round trip, where `windowSpaces` costs one *per Space* because it asks each

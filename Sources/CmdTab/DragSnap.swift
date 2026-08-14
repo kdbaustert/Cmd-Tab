@@ -62,6 +62,22 @@ final class DragSnap {
     private var draggedWindowID: CGWindowID?
     private var initialBounds: CGRect?
     private var currentZone: WindowArrangement?
+    /// How long after the press this drag may keep asking whether its window has moved yet.
+    ///
+    /// The check is a window-server round trip, it runs on the main thread — the one servicing the
+    /// keyboard tap — and it used to run on *every* drag event until the window was seen to move.
+    /// For the drags that are not window drags at all, which is most of them, that meant it never
+    /// stopped: selecting a paragraph, panning a map or dragging a slider for half a minute bought a
+    /// round trip per event for the whole gesture, and not one of them could ever succeed.
+    ///
+    /// A deadline rather than a count of attempts, deliberately. A count is a bound on the wrong
+    /// axis: events arrive at the trackpad's rate, so a dozen of them is a tenth of a second on this
+    /// machine and something else on the next, and an app that is merely slow to pick the drag up —
+    /// a heavy Electron window under load is the standing case — would silently stop arming. Time is
+    /// what "has this app started following the cursor?" is actually asking about, and a second and
+    /// a half is far past any app that is going to.
+    private var moveCheckDeadline: Date?
+    private static let moveCheckWindow: TimeInterval = 1.5
 
     // MARK: - Monitors
 
@@ -94,11 +110,14 @@ final class DragSnap {
         reset()
         // Anywhere in the window. What stops a text selection arming the preview is not where the
         // press landed but whether the window moves — see `mouseDragged`.
-        guard let target = Self.windowUnderCursor(at: point) else { return }
+        guard let target = MainLoopMonitor.marking("drag-snap window lookup", {
+            Self.windowUnderCursor(at: point)
+        }) else { return }
         pressOrigin = point
         draggedPID = target.pid
         draggedWindowID = target.id
         initialBounds = target.bounds
+        moveCheckDeadline = Date().addingTimeInterval(Self.moveCheckWindow)
     }
 
     private func mouseDragged(to point: CGPoint) {
@@ -106,11 +125,15 @@ final class DragSnap {
         if !isDragging {
             let travelled = hypot(point.x - origin.x, point.y - origin.y)
             guard travelled >= Self.dragThreshold else { return }
-            // The window has to have moved, and moved without resizing. Checked every event until
-            // it has: an app may take a moment to start following the cursor, and giving up after
-            // the first event would miss every window that does.
+            // The window has to have moved, and moved without resizing. Checked on each event for a
+            // while rather than once — an app may take a moment to start following the cursor, and
+            // giving up after the first would miss every window that does — but not forever; see
+            // `moveCheckDeadline`.
+            guard let deadline = moveCheckDeadline, Date() < deadline else { return }
             guard let windowID = draggedWindowID, let initial = initialBounds,
-                let current = Self.bounds(of: windowID), Self.isMove(from: initial, to: current)
+                let current = MainLoopMonitor.marking(
+                    "drag-snap move check", { Self.bounds(of: windowID) }),
+                Self.isMove(from: initial, to: current)
             else { return }
             // An app the user has told us never to tile drags exactly as it always did.
             if let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
@@ -150,6 +173,7 @@ final class DragSnap {
         draggedWindowID = nil
         initialBounds = nil
         currentZone = nil
+        moveCheckDeadline = nil
         preview.hide()
     }
 
