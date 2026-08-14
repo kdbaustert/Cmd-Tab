@@ -699,7 +699,7 @@ extension SwitchTarget {
             let isHidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
             // `var` because the system-switch attempt below can move the window and hand back a
             // fresher reading; everything after that point must use the new one.
-            let placed = known ?? SpaceMover.windowSpaces()
+            var placed = known ?? SpaceMover.windowSpaces()
             var placement = placed[id]
             if SpaceMover.isAvailable, !isHidden, placement == nil, !isOnScreen(window: id) {
                 restoreFromDock(window: id, pid: pid, generation: generation)
@@ -774,20 +774,31 @@ extension SwitchTarget {
                 {
                 case .arrived, .superseded:
                     return
-                case .declined(let refreshed):
-                    // Where the window is *now*, which is not necessarily where it was: the
-                    // activation above may have moved it. `reveal` below acts on this, and acting on
-                    // the pre-activation reading would send the user to a Desktop it had just left.
+                case .declined(let refreshedPlacement):
+                    // Where everything is *now*, which is not necessarily where it was: the
+                    // activation above may have moved the window, or moved the display to another of
+                    // this app's Desktops. Both readings below act on this, and acting on the
+                    // pre-activation one would send the user to a Desktop it had just left.
+                    //
+                    // The whole map is replaced, not just this window's entry. `hasWindowOnScreen`
+                    // below is asked of `placed`, and after a travel to another of the app's Desktops
+                    // that answer has inverted — the app has a window on screen now, and the veto
+                    // must see it. Refreshing only `placement` left the veto reading pre-travel facts
+                    // and letting the pick continue into the private switch, which is how a wrong-
+                    // Desktop travel became a wrong-Desktop travel *plus* a phantom half-switch.
                     //
                     // Only when there *is* a reading. A placement read that failed is not a
-                    // statement that the window has no Desktop, and adopting its nil turned it into
-                    // one: `reveal` then reports nothing to switch to, `settle` is told nothing is
-                    // in flight and may act blind, and the raise it makes gathers the window onto
+                    // statement that the window has no Desktop, and adopting its emptiness turned it
+                    // into one: `reveal` then reports nothing to switch to, `settle` is told nothing
+                    // is in flight and may act blind, and the raise it makes gathers the window onto
                     // the Desktop in front of the user — the one outcome this whole path exists to
                     // prevent, and the "I picked a window on Desktop 2 and it came to Desktop 1,
                     // then went back when I switched Desktops" report. Keeping the last good reading
                     // falls back to the private switch instead, which is what the fallback is for.
-                    placement = refreshed ?? placement
+                    if !refreshedPlacement.isEmpty {
+                        placed = refreshedPlacement
+                        placement = refreshedPlacement[id] ?? placement
+                    }
                 }
             }
 
@@ -881,9 +892,13 @@ extension SwitchTarget {
     private enum SystemSwitch {
         /// Arrived on the window's Desktop and the window was fronted there. The pick is over.
         case arrived
-        /// The system did not travel. The caller falls back to the private switch — and must
-        /// re-read the window's placement first, since `refreshed` says where it is *now*.
-        case declined(refreshed: SpaceMover.SpaceState?)
+        /// The system did not travel, or travelled to a different Desktop of the same app. The
+        /// caller falls back to the private switch — and must re-read placement first, since
+        /// `placement` says where every one of the app's windows is *now*.
+        ///
+        /// Empty when the read failed, which is not the same as "nothing is placed" and must not be
+        /// adopted as one — see the call site.
+        case declined(placement: [CGWindowID: SpaceMover.SpaceState])
         /// A later pick replaced this one. Do nothing at all; the pick that superseded it owns the
         /// screen now, and falling back would drag the user off whatever they picked instead.
         case superseded
@@ -939,7 +954,7 @@ extension SwitchTarget {
         // interval can be set by how promptly we want to notice the arrival rather than by what each
         // check costs. It used to be 50ms, which put up to a full 50ms of pure granularity between
         // macOS landing on the Desktop and this noticing — a fifth of the wait, and none of it work.
-        for round in 0..<2 {
+        rounds: for round in 0..<2 {
             if round > 0 {
                 Log.general.notice(
                     """
@@ -951,7 +966,26 @@ extension SwitchTarget {
             for _ in 0..<(round == 0 ? 20 : 16) {
                 usleep(20_000)
                 guard generation == focusGeneration else { return .superseded }
-                guard SpaceMover.currentSpace(ofDisplay: state.display) == state.windowSpace else {
+                let now = SpaceMover.currentSpace(ofDisplay: state.display)
+                guard now == state.windowSpace else {
+                    // Travelled, but not to the Desktop we asked for — macOS picked a different one
+                    // of this app's Spaces. Measured on Chrome with windows on two Desktops: picking
+                    // the one on Space 4 activated the app and landed on Space 5, and the front
+                    // window by z-order was the Space 4 one, so the destination is neither what we
+                    // asked for nor predictable from the window list.
+                    //
+                    // Stop the moment it is seen. Polling on for the rest of the budget cannot help —
+                    // macOS has already made its choice and will not travel twice for one activation
+                    // — and the second round would only ask again and move the user a second time.
+                    if let now, now != state.currentSpace {
+                        Log.general.notice(
+                            """
+                            focus window \(id, privacy: .public): macOS travelled to space \
+                            \(now, privacy: .public) instead of \(state.windowSpace, privacy: .public); \
+                            giving up rather than asking again
+                            """)
+                        break rounds
+                    }
                     continue
                 }
                 Log.general.notice(
@@ -983,9 +1017,20 @@ extension SwitchTarget {
             }
         }
 
-        // It did not travel. One full placement read now — the only one this function takes — both
-        // to say in the log which way it went and to hand the caller a map it can act on.
-        let refreshed = SpaceMover.spaceState(of: id)
+        // It did not travel, or travelled somewhere else. One full placement read now — the only one
+        // this function takes — both to say in the log which way it went and to hand the caller a map
+        // it can act on.
+        //
+        // The *whole* map rather than this window's entry, which is what it used to return. The
+        // caller's decision turns on where the app's *other* windows are, and after an activation
+        // that moved the display those are exactly the facts that went stale: land on another of the
+        // app's Desktops and the app now has a window on screen, which is the one condition that must
+        // stop the pick going any further. Handing back a single `SpaceState` left the caller testing
+        // that against its pre-travel map, concluding the app had nothing on screen, and falling
+        // through to the private switch — the half-composited one that paints the window onto the
+        // Desktop the user is looking at.
+        let refreshedPlacement = SpaceMover.windowSpaces()
+        let refreshed = refreshedPlacement[id]
         if let refreshed, refreshed.windowSpace != state.windowSpace {
             Log.general.notice(
                 """
@@ -998,7 +1043,7 @@ extension SwitchTarget {
                 "focus window \(id, privacy: .public): macOS did not travel; using the private switch"
             )
         }
-        return .declined(refreshed: refreshed)
+        return .declined(placement: refreshedPlacement)
     }
 
     /// Brings a minimized window back out of the Dock.
