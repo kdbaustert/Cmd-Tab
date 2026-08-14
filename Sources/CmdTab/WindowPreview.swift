@@ -44,6 +44,16 @@ struct WindowThumb: Identifiable {
     /// An app's windows are routinely spread across monitors, and the strip gathers all of them —
     /// so without this there is no way to tell which screen a thumbnail will take you to.
     let displayIndex: Int?
+    /// Whether clicking this thumbnail can actually get the user to the window.
+    ///
+    /// False for a window on a Desktop macOS will not travel to, which is decided by the app rather
+    /// than by the window: an app with anything on screen anywhere is one macOS declines to travel
+    /// for, and a second display holding a single Space makes that permanent for every app with a
+    /// window on it. See `SwitchTarget.canReach`, which is the same call the pick itself makes.
+    ///
+    /// Carried on the thumbnail rather than resolved at click time because the point is to say so
+    /// *before* the click — the failure is silent and there is nothing to show afterwards.
+    let isReachable: Bool
 }
 
 /// Captures thumbnails of an app's windows through ScreenCaptureKit.
@@ -75,6 +85,7 @@ actor WindowCapture {
         let window: SCWindow?
         let isMinimized: Bool
         let displayIndex: Int?
+        let isReachable: Bool
     }
 
     /// Windows narrower or shorter than this are helper surfaces, not something to switch to.
@@ -175,7 +186,13 @@ actor WindowCapture {
         // A window in the Dock is on no Space and on no screen; a window on another Desktop is off
         // screen but still has a Space. Both reads are one window-server call each for the whole
         // strip, rather than a question per tile.
-        let dockedIDs = await Task.detached { Self.dockedWindowIDs() }.value
+        let (dockedIDs, placed) = await Task.detached { Self.dockedWindowIDs() }.value
+
+        // Asked once for the app, not once per window: it decides reachability for *every* thumbnail
+        // in the strip, and it walks the whole system window list to answer. See `SwitchTarget.canReach`.
+        let appOnScreen = await Task.detached {
+            SwitchTarget.hasWindowOnScreen(pid: pid, placement: placed)
+        }.value
 
         // Accessibility supplements the list for anything SC missed entirely, and — where it gives a
         // complete answer — vetoes what SC reports but the app does not actually have. It still does
@@ -238,11 +255,15 @@ actor WindowCapture {
                 // A docked window's frame is where it *was*, which on a multi-display setup is not
                 // where clicking it will take you. Badge nothing rather than the wrong monitor.
                 displayIndex: isDocked
-                    ? nil : Self.displayIndex(of: window.frame, in: screenFrames))
+                    ? nil : Self.displayIndex(of: window.frame, in: screenFrames),
+                isReachable: SwitchTarget.canReach(
+                    state: placed[window.windowID], appHasWindowOnScreen: appOnScreen))
         }
         entries += minimized.map {
             Entry(
-                id: $0.id, title: $0.title, window: nil, isMinimized: true, displayIndex: nil)
+                id: $0.id, title: $0.title, window: nil, isMinimized: true, displayIndex: nil,
+                // In the Dock, so on no Space: `restoreFromDock` reaches it without a Desktop change.
+                isReachable: true)
         }
 
         // Captured in bounded batches but reassembled by index, so the strip reads in the order
@@ -310,7 +331,7 @@ actor WindowCapture {
                 return WindowThumb(
                     id: index, windowID: entry.id, image: NSImage(cgImage: image, size: size),
                     title: entry.title, pid: pid, isMinimized: entry.isMinimized, hasCapture: true,
-                    displayIndex: entry.displayIndex)
+                    displayIndex: entry.displayIndex, isReachable: entry.isReachable)
             }
             // Captured blank: one of the invisible helper surfaces Electron and friends keep around
             // rather than a window anyone could switch to. An untitled one is dropped outright; a
@@ -321,7 +342,8 @@ actor WindowCapture {
             icon ?? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) ?? NSImage()
         return WindowThumb(
             id: index, windowID: entry.id, image: fallback, title: entry.title, pid: pid,
-            isMinimized: entry.isMinimized, hasCapture: false, displayIndex: entry.displayIndex)
+            isMinimized: entry.isMinimized, hasCapture: false, displayIndex: entry.displayIndex,
+            isReachable: entry.isReachable)
     }
 
     /// The broken states worth one line each rather than one per hover.
@@ -358,13 +380,19 @@ actor WindowCapture {
     /// Empty when the Space read is unavailable at all, so a machine without the private symbols
     /// degrades to the old behaviour (docked windows tiled as live ones) rather than to labelling
     /// every window minimized.
-    private static func dockedWindowIDs() -> Set<CGWindowID> {
+    ///
+    /// Hands back the placement map it had to build anyway. `windowSpaces` costs a window-server
+    /// round trip *per Space*, and the reachability badge needs exactly the same map — asking twice
+    /// would double the most expensive read on the hover path to learn something already in hand.
+    private static func dockedWindowIDs() -> (
+        docked: Set<CGWindowID>, placed: [CGWindowID: SpaceMover.SpaceState]
+    ) {
         let placed = SpaceMover.windowSpaces()
-        guard !placed.isEmpty else { return [] }
+        guard !placed.isEmpty else { return ([], [:]) }
         guard
             let list = CGWindowListCopyWindowInfo(
                 [.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
-        else { return [] }
+        else { return ([], placed) }
         var out: Set<CGWindowID> = []
         for window in list {
             guard (window[kCGWindowLayer as String] as? Int) == 0,
@@ -375,7 +403,7 @@ actor WindowCapture {
             else { continue }
             out.insert(id)
         }
-        return out
+        return (out, placed)
     }
 
     /// What the app itself says its windows are — cached for `ttl`.
@@ -565,9 +593,26 @@ private struct PreviewStripView: View {
                         .padding(4)
                 }
             }
+            // Dimmed as well as badged. The badge says *why*; the dimming is what stops the tile
+            // reading as an ordinary click target in the half-second before anyone reads a badge.
+            .opacity(thumb.isReachable ? 1 : 0.45)
             .overlay(alignment: .topTrailing) {
                 if let display = thumb.displayIndex {
                     DisplayBadge(number: display + 1)  // 1-based for humans
+                        .padding(4)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if !thumb.isReachable {
+                    // Its own corner: a window can be both minimized and unreachable in principle,
+                    // and two badges stacked in one corner would occlude each other.
+                    //
+                    // A two-layer symbol, like the minimized badge, so the fill carries the colour
+                    // and the glyph stays white. A single-layer one (`nosign`) takes only the
+                    // primary style and would draw white-on-white over a pale thumbnail.
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white, .red)
                         .padding(4)
                 }
             }

@@ -468,11 +468,37 @@ extension SwitchTarget {
             .first { placement[$0] != nil }
     }
 
+    /// Whether a pick of the window at `state` can actually get the user there.
+    ///
+    /// The one place the "macOS will not travel for this app" verdict is written down, because two
+    /// callers have to agree on it exactly: `focusWindow`, which declines the pick, and the hover
+    /// preview, which badges the thumbnail so the click is not offered as if it would work. Split
+    /// apart they would drift, and the failure mode of drift here is the worst one available — a
+    /// thumbnail that looks live and does nothing, which is the bug this whole path exists around.
+    ///
+    /// A window on no Space is reachable: it is in the Dock, and `restoreFromDock` handles it
+    /// without a Desktop change. A window on the Space already in front is trivially reachable.
+    /// Anything else needs macOS to travel, and macOS only travels for an app with nothing on
+    /// screen — see the measurements in `focusWindow`.
+    ///
+    /// `appHasWindowOnScreen` is passed in rather than read here, and autoclosed rather than taken
+    /// as a plain `Bool`, because the two callers want opposite things from it. `hasWindowOnScreen`
+    /// walks the whole system window list: the strip asks this once per thumbnail and so hands over
+    /// an answer it computed once for the app, while `focusWindow` is on the pick path and must not
+    /// pay for it at all on the common same-Desktop pick, which the two cheap guards above settle.
+    static func canReach(
+        state: SpaceMover.SpaceState?, appHasWindowOnScreen: @autoclosure () -> Bool
+    ) -> Bool {
+        guard let state else { return true }
+        guard state.windowSpace != state.currentSpace else { return true }
+        return !appHasWindowOnScreen()
+    }
+
     /// Whether `pid` already has a window on a Space that is currently being displayed.
     ///
     /// The question activation's behaviour turns on: an app with something on screen is one macOS
     /// will not travel for, so activating it can only bring it forward where the user is standing —
-    /// gathering whatever it owns elsewhere. See the call in `focusWindow`.
+    /// gathering whatever it owns elsewhere. See `canReach`, which is what turns this into a verdict.
     ///
     /// `currentSpace` is per display in this map, which is what makes the answer right on a
     /// multi-monitor setup: a window on the second display's visible Space counts as on screen even
@@ -481,7 +507,7 @@ extension SwitchTarget {
     ///
     /// Takes the map rather than reading one, so the caller's single enumeration answers both this
     /// and the placement — see `windowSpaces`, which costs a round trip per Space.
-    private static func hasWindowOnScreen(
+    static func hasWindowOnScreen(
         pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState]
     ) -> Bool {
         ownedWindows(pid: pid, options: [.excludeDesktopElements]).contains { window in
@@ -784,49 +810,46 @@ extension SwitchTarget {
             // (show/hide/set, hide/show/set, set alone, and a real Mission Control transition) moved
             // the display only on the last of them.
             //
-            // And there is no fourth way from here. Synthetic ⌃-arrow is ignored — macOS does not
-            // let synthesised events fire system hotkeys — and activation will not travel for this
-            // app whatever it is asked: plain, fronted-first, and hidden-first were all measured to
-            // stay put. Reaching the window would need the Dock's own connection, which is what the
-            // tools that manage it inject into, and that needs SIP partly disabled. So this is a
-            // real limit, not a missing trick.
+            // And there is no fourth way from here. Every remaining candidate has now been measured
+            // directly, on a two-display desk with the second display holding a single Space — which
+            // is what makes this reachable at all, since an app with a window there is permanently
+            // "on screen" and so permanently in this branch.
+            //
+            // Synthetic ⌃-arrow is ignored. This used to walk the Desktops with Mission Control's own
+            // shortcut, and the note here claimed the posting only failed from an untrusted harness.
+            // Both halves were wrong: posting the identical events from a *trusted* scratch binary
+            // moved neither display, and this app's own log shows the same walk giving up ("the
+            // Mission Control shortcut moved nothing") on every pick that reached it. The walk cost
+            // half a second and posted a stray ⌃-arrow into whatever app was frontmost, so it is gone
+            // rather than merely unused.
+            //
+            // Activation will not travel for this app whatever it is asked: plain, fronted-first
+            // (`FrontProcess.raise` then activate), and with the app's on-screen window *minimized*
+            // so it owned nothing on screen anywhere — all three measured to stay put. The control
+            // rules out the harness: an app in the same state but with nothing on screen travelled in
+            // ~600ms through the very same call. Reaching the window would need the Dock's own
+            // connection, which is what the tools that manage it inject into, and that needs SIP
+            // partly disabled. So this is a real limit, not a missing trick.
             //
             // Doing nothing is the better failure. A pick that silently does not happen is a dead
             // click; a pick that smears a window across the Desktop the user is looking at reads as
             // the switcher having *moved their window*, and sends them hunting for it. The fronting
             // is skipped with it, which costs nothing — off-Space it is measured inert, and it is
             // only in company with the half-switch above that it paints anything.
-            if let state = placement, state.windowSpace != state.currentSpace,
-                hasWindowOnScreen(pid: pid, placement: placed)
+            //
+            // The preview strip asks `canReach` the same question before it draws, so a thumbnail
+            // that would land here is badged as unreachable rather than left looking clickable.
+            if let state = placement,
+                !canReach(
+                    state: state,
+                    appHasWindowOnScreen: hasWindowOnScreen(pid: pid, placement: placed))
             {
                 Log.general.notice(
                     """
                     focus window \(id, privacy: .public): pid \(pid, privacy: .public) has a window \
-                    on screen, so macOS will not travel; walking to space \
-                    \(state.windowSpace, privacy: .public) with Mission Control
+                    on screen, so macOS will not travel to space \
+                    \(state.windowSpace, privacy: .public); leaving the Desktop alone
                     """)
-                guard
-                    SpaceMover.travel(toSpace: state.windowSpace, onDisplay: state.display)
-                else {
-                    // Nothing left that can move the display, so stop rather than half-move it. See
-                    // `SpaceMover.travel` for why there is no third option: the private switch below
-                    // does not switch anything, and a pick that smears a window across the Desktop
-                    // the user is looking at reads as the switcher having *moved their window*.
-                    Log.general.notice(
-                        """
-                        focus window \(id, privacy: .public): could not reach space \
-                        \(state.windowSpace, privacy: .public); leaving the Desktop alone
-                        """)
-                    return
-                }
-                guard generation == focusGeneration else { return }
-                // Arrived, and by the system's own transition — so this is the ordinary on-Desktop
-                // case now, with nothing in flight to wait out. No `settle`: the Desktop is already
-                // composited, which is the whole thing `spaceSettleDelay` exists to wait for.
-                Log.general.notice(
-                    "focus window \(id, privacy: .public): arrived on space \(state.windowSpace, privacy: .public)"
-                )
-                focusAndActivate(window: id, pid: pid, generation: generation)
                 return
             }
 
@@ -1219,7 +1242,10 @@ extension SwitchTarget {
                 focus window \(id, privacy: .public): after activation \
                 windowSpace=\(state.windowSpace, privacy: .public) \
                 current=\(state.currentSpace, privacy: .public) \
-                fronted=\(fronted, privacy: .public)
+                fronted=\(fronted, privacy: .public) \
+                raised=\(raised, privacy: .public) \
+                zrank=\(zRank(of: id), privacy: .public) \
+                top=[\(zTop(), privacy: .public)]
                 """)
         }
         // Apps that build their accessibility tree lazily (Chromium, Electron) report *no* windows
@@ -1273,11 +1299,38 @@ extension SwitchTarget {
             DispatchQueue.main.async {
                 let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
                 focusQueue.async {
-                    guard generation == focusGeneration, front != pid else { return }
+                    guard generation == focusGeneration else { return }
+                    guard front == pid else {
+                        Log.general.notice(
+                            "focus window \(id, privacy: .public): front did not take, activating pid \(pid, privacy: .public)"
+                        )
+                        activate(pid: pid)
+                        return
+                    }
+                    // The app came forward but its window did not, which is a real and separate
+                    // failure this used to be blind to: `frontmostApplication` is an *app* fact, and
+                    // it reports success while the picked window sits behind the window of the app
+                    // the user just left. Measured on Messages against Ghostty — `raised=true`,
+                    // `fronted=true`, frontmost=Messages, and the window at z-rank 1 with Ghostty
+                    // above it. Every call had done its job and the result was still wrong.
+                    //
+                    // The override arrives after the raise rather than instead of it: the panel is
+                    // dismissed a turn before the focus work runs, and the front it hands back lands
+                    // on top of what we just ordered. Re-asserting is what fixes it, and the proof is
+                    // the workaround users found on their own — a second ⌘-Tab to the same app, which
+                    // is precisely these two calls run again, and which always worked.
+                    //
+                    // Once, not a loop. This is a race with a dismissal that has already happened by
+                    // the time we look, so a single re-assert either wins or the pick was superseded;
+                    // retrying past that would fight whatever the user did next.
+                    guard zRank(of: id) > 0 else { return }
                     Log.general.notice(
-                        "focus window \(id, privacy: .public): front did not take, activating pid \(pid, privacy: .public)"
-                    )
-                    activate(pid: pid)
+                        """
+                        focus window \(id, privacy: .public): pid \(pid, privacy: .public) is front \
+                        but the window is at z-rank \(zRank(of: id), privacy: .public); re-raising
+                        """)
+                    raise(window: id, pid: pid)
+                    _ = FrontProcess.focus(window: id, pid: pid)
                 }
             }
         }
@@ -1297,6 +1350,51 @@ extension SwitchTarget {
     ///
     /// Costs a full window-server snapshot, and runs up to fourteen times per switch on the
     /// latency-sensitive focus path — but a cheap answer that is always `true` is not an answer.
+    /// Where `window` sits in the on-screen z-order, front first, or -1 when it is not on screen.
+    ///
+    /// The signal the pick diagnostics were missing. "fronted=true" says the window server accepted
+    /// the front change, not that the window ended up in front — and those two came apart for a
+    /// Catalyst app that reported success on every count while staying visibly buried. Rank 0 is the
+    /// claim worth logging, because it is the one the user can see.
+    ///
+    /// Layer 0 only, so panels and menus — including this app's own switcher — are not counted as
+    /// windows the pick failed to get above.
+    private static func zRank(of window: CGWindowID) -> Int {
+        guard window != 0,
+            let list = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return -1 }
+        var rank = 0
+        for entry in list where (entry[kCGWindowLayer as String] as? Int) == 0 {
+            if entry[kCGWindowNumber as String] as? CGWindowID == window { return rank }
+            rank += 1
+        }
+        return -1
+    }
+
+    /// The windows sitting in front of the on-screen stack, as `Owner#id@WxH`.
+    ///
+    /// A rank on its own does not say whether the pick failed: this counts every display, so a
+    /// window that is genuinely in front on its own monitor still ranks behind whatever is frontmost
+    /// on another one. Naming the occupants is what separates "buried under the app I came from"
+    /// from "second only to a window on the other screen", and the size is what exposes an app's
+    /// invisible helper surfaces when one of them is the thing in the way.
+    ///
+    /// App names only — no window titles, which carry document names and message subjects.
+    private static func zTop(_ count: Int = 3) -> String {
+        guard
+            let list = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return "?" }
+        return list.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }.prefix(count)
+            .map { entry in
+                let bounds = entry[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+                return "\(entry[kCGWindowOwnerName as String] as? String ?? "?")"
+                    + "#\(entry[kCGWindowNumber as String] as? Int ?? -1)"
+                    + "@\(Int(bounds["Width"] ?? 0))x\(Int(bounds["Height"] ?? 0))"
+            }.joined(separator: " ")
+    }
+
     private static func isOnScreen(window: CGWindowID) -> Bool {
         guard window != 0 else { return true }
         guard
