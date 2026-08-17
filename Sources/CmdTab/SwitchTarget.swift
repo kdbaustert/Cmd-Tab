@@ -247,6 +247,11 @@ extension SwitchTarget {
             // switch is waiting on.
             let placement = SpaceMover.windowSpaces()
 
+            // The ids Accessibility vouches for, shared by the same questions. See `realWindows`:
+            // the window list alone cannot tell an app's window from the helper surfaces it leaves
+            // beside it, and picking one of those is a pick that fronts the app and raises nothing.
+            let real = realWindows(pid: pid)
+
             // Something of this app's is already in front of us, which is the case nearly every pick
             // takes. What it does *not* license is `activate`: that call is app-level, and an app
             // whose front window lives on another Desktop has that window dragged onto this one as
@@ -266,7 +271,7 @@ extension SwitchTarget {
             // happened to: nothing else owns the desktop. `.excludeDesktopElements` drops the
             // desktop by request, minimized windows are absent from the on-screen list by
             // definition, and layer 0 keeps panels and menus from counting.
-            if let here = frontWindowHere(pid: pid, placement: placement) {
+            if let here = frontWindowHere(pid: pid, placement: placement, real: real) {
                 Log.general.notice(
                     """
                     app pick: pid \(pid, privacy: .public) fronting window \
@@ -275,7 +280,7 @@ extension SwitchTarget {
                 // The siblings first, so the app arrives as a group rather than as one window with
                 // the rest still buried — see `raiseGroupHere`. Ordered before the pick's own front
                 // so the picked window finishes on top of them.
-                raiseGroupHere(pid: pid, except: here, placement: placement)
+                raiseGroupHere(pid: pid, except: here, placement: placement, real: real)
                 focusAndActivate(window: here, pid: pid, generation: generation)
                 return
             }
@@ -288,7 +293,7 @@ extension SwitchTarget {
             // `frontOwnedWindow` here assumed it could: see `placedFrontWindow` for the five
             // phantoms a windowless Finder owns. Trusting them meant `reopen` was unreachable for
             // the one app whose name is on the bug it exists to fix.
-            guard let front = placedFrontWindow(pid: pid, placement: placement) else {
+            guard let front = placedFrontWindow(pid: pid, placement: placement, real: real) else {
                 Log.general.notice(
                     "app pick: pid \(pid, privacy: .public) has nothing on any Desktop")
                 activate(pid: pid)
@@ -391,17 +396,59 @@ extension SwitchTarget {
     /// say the window is here. Unlike the whole-window-group raise this replaces, a blind answer
     /// costs nothing — the window fronted is one specific window of the app's, never its siblings on
     /// Desktops the user is not looking at.
+    ///
+    /// `real` is a third half neither of those two covers: both ask *where* a window is, and neither
+    /// asks whether it is a window at all. See `realWindows` — an app's helper surfaces pass the
+    /// on-screen test and the Space test alike, and fronting one is a pick that does nothing.
     private static func frontWindowHere(
-        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState]
+        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState], real: Set<CGWindowID>
     ) -> CGWindowID? {
         // In z-order, so the first match is the one the app considers in front.
-        let onScreen = ownedWindows(
-            pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements])
-        guard !placement.isEmpty else { return onScreen.first }
-        return onScreen.first { window in
+        frontWindow(
+            onScreen: ownedWindows(
+                pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]),
+            placement: placement, real: real)
+    }
+
+    /// The rule above, over values rather than the window server, so the three inputs that decide it
+    /// can be pinned by a test. `onScreen` is front-to-back.
+    static func frontWindow(
+        onScreen: [CGWindowID], placement: [CGWindowID: SpaceMover.SpaceState],
+        real: Set<CGWindowID>
+    ) -> CGWindowID? {
+        let candidates = onScreen.filter { isReal($0, real) }
+        guard !placement.isEmpty else { return candidates.first }
+        return candidates.first { window in
             guard let state = placement[window] else { return false }
             return state.windowSpace == state.currentSpace
         }
+    }
+
+    /// The window ids Accessibility will vouch for as real windows of `pid`.
+    ///
+    /// `CGWindowList` is not a list of an app's windows, and the Space check the callers already
+    /// apply is not enough to make it one: an app's helper surfaces are layer 0, on screen, and
+    /// placed on a Space exactly like its real windows. Measured on Alfred Preferences, which owns a
+    /// 500×500 surface and one 2056×39 menu-bar backing per display alongside its one real window;
+    /// when one of those sorts ahead of the real window in z-order, `frontWindowHere` returns it and
+    /// the pick fronts a window that does not exist. `_SLPSSetFrontProcessWithOptions` accepts the id
+    /// and marks the process front — the menu bar swaps, `frontmostApplication` reports success —
+    /// while ordering nothing, so the app's real window stays buried under whatever the user was
+    /// looking at. That is the "picked it and the window didn't come forward" report, and its
+    /// signature in the log is `fronted=true raised=false`: `raised` is false precisely because the
+    /// id names no Accessibility window.
+    ///
+    /// Empty means "no opinion", not "no windows": Chromium and Electron hosts publish nothing until
+    /// they are active, so every caller degrades to the unfiltered list rather than concluding an app
+    /// has nothing on screen. One Accessibility round trip per pick, on `focusQueue` — next to the
+    /// per-Space window-server walk `focusApp` already pays for, it does not register.
+    private static func realWindows(pid: pid_t) -> Set<CGWindowID> {
+        Set(TargetProvider.switchableWindowIDs(for: pid))
+    }
+
+    /// See `realWindows`: an empty set is no opinion, so everything passes.
+    private static func isReal(_ window: CGWindowID, _ real: Set<CGWindowID>) -> Bool {
+        real.isEmpty || real.contains(window)
     }
 
     /// Raises the app's *other* windows that are already on the Desktop in front of the user, so an
@@ -425,13 +472,16 @@ extension SwitchTarget {
     /// the picked window, left out because `focusAndActivate` fronts it immediately afterwards and
     /// it has to finish on top.
     private static func raiseGroupHere(
-        pid: pid_t, except target: CGWindowID, placement: [CGWindowID: SpaceMover.SpaceState]
+        pid: pid_t, except target: CGWindowID, placement: [CGWindowID: SpaceMover.SpaceState],
+        real: Set<CGWindowID>
     ) {
         let siblings = ownedWindows(
             pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]
         )
         .filter { window in
-            guard window != target, let state = placement[window] else { return false }
+            guard window != target, isReal(window, real), let state = placement[window] else {
+                return false
+            }
             return state.windowSpace == state.currentSpace
         }
         guard !siblings.isEmpty else { return }
@@ -455,17 +505,27 @@ extension SwitchTarget {
     /// of them a phantom — which is why the old `frontOwnedWindow` never returned nil for Finder and
     /// `reopen` was unreachable for the very app whose name is on the bug it exists to fix.
     ///
-    /// A window the window server puts on a Space is a real one: the `0x2` query behind this map is
-    /// the one `SpaceMover` documents as returning exactly the real windows. Minimized windows are
-    /// on no Space and so are absent here as well, which is why the caller goes on to search the
-    /// Dock through the accessibility tree rather than concluding anything from a nil.
+    /// Placement was the first cut and is not enough on its own: the `0x2` query behind this map was
+    /// taken to return exactly the real windows, and Alfred Preferences disproves it — its helper
+    /// surfaces are placed on a Space like everything else. So `real` runs alongside it; see
+    /// `realWindows`. Minimized windows are on no Space and so are absent from the map, which is why
+    /// the caller goes on to search the Dock through the accessibility tree rather than concluding
+    /// anything from a nil.
     ///
     /// The list is in z-order, so the first match is the one the app considers in front.
     private static func placedFrontWindow(
-        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState]
+        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState], real: Set<CGWindowID>
     ) -> CGWindowID? {
-        ownedWindows(pid: pid, options: [.excludeDesktopElements])
-            .first { placement[$0] != nil }
+        placedWindow(
+            owned: ownedWindows(pid: pid, options: [.excludeDesktopElements]),
+            placement: placement, real: real)
+    }
+
+    /// The rule above, over values. `owned` is front-to-back.
+    static func placedWindow(
+        owned: [CGWindowID], placement: [CGWindowID: SpaceMover.SpaceState], real: Set<CGWindowID>
+    ) -> CGWindowID? {
+        owned.first { isReal($0, real) && placement[$0] != nil }
     }
 
     /// Whether a pick of the window at `state` can actually get the user there.
