@@ -483,8 +483,18 @@ final class SwitcherController {
             symbolAvailable=\(SystemSwitcher.isAvailable) \
             screenRecording=\(Permissions.canCaptureScreen)
             """)
-        provider.refresh { targets in
-            Log.targets.notice("initial refresh: \(targets.count) targets")
+        provider.refresh { [weak self] targets in
+            MainActor.assumeIsolated {
+                Log.targets.notice("initial refresh: \(targets.count) targets")
+                guard let self else { return }
+                // Here rather than beside the other `warm` calls in `AppDelegate`, because a warm-up
+                // that lays out an empty list warms the wrong thing: the tiles are most of what the
+                // first render costs. Seeding the model is what a session opening does anyway
+                // (`showWith` calls `begin` every time), so this leaves it in the state the next one
+                // would have put it in regardless.
+                self.model.begin(targets)
+                self.panels.prewarm()
+            }
         }
         return true
     }

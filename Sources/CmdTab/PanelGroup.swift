@@ -198,6 +198,33 @@ final class PanelGroup {
         startScreenTracking()
     }
 
+    /// Builds the panels and lays them out once, without putting anything on screen.
+    ///
+    /// The first `show()` of a process is measurably more expensive than every one after it, and it
+    /// is the one that can least afford to be: `makePanel` constructs the `NSPanel` and `layout()`
+    /// constructs its `NSHostingView`, so the first ⌘-Tab pays for SwiftUI's first render — hosting
+    /// view, `VisualEffectBackground`, fonts, the whole graph — inline on the main thread. Two
+    /// consecutive launches measured it identically: `main loop busy 178ms` and `175ms`, both on the
+    /// very first `panel shown` and neither repeated once in the sessions that followed. That is the
+    /// tap starved for a sixth of a second, which is the one failure this app cannot afford (see
+    /// `MainLoopMonitor`), and it is entirely a warm-up cost.
+    ///
+    /// So it is paid at launch, on an idle main loop, where a stall costs nothing and the monitor's
+    /// own documentation already expects one. The panels built here are the ones the first session
+    /// reuses — `rebuildPanels` finds them in place and `layout()` reassigns the existing hosting
+    /// view's root — so this warms the objects that actually run rather than a stand-in for them.
+    ///
+    /// Never ordered in: `layout()` sizes and positions a window that has not been shown, which the
+    /// user cannot see and the next `show()` recomputes anyway.
+    func prewarm() {
+        guard panels.isEmpty else { return }
+        sessionScreens = screens
+        MainLoopMonitor.marking("panel prewarm") {
+            rebuildPanels()
+            panels.forEach { $0.layout() }
+        }
+    }
+
     func hide() {
         stopScreenTracking()
         stopHoverTracking()

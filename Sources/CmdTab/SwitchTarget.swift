@@ -297,7 +297,8 @@ extension SwitchTarget {
                 Log.general.notice(
                     "app pick: pid \(pid, privacy: .public) has nothing on any Desktop")
                 activate(pid: pid)
-                restoreMinimized(pid: pid, attempts: 4, bundleURL: bundleURL)
+                restoreMinimized(
+                    pid: pid, attempts: 4, bundleURL: bundleURL, generation: generation)
                 return
             }
 
@@ -337,7 +338,15 @@ extension SwitchTarget {
     /// does nothing at all. That silent nothing was the "Finder won't open" report — Finder's
     /// accessibility list holds only the desktop, an `AXScrollArea` that `isWindow` drops, so the
     /// list is empty forever and every retry expired against a `return`.
-    private static func restoreMinimized(pid: pid_t, attempts: Int, bundleURL: URL?) {
+    ///
+    /// `generation` for the same reason every other deferred step in this file carries one: the
+    /// retry chain is up to four tenths of a second long and ends in an activation, so without it a
+    /// pick the user had already replaced could still haul them back to a Dock window they had moved
+    /// on from.
+    private static func restoreMinimized(
+        pid: pid_t, attempts: Int, bundleURL: URL?, generation: UInt64
+    ) {
+        guard generation == focusGeneration else { return }
         let windows = AX.windows(of: AX.application(pid)).filter(AX.isWindow)
         guard let target = windows.first(where: AX.isMinimized) else {
             // It has windows, just none in the Dock. Nothing to restore, and nothing to reopen for
@@ -348,14 +357,28 @@ extension SwitchTarget {
                 return
             }
             focusQueue.asyncAfter(deadline: .now() + 0.1) {
-                restoreMinimized(pid: pid, attempts: attempts - 1, bundleURL: bundleURL)
+                restoreMinimized(
+                    pid: pid, attempts: attempts - 1, bundleURL: bundleURL, generation: generation)
             }
             return
         }
         raise(element: target)
         Log.targets.notice("restored a minimized window for pid \(pid)")
-        // Restoring does not reliably bring the app forward on its own.
-        activate(pid: pid)
+        // Restoring does not reliably bring the app forward on its own — and until now a bare
+        // `activate` was the whole of the answer here, which made this the one pick path that never
+        // checked its own outcome. It is also the path most likely to need one: a day of logs has
+        // five picks that reached it and not one `after activation` line among them, while the user
+        // re-pressed ⌘-Tab at the same app three times in twelve seconds around two of them.
+        //
+        // `focusAndActivate` is the same verification every other path gets, and it is safe here for
+        // the reason its own `FrontProcess` note gives: it names the window by id rather than
+        // activating the app, and this branch was reached *because* the app has nothing on any
+        // Desktop, so there is nothing left elsewhere for its activation fallback to gather.
+        guard let id = windowID(of: target, parsed: nil, pid: pid) else {
+            activate(pid: pid)
+            return
+        }
+        focusAndActivate(window: id, pid: pid, generation: generation)
     }
 
     /// Asks an app that owns no window at all to make one, which is what picking its tile means.
@@ -1342,6 +1365,7 @@ extension SwitchTarget {
             guard generation == focusGeneration, let state = SpaceMover.spaceState(of: id) else {
                 return
             }
+            let stack = onScreenStack()
             Log.general.notice(
                 """
                 focus window \(id, privacy: .public): after activation \
@@ -1349,8 +1373,8 @@ extension SwitchTarget {
                 current=\(state.currentSpace, privacy: .public) \
                 fronted=\(fronted, privacy: .public) \
                 raised=\(raised, privacy: .public) \
-                zrank=\(zRank(of: id), privacy: .public) \
-                top=[\(zTop(), privacy: .public)]
+                zrank=\(zRank(of: id, in: stack), privacy: .public) \
+                top=[\(zTop(stack), privacy: .public)]
                 """)
         }
         // Apps that build their accessibility tree lazily (Chromium, Electron) report *no* windows
@@ -1428,17 +1452,112 @@ extension SwitchTarget {
                     // Once, not a loop. This is a race with a dismissal that has already happened by
                     // the time we look, so a single re-assert either wins or the pick was superseded;
                     // retrying past that would fight whatever the user did next.
-                    guard zRank(of: id) > 0 else { return }
+                    // One snapshot, read once. Taking a second for the log meant the line could name
+                    // a rank the guard had not seen — and paid for another full window-server
+                    // enumeration on the focus path to do it.
+                    let rank = zRank(of: id, in: onScreenStack())
+                    guard rank > 0 else { return }
                     Log.general.notice(
                         """
                         focus window \(id, privacy: .public): pid \(pid, privacy: .public) is front \
-                        but the window is at z-rank \(zRank(of: id), privacy: .public); re-raising
+                        but the window is at z-rank \(rank, privacy: .public); re-raising
                         """)
                     raise(window: id, pid: pid)
                     _ = FrontProcess.focus(window: id, pid: pid)
                 }
             }
         }
+    }
+
+    /// One layer-0 window from the on-screen list, reduced to what the pick diagnostics ask of it.
+    ///
+    /// A type rather than the raw `[String: Any]` so `zRank` becomes a pure function of a stack and
+    /// can be tested against one — the same seam `frontWindow` uses, and for the same reason: its
+    /// real input is a window-server snapshot no test can arrange.
+    struct StackedWindow: Equatable {
+        let id: CGWindowID
+        let pid: pid_t
+        let owner: String
+        let frame: CGRect
+    }
+
+    /// The on-screen layer-0 windows, front first.
+    ///
+    /// Layer 0 only, so panels and menus — including this app's own switcher — are neither counted
+    /// as windows a pick failed to get above nor named as the thing in its way.
+    ///
+    /// Taken once and passed to both readers below. They used to fetch one each, which is two
+    /// window-server round-trips for a single log line and — worse — two moments: a stack that moved
+    /// between them produced a rank and a list of occupants that disagreed about what was on top.
+    private static func onScreenStack() -> [StackedWindow] {
+        guard
+            let list = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return [] }
+        return list.compactMap { entry in
+            guard (entry[kCGWindowLayer as String] as? Int) == 0,
+                let id = entry[kCGWindowNumber as String] as? CGWindowID
+            else { return nil }
+            let bounds = entry[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+            return StackedWindow(
+                id: id,
+                pid: entry[kCGWindowOwnerPID as String] as? pid_t ?? 0,
+                owner: entry[kCGWindowOwnerName as String] as? String ?? "?",
+                frame: CGRect(
+                    x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
+                    width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0))
+        }
+    }
+
+    /// How many *other apps'* windows cover `window`, or -1 when it is not on screen.
+    ///
+    /// The signal the pick diagnostics were missing. "fronted=true" says the window server accepted
+    /// the front change, not that the window ended up in front — and those two came apart for a
+    /// Catalyst app that reported success on every count while staying visibly buried. Rank 0 is the
+    /// claim worth logging, because it is the one the user can see.
+    ///
+    /// A raw position in the z-order was not that claim, and two filters separate them:
+    ///
+    /// *An app's own windows do not bury it.* Chrome floats a 347×22 link-preview bubble over its
+    /// window whenever the cursor rests on a link — a child of the very window being raised. Measured
+    /// across a day: three picks of Chrome's real window logged `zrank=1` with
+    /// `Google Chrome#32382@347x22` on top, two of them spending a re-raise on a stack that was
+    /// already correct. The failure worth catching is being buried under *another app*, which is what
+    /// the Messages-behind-Ghostty case in `verifyFront` was.
+    ///
+    /// *A window that does not overlap does not cover.* This reads every display, so a window
+    /// genuinely in front on its own monitor used to rank behind whatever was frontmost on another
+    /// one. Overlap is the honest test on a single display too — a window beside the target obscures
+    /// nothing.
+    ///
+    /// A target the window server reports with no bounds intersects nothing and so ranks 0. That is
+    /// the right answer for a window with no area, and the wrong one only if `kCGWindowBounds` ever
+    /// goes missing on a window that has some — in which case this reports success rather than a
+    /// phantom failure, which is the safer of the two ways to be wrong.
+    static func zRank(of window: CGWindowID, in stack: [StackedWindow]) -> Int {
+        guard window != 0, let index = stack.firstIndex(where: { $0.id == window }) else {
+            return -1
+        }
+        let target = stack[index]
+        return stack[..<index].filter {
+            $0.pid != target.pid && $0.frame.intersects(target.frame)
+        }.count
+    }
+
+    /// The windows sitting in front of the on-screen stack, as `Owner#id@WxH`.
+    ///
+    /// Deliberately unfiltered where `zRank` is not. Naming the occupants is what separates "buried
+    /// under the app I came from" from "second only to a window on the other screen", and the size is
+    /// what exposes an app's invisible helper surfaces when one of them is the thing in the way —
+    /// both readings `zRank` now discounts, so the log has to keep showing them or the discounting
+    /// becomes unfalsifiable from the outside.
+    ///
+    /// App names only — no window titles, which carry document names and message subjects.
+    private static func zTop(_ stack: [StackedWindow], count: Int = 3) -> String {
+        guard !stack.isEmpty else { return "?" }
+        return stack.prefix(count)
+            .map { "\($0.owner)#\($0.id)@\(Int($0.frame.width))x\(Int($0.frame.height))" }
+            .joined(separator: " ")
     }
 
     /// Whether the window is currently displayed — false while it sits on another Desktop, which is
@@ -1455,51 +1574,6 @@ extension SwitchTarget {
     ///
     /// Costs a full window-server snapshot, and runs up to fourteen times per switch on the
     /// latency-sensitive focus path — but a cheap answer that is always `true` is not an answer.
-    /// Where `window` sits in the on-screen z-order, front first, or -1 when it is not on screen.
-    ///
-    /// The signal the pick diagnostics were missing. "fronted=true" says the window server accepted
-    /// the front change, not that the window ended up in front — and those two came apart for a
-    /// Catalyst app that reported success on every count while staying visibly buried. Rank 0 is the
-    /// claim worth logging, because it is the one the user can see.
-    ///
-    /// Layer 0 only, so panels and menus — including this app's own switcher — are not counted as
-    /// windows the pick failed to get above.
-    private static func zRank(of window: CGWindowID) -> Int {
-        guard window != 0,
-            let list = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
-        else { return -1 }
-        var rank = 0
-        for entry in list where (entry[kCGWindowLayer as String] as? Int) == 0 {
-            if entry[kCGWindowNumber as String] as? CGWindowID == window { return rank }
-            rank += 1
-        }
-        return -1
-    }
-
-    /// The windows sitting in front of the on-screen stack, as `Owner#id@WxH`.
-    ///
-    /// A rank on its own does not say whether the pick failed: this counts every display, so a
-    /// window that is genuinely in front on its own monitor still ranks behind whatever is frontmost
-    /// on another one. Naming the occupants is what separates "buried under the app I came from"
-    /// from "second only to a window on the other screen", and the size is what exposes an app's
-    /// invisible helper surfaces when one of them is the thing in the way.
-    ///
-    /// App names only — no window titles, which carry document names and message subjects.
-    private static func zTop(_ count: Int = 3) -> String {
-        guard
-            let list = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
-        else { return "?" }
-        return list.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }.prefix(count)
-            .map { entry in
-                let bounds = entry[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
-                return "\(entry[kCGWindowOwnerName as String] as? String ?? "?")"
-                    + "#\(entry[kCGWindowNumber as String] as? Int ?? -1)"
-                    + "@\(Int(bounds["Width"] ?? 0))x\(Int(bounds["Height"] ?? 0))"
-            }.joined(separator: " ")
-    }
-
     private static func isOnScreen(window: CGWindowID) -> Bool {
         guard window != 0 else { return true }
         guard

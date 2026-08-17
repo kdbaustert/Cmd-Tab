@@ -349,7 +349,12 @@ final class ConfigFile: ObservableObject {
         // the ones it is in the middle of receiving. Self-correcting — once the file lands, the
         // placeholder is gone and writes resume.
         guard pendingDownload == nil else { return }
-        write(data, to: Self.url)
+        // Encoding and a filesystem write, on the main thread, from a debounced timer — so it lands
+        // in a run-loop turn with no user input anywhere near it. That is the shape of the one stall
+        // this app has recorded that nothing could account for (236ms, "unlabelled work", a minute
+        // after the last switch), and an unnamed suspect is the only kind `MainLoopMonitor` cannot
+        // act on. Marking it does not make it faster; it makes the next one say whether it was this.
+        MainLoopMonitor.marking("settings write") { write(data, to: Self.url) }
     }
 
     private func write(_ data: Data, to url: URL) {
