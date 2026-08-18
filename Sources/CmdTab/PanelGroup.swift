@@ -76,15 +76,19 @@ final class PanelGroup {
     /// re-target reproduces the session it started as.
     private var sessionScreens: PanelScreens = .automatic
 
-    /// The display ids this session was last built against, so a screen-parameter notification that
-    /// changed nothing about the desk can be ignored.
+    /// The displays this session's panels are *aimed* at. One entry per panel: a display id for a
+    /// pinned one, nil for a panel that follows the position setting.
     ///
-    /// `didChangeScreenParametersNotification` is not a plug/unplug notification: AppKit posts it for
-    /// the Dock showing and hiding, the menu bar auto-hiding, and a resolution or arrangement change.
-    /// Relaying out on all of those moves an unpinned panel to whatever display the cursor is on at
-    /// the time — so an open switcher jumped displays mid-session because the Dock happened to slide
-    /// in, taking its selection with it.
+    /// Stamped by `rebuildPanels` from the screens it actually used, so it records what the panels
+    /// are rather than what they were meant to be.
     private var sessionDisplayIDs: [CGDirectDisplayID?] = []
+
+    /// The desk itself, as it was when the panels were last built against it.
+    ///
+    /// Two stamps rather than one because the aim and the desk can move independently, and a
+    /// screen-parameter notification has to be judged against both — see `shouldRetarget`, which is
+    /// where that rule lives and why.
+    private var sessionDeskIDs: [CGDirectDisplayID?] = []
 
     /// Fired when the desk really did change under an open session, so the controller can rebuild the
     /// target list. The display badges are baked into each `SwitchTarget` when it is built and are
@@ -269,6 +273,7 @@ final class PanelGroup {
             panel.isPinned = screen != nil && id != nil
         }
         sessionDisplayIDs = targets.map { $0?.displayID }
+        sessionDeskIDs = NSScreen.screens.map(\.displayID)
         return added
     }
 
@@ -296,23 +301,55 @@ final class PanelGroup {
         screenObserver = nil
     }
 
+    /// Whether a screen-parameter notification is one the panels have to answer.
+    ///
+    /// `didChangeScreenParametersNotification` is not a plug/unplug notification: AppKit posts it for
+    /// the Dock showing and hiding, the menu bar auto-hiding, and a resolution or arrangement change.
+    /// Acting on all of them moves an unpinned panel onto whatever display the cursor is on at the
+    /// time — so an open switcher jumped displays mid-session because the Dock happened to slide in,
+    /// taking its selection with it. This is the filter that keeps those out.
+    ///
+    /// Two readings, because a notification can move either one without the other, and each of them
+    /// alone misses a real change:
+    ///
+    /// * **The desk.** A display plugged in or unplugged while the setting is `.automatic` leaves the
+    ///   aim at `[nil]`, so an aim-only check can never fire there — and `.automatic` is the default.
+    ///   That left the one panel at coordinates nothing covered and, worse, skipped
+    ///   `onDisplaysChanged`, which is the only thing that renumbers the display badges baked into
+    ///   every target. Order counts as much as membership: the badges are numbered by position in
+    ///   `NSScreen.screens`, so rearranging two monitors stales them exactly as unplugging one does.
+    /// * **The aim.** Dragging the menu bar to the other monitor in Displays settings moves what
+    ///   `.mainDisplay` points at while the desk keeps precisely the same displays, so a desk-only
+    ///   check would leave that panel pinned to the display that is no longer primary.
+    ///
+    /// Pure over the readings, and `nonisolated`, so the three settings can be exercised against a
+    /// desk this machine does not have — which is the whole difficulty with this predicate: the case
+    /// that matters most is a second display arriving, and no test can arrange one.
+    nonisolated static func shouldRetarget(
+        _ screens: PanelScreens, desk: [CGDirectDisplayID?], primary: CGDirectDisplayID?,
+        lastDesk: [CGDirectDisplayID?], lastAim: [CGDirectDisplayID?]
+    ) -> Bool {
+        let aim: [CGDirectDisplayID?]
+        switch screens {
+        case .automatic: aim = [nil]  // one panel, following the position setting
+        case .mainDisplay: aim = [primary]
+        case .allDisplays: aim = desk
+        }
+        return desk != lastDesk || aim != lastAim
+    }
+
     /// Re-targets the panels onto the displays that exist now.
     ///
     /// Only the panels this creates are shown; the ones already up are relaid out instead. Showing
     /// all of them would restart the fade from zero on panels the user is looking at, so a monitor
     /// being plugged in would blink the switcher.
     private func displaysChanged() {
-        // Only when the desk actually changed. See `sessionDisplayIDs`: this notification also fires
-        // for the Dock and the menu bar, and re-laying out on those moves an unpinned panel onto
-        // whatever display the cursor happens to be on, mid-selection.
-        let current: [CGDirectDisplayID?] = {
-            switch sessionScreens {
-            case .automatic: return [nil]
-            case .mainDisplay: return [NSScreen.primary?.displayID]
-            case .allDisplays: return NSScreen.screens.map { $0.displayID }
-            }
-        }()
-        guard current != sessionDisplayIDs else { return }
+        guard
+            Self.shouldRetarget(
+                sessionScreens, desk: NSScreen.screens.map(\.displayID),
+                primary: NSScreen.primary?.displayID,
+                lastDesk: sessionDeskIDs, lastAim: sessionDisplayIDs)
+        else { return }
 
         let added = rebuildPanels()
         added.forEach { $0.show() }

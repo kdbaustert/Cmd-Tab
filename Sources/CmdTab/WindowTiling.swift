@@ -726,13 +726,14 @@ enum WindowTiler {
 
     /// Which window an arrangement acts on.
     ///
-    /// Absent means the app's frontmost window, which is right for the keyboard chords and for the
-    /// titlebar drag: both act on whatever the user is looking at, and a titlebar drag has focused
-    /// the window by grabbing it. The two modifier-driven mouse gestures are the exception — each is
-    /// pointed at one specific window and *neither focuses it*. The modifier-drag swallows its own
-    /// mouse-down so the click never reaches the app, and the hold-and-point gesture involves no
-    /// click at all. Handed a pid alone, the tiler re-resolved to the focused window and snapped the
-    /// wrong one on any app with more than one window open.
+    /// Absent means the app's frontmost window, which is right for the keyboard chords and the
+    /// launch arrangement: both act on whatever the app itself considers current, and neither has a
+    /// particular window in mind. Every *mouse* gesture names one, because each is pointed at a
+    /// specific window and the focused one is not reliably it — the modifier-drag swallows its own
+    /// mouse-down so the click never reaches the app, the hold-and-point gesture involves no click
+    /// at all, and even the plain drag-to-edge can move a window of an already-frontmost app
+    /// without changing which of its windows has focus. Handed a pid alone, the tiler re-resolved
+    /// to the focused window and snapped the wrong one on any app with more than one window open.
     /// `@unchecked Sendable` because `.element` carries an `AXUIElement`, which is an opaque CF
     /// handle and so not checkable. Crossing onto the tiler's queue is exactly what this type is
     /// for: `resolve` runs the Accessibility walk there rather than on the main thread, which is the

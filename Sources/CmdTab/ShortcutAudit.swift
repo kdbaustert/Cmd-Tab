@@ -51,6 +51,28 @@ struct ShortcutEntry: Identifiable {
         /// Whether these are matched globally. In-switcher actions are not — they only exist while
         /// the panel is up.
         var isGlobal: Bool { self != .inSwitcherAction }
+
+        /// Whether this family fires on a chord whatever Shift is doing.
+        ///
+        /// The three openers do: they are matched with `TriggerModifiers.opens`, which compares only
+        /// ⌘/⌥/⌃ because Shift on a trigger means "go backwards round the list" rather than a
+        /// different binding. Everything else compares all four modifiers exactly — the tiling
+        /// matcher, the direct activations and the all-windows pair all test
+        /// `want == held` over ⌘/⌥/⌃/⇧, and an in-switcher action's whole point is that ⌥Q and ⌥⇧Q
+        /// are two different actions.
+        ///
+        /// This is the asymmetry `collisions` turns on, and getting it wrong is not academic: read
+        /// as "Shift never matters", the *default* tiling bindings collide with themselves, because
+        /// ⌃⌘← is Left half and ⌃⌘⇧← is Move to previous display. The Overview then warned that one
+        /// of them could never fire, about two bindings that both work.
+        ///
+        /// Exhaustive rather than `self != …`, so a new kind has to state which rule it follows.
+        var ignoresShift: Bool {
+            switch self {
+            case .switcherTrigger, .appWindowCycle, .scopedTrigger: return true
+            case .directActivation, .allWindows, .tiling, .inSwitcherAction: return false
+            }
+        }
     }
 
     let id: String
@@ -64,18 +86,28 @@ struct ShortcutEntry: Identifiable {
     /// but it cannot collide with anything because it never fires.
     let isActive: Bool
 
-    /// A comparable chord. Shift is dropped for global bindings, where it only ever means "go
-    /// backwards", but kept for in-switcher actions, where ⌥Q and ⌥⇧Q are two different actions.
+    /// A comparable chord: the combination as it was recorded, narrowed to the four modifiers a
+    /// binding can be built from.
+    ///
+    /// Shift is **kept**. It used to be dropped here for every global binding, on the reasoning that
+    /// it only ever means "go backwards" — true of the three openers and of nothing else, and the
+    /// families it is not true of are the ones that bind Shift on purpose. See `Kind.ignoresShift`;
+    /// the difference between the two rules is expressed at comparison time in `collisions`, because
+    /// one normalised key cannot hold both.
     struct Chord: Hashable {
         let keyCode: Int
         let modifiers: CGEventFlags
 
-        init(keyCode: Int, modifiers: CGEventFlags, keepsShift: Bool = false) {
+        init(keyCode: Int, modifiers: CGEventFlags) {
             self.keyCode = keyCode
             self.modifiers = modifiers.intersection(
-                keepsShift
-                    ? [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-                    : [.maskCommand, .maskAlternate, .maskControl])
+                [.maskCommand, .maskAlternate, .maskControl, .maskShift])
+        }
+
+        /// The same chord as an opener sees it. Two bindings can only ever compete if these agree,
+        /// which is what makes it the pooling key in `collisions`.
+        var ignoringShift: Chord {
+            Chord(keyCode: keyCode, modifiers: modifiers.subtracting(.maskShift))
         }
 
         func hash(into hasher: inout Hasher) {
@@ -153,7 +185,7 @@ enum ShortcutAudit {
                     id: "action.\(action.rawValue)", kind: .inSwitcherAction, label: action.title,
                     display: binding.displayString,
                     chord: ShortcutEntry.Chord(
-                        keyCode: binding.keyCode, modifiers: binding.extras, keepsShift: true),
+                        keyCode: binding.keyCode, modifiers: binding.extras),
                     isActive: actions.isEnabled))
         }
         return out
@@ -161,26 +193,76 @@ enum ShortcutAudit {
 
     /// Chords claimed by more than one *active, bound* entry.
     ///
+    /// Two entries collide when some single keypress would be claimed by both, and that is not the
+    /// same as their chords being equal, because the families do not all match the same way — see
+    /// `Kind.ignoresShift`. Three cases, and the middle one is the reason this cannot be a dictionary
+    /// keyed on one normalised chord:
+    ///
+    /// * two openers collide when their ⌘/⌥/⌃ agree, Shift or no Shift;
+    /// * an opener collides with *every* Shift variant of an exact binding on the same key, since
+    ///   the opener claims the press before the exact binding is ever consulted;
+    /// * two exact bindings collide only on the identical combination, Shift included.
+    ///
+    /// So entries are pooled by their Shift-blind chord — the widest thing that could possibly
+    /// compete — and each pool is then resolved by whether an opener is in it.
+    ///
     /// In-switcher actions are pooled separately: they are matched against the extra modifiers held
     /// on top of the trigger, in a state where nothing else is matched at all, so ⌥Q as an action
     /// and ⌥Q as a tiling chord are not in competition.
-    static func collisions(in entries: [ShortcutEntry]) -> [ShortcutCollision] {
-        var byChord: [ShortcutEntry.Chord: [ShortcutEntry]] = [:]
-        for entry in entries where entry.isActive {
+    nonisolated static func collisions(in entries: [ShortcutEntry]) -> [ShortcutCollision] {
+        // Position in the list *is* match order — `entries()` emits each family in `Kind`'s
+        // declaration order and, within a family, in the order its own matcher iterates. Carrying it
+        // is what lets a collision name the right winner when two entries share a kind, where
+        // sorting on the kind alone leaves the answer to an unstable sort.
+        let rank = Dictionary(
+            entries.enumerated().map { ($1.id, $0) }, uniquingKeysWith: min)
+        let active = entries.filter(\.isActive)
+        return (clashes(among: active.filter { $0.kind.isGlobal }, rank: rank)
+            + clashes(among: active.filter { !$0.kind.isGlobal }, rank: rank))
+            .sorted { $0.display < $1.display }
+    }
+
+    /// Collisions within one matching namespace — the global bindings, or the in-switcher actions.
+    private nonisolated static func clashes(
+        among entries: [ShortcutEntry], rank: [String: Int]
+    ) -> [ShortcutCollision] {
+        var pools: [ShortcutEntry.Chord: [ShortcutEntry]] = [:]
+        for entry in entries {
             guard let chord = entry.chord else { continue }
-            byChord[chord, default: []].append(entry)
+            pools[chord.ignoringShift, default: []].append(entry)
         }
-        return byChord.compactMap { chord, group -> ShortcutCollision? in
-            // Split the two namespaces before deciding anything is a collision.
-            let global = group.filter { $0.kind.isGlobal }
-            let inPanel = group.filter { !$0.kind.isGlobal }
-            let clashing = global.count > 1 ? global : (inPanel.count > 1 ? inPanel : [])
-            guard clashing.count > 1 else { return nil }
-            return ShortcutCollision(
-                chord: chord, display: clashing[0].display,
-                entries: clashing.sorted { $0.kind < $1.kind })
+        return pools.flatMap { key, pool in clashes(in: pool, key: key, rank: rank) }
+    }
+
+    /// One pool of entries whose chords agree on everything but Shift.
+    private nonisolated static func clashes(
+        in pool: [ShortcutEntry], key: ShortcutEntry.Chord, rank: [String: Int]
+    ) -> [ShortcutCollision] {
+        guard pool.count > 1 else { return [] }
+        // An opener ignores Shift, so it claims every variant in the pool and none of the others can
+        // fire — one collision covering the lot, named by the Shift-blind chord they share.
+        if pool.contains(where: { $0.kind.ignoresShift }) {
+            return [collision(pool, chord: key, rank: rank)]
         }
-        .sorted { $0.display < $1.display }
+        // Otherwise Shift separates them, so only entries on the identical combination compete — and
+        // a pool can hold more than one such group (⌃⌘← twice *and* ⌃⌘⇧← twice).
+        return Dictionary(grouping: pool, by: \.chord)
+            .compactMap { chord, group in
+                guard let chord, group.count > 1 else { return nil }
+                return collision(group, chord: chord, rank: rank)
+            }
+    }
+
+    /// Orders a set of clashing entries so the first is the one that actually fires.
+    private nonisolated static func collision(
+        _ clashing: [ShortcutEntry], chord: ShortcutEntry.Chord, rank: [String: Int]
+    ) -> ShortcutCollision {
+        let ordered = clashing.sorted { (rank[$0.id] ?? .max) < (rank[$1.id] ?? .max) }
+        // The winner's own spelling, which for an opener pool is not every member's: the losers may
+        // carry a Shift the winner does not, and naming the row after one of those would point the
+        // user at a combination that works.
+        return ShortcutCollision(
+            chord: chord, display: ordered[0].display, entries: ordered)
     }
 
     private static func entry(

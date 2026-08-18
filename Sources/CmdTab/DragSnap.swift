@@ -160,9 +160,28 @@ final class DragSnap {
         // Dropped in a zone: tile the window that was dragged. Posted rather than run here for the
         // same reason the keyboard path posts — this is an Accessibility write.
         let gap = self.gap
+        // The window this gesture has been following, named rather than left for the tiler to
+        // re-resolve from the pid — which is `AX.frontWindow`, the app's *focused* window.
+        //
+        // Those two are usually the same here, because pressing in a window focuses it, and that is
+        // what the pid-only call has always leaned on. Usually is not always: click-through means a
+        // press can move a window of an app that was already frontmost without changing which of its
+        // windows has focus, and `kAXFocusedWindow` is the app's own answer rather than the window
+        // server's, so it can still be reporting the previous one when the drop lands. Either way
+        // the wrong window is snapped, and the gesture has known which one all along — this is the
+        // same fix the other two snap gestures already carry, arriving late.
+        //
+        // Its bounds *now*, not `initialBounds`: the window having moved is this gesture's arming
+        // condition, so the press-time frame is stale by construction and would match nothing.
+        // `bounds(of:)` is one window-server call, taken inside the hop so it stays off the monitor
+        // callback. A nil — the window closed as it was dropped — degrades to the previous
+        // behaviour rather than to no snap at all.
+        let windowID = draggedWindowID
         DispatchQueue.main.async {
+            let dropped = windowID.flatMap(Self.bounds(of:))
             WindowTiler.apply(
-                zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap)
+                zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
+                target: dropped.map(WindowTiler.Target.bounds))
         }
     }
 
