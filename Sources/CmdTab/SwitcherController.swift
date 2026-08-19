@@ -910,17 +910,20 @@ final class SwitcherController {
     @discardableResult
     private func open(backwards: Bool) -> Bool {
         let targets = provider.snapshot()
-        guard !targets.isEmpty else {
+        // Decided before anything is assigned — see `SessionOpen.plan`, which exists so the order
+        // cannot drift: session state set before the bail-out left `isSticky` latched true after a
+        // press that opened nothing, so the *next* session, including one from a different hotkey,
+        // silently came up sticky.
+        let plan = SessionOpen.plan(
+            hasTargets: !targets.isEmpty, showDelay: showDelay, isSticky: stickyMode)
+        guard plan != .decline else {
             Log.targets.error("trigger with an empty list; cache not warm?")
             return false
         }
-        // Only past the guard: assigning session state before the bail-out left `isSticky` latched
-        // true after a press that never opened anything, so the *next* session — including one from
-        // a different hotkey — silently came up sticky.
         beginSession()
         activeHeld = hotkey.heldModifiers
         isSticky = stickyMode
-        if showDelay > 0 {
+        if case .arm(let watchdog) = plan {
             armed = true
             armedBackwards = backwards
             armedTargets = targets
@@ -933,7 +936,7 @@ final class SwitcherController {
             // Not for a sticky session: it does not end on release at all, so the poll can never act
             // (`watchdogTick` returns at its first guard), and nothing downstream stops it — it just
             // woke the main runloop 5×/s for the life of the panel, up to the 60 s ceiling.
-            if !isSticky { startWatchdog() }
+            if watchdog { startWatchdog() }
             return true
         }
         showWith(targets: targets, backwards: backwards)
@@ -944,7 +947,8 @@ final class SwitcherController {
     /// list arrives asynchronously, so there is no way to know yet whether there is anything to show,
     /// and letting the chord through would fire it in the app behind us a moment later.
     private func openSameApp(backwards: Bool) -> Bool {
-        guard !pendingSameApp, !isVisible, !armed else { return true }
+        guard AsyncSession.canOpen(pendingSameApp: pendingSameApp, isVisible: isVisible, armed: armed)
+        else { return true }
         let token = beginSession()
         activeHeld = sameAppHotkey?.heldModifiers ?? [.maskCommand]
         // Never inherits stickiness from the main trigger's setting — this hotkey was not the one
@@ -977,26 +981,32 @@ final class SwitcherController {
             // the time it lands the user may have abandoned this cycle and opened a normal session.
             // Acting on it then would stop *that* session's watchdog — deleting the failsafe that
             // stands between a missed modifier-release and a machine-wide keyboard lockout.
-            guard let self, self.pendingSameApp, token == self.sessionToken else { return }
+            guard let self else { return }
+            // One window is nothing to cycle *between*, so this path wants two.
+            let outcome = AsyncSession.outcome(
+                isCurrent: self.pendingSameApp && token == self.sessionToken,
+                count: targets.count, atLeast: 2,
+                wasReleased: self.pendingSameAppReleased, backwards: backwards)
+            guard outcome != .stale else { return }
             self.sameAppDeadline?.cancel()
             self.sameAppDeadline = nil
             self.pendingSameApp = false
 
-            // One window is nothing to cycle between, and zero means the app exposes none.
-            guard targets.count > 1 else {
+            switch outcome {
+            case .stale:
+                return
+            case .abandon:
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
-                return
-            }
-            guard self.pendingSameAppReleased else {
+            case .show:
                 self.showWith(targets: targets, backwards: backwards, mode: .windows)
-                return
+            case .focus(let index):
+                // Tapped and released before the list landed: do the switch without ever drawing.
+                self.pendingSameAppReleased = false
+                self.stopWatchdog()
+                let target = targets[index]
+                DispatchQueue.main.async { target.focus() }
             }
-            // Tapped and released before the list landed: do the switch without ever drawing.
-            self.pendingSameAppReleased = false
-            self.stopWatchdog()
-            let target = targets[backwards ? targets.count - 1 : 1]
-            DispatchQueue.main.async { target.focus() }
             }
         }
         return true
@@ -1011,7 +1021,8 @@ final class SwitcherController {
     /// touches one app instead of every running one, which is the difference between a few
     /// Accessibility round-trips and a few hundred.
     private func openScoped(_ scope: SwitcherScope, held: CGEventFlags, backwards: Bool) -> Bool {
-        guard !pendingSameApp, !isVisible, !armed else { return true }
+        guard AsyncSession.canOpen(pendingSameApp: pendingSameApp, isVisible: isVisible, armed: armed)
+        else { return true }
         let token = beginSession()
         activeHeld = held
         // Not inherited from the main trigger's setting: this chord is not the one the user asked to
@@ -1034,27 +1045,34 @@ final class SwitcherController {
         // It is still only ever *called* on the main thread — see the note in `openSameApp`.
         let receive: @Sendable ([SwitchTarget]) -> Void = { [weak self] targets in
             MainActor.assumeIsolated {
-            guard let self, self.pendingSameApp, token == self.sessionToken else { return }
+            guard let self else { return }
+            let filtered = Self.filter(targets, to: scope)
+            // One hit is a successful search here, not an empty one — narrowing to "minimized
+            // windows" and finding exactly one is worth switching to.
+            let outcome = AsyncSession.outcome(
+                isCurrent: self.pendingSameApp && token == self.sessionToken,
+                count: filtered.count, atLeast: 1,
+                wasReleased: self.pendingSameAppReleased, backwards: backwards)
+            guard outcome != .stale else { return }
             self.sameAppDeadline?.cancel()
             self.sameAppDeadline = nil
             self.pendingSameApp = false
 
-            let filtered = Self.filter(targets, to: scope)
-            guard !filtered.isEmpty else {
+            switch outcome {
+            case .stale:
+                return
+            case .abandon:
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
-                return
-            }
-            guard self.pendingSameAppReleased else {
+            case .show:
                 self.showWith(targets: filtered, backwards: backwards, mode: .windows)
-                return
+            case .focus(let index):
+                // Tapped and released before the list landed: switch without ever drawing.
+                self.pendingSameAppReleased = false
+                self.stopWatchdog()
+                let target = filtered[index]
+                DispatchQueue.main.async { target.focus() }
             }
-            // Tapped and released before the list landed: switch without ever drawing.
-            self.pendingSameAppReleased = false
-            self.stopWatchdog()
-            let index = backwards ? filtered.count - 1 : min(1, filtered.count - 1)
-            let target = filtered[index]
-            DispatchQueue.main.async { target.focus() }
             }
         }
 
