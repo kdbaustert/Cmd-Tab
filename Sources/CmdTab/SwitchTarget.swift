@@ -1027,8 +1027,20 @@ extension SwitchTarget {
         // display half-composited is a way for the picked window to appear on the Desktop the user
         // was already on. Fewer trips down that path is worth more than any hardening of it.
         //
-        // The first round is the longer one. Arrival clusters at 377-446ms measured across 144
-        // switches, so a switch that is coming must not have a second request thrown at it.
+        // The first round is the longer one, and it is sized to clear the arrival distribution
+        // rather than to sit inside it. Re-measured across 145 switches: every arrival landed
+        // between 380ms and 444ms, with 79 of them — 54% — past the 400ms of sleep the first round
+        // used to budget. Twenty turns therefore ended a hair after the slowest arrivals, and the
+        // only thing keeping those picks working was the second round catching them *after* it had
+        // already thrown a fresh activation at a transition that was still running, which is
+        // precisely what the paragraph above says must not happen. All three declines logged in
+        // that window reached the second round and none of them travelled in it.
+        //
+        // 28 turns puts the boundary ~120ms past the slowest measured arrival, so a switch that is
+        // coming lands in the first round and is never asked twice. The eight turns left to the
+        // second round keep the re-ask for the case it was written for — a request macOS dropped
+        // outright, which answers immediately or not at all — and hold the total budget where it
+        // was, since it is `focusQueue` that pays for the wait.
         //
         // Only the display's current Space is read per turn — see `SpaceMover.currentSpace`. Asking
         // for the *window's* placement here instead would rebuild the whole display/Space map on
@@ -1046,7 +1058,7 @@ extension SwitchTarget {
                     """)
             }
             activate(pid: pid)
-            for _ in 0..<(round == 0 ? 20 : 16) {
+            for _ in 0..<(round == 0 ? 28 : 8) {
                 usleep(20_000)
                 guard generation == focusGeneration else { return .superseded }
                 let now = SpaceMover.currentSpace(ofDisplay: state.display)
@@ -1297,21 +1309,28 @@ extension SwitchTarget {
             // `spaceSettleDelay` for what each one was measured to be worth.
             let arrived = awaitingSpaceChange.map { spaceChanges.value > $0 } ?? true
             let waited = DispatchTime.now() >= notBefore
-            // On-screen membership is *not* a gate any more, only a note in the log. It was one, and
-            // it never held: measured across a switch, the outgoing Desktop's windows stay in
-            // `.optionOnScreenOnly` throughout and the incoming Desktop's are in it before the
-            // switch is even issued. Kept in the line below because a pick that misbehaves is worth
-            // knowing the on-screen reading for — just never again worth trusting.
-            let onScreen = isOnScreen(window: id)
             // Only the switched path has anything to say: a same-Desktop pick opens both gates on
             // its first attempt. Which gate is holding is the whole question this logging exists to
             // answer.
+            //
+            // On-screen membership is *not* a gate any more, only a note in the line below. It was
+            // one, and it never held: measured across a switch, the outgoing Desktop's windows stay
+            // in `.optionOnScreenOnly` throughout and the incoming Desktop's are in it before the
+            // switch is even issued. Kept because a pick that misbehaves is worth knowing the
+            // on-screen reading for — just never again worth trusting.
+            //
+            // Read inside the branch rather than above it, which is the whole reason the two
+            // comments were merged. `isOnScreen` is a `CGWindowListCopyWindowInfo` call, and reading
+            // it eagerly charged every same-Desktop pick a window-server round trip for a value
+            // that path never interpolates — the one pick shape in this file that is otherwise
+            // measured in single-digit milliseconds.
             if awaitingSpaceChange != nil {
                 Log.general.notice(
                     """
                     focus window \(id, privacy: .public): \
                     transition=\(arrived ? "landed" : "in flight", privacy: .public) \
-                    waited=\(waited, privacy: .public) onScreen=\(onScreen, privacy: .public), \
+                    waited=\(waited, privacy: .public) \
+                    onScreen=\(isOnScreen(window: id), privacy: .public), \
                     \(attempts, privacy: .public) attempts left
                     """)
             }
