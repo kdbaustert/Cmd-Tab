@@ -44,7 +44,10 @@ enum FuzzyMatch {
             let offset = haystack.distance(from: haystack.startIndex, to: range.lowerBound)
             return Score.substring - offset * Score.leadingGap - min(haystack.count, 200)
         }
-        return subsequenceScore(haystack, needle)
+        // The *original* candidate, not the lowercased one: the subsequence walk scores word starts,
+        // and on a Mac an internal capital is a word start far more often than a space is. See
+        // `isWordStart`. The two shapes above are pure substring tests and have no such need.
+        return subsequenceScore(candidate, needle)
     }
 
     /// Whether `candidate` matches at all — the same rule `score` uses, without the arithmetic.
@@ -58,42 +61,70 @@ enum FuzzyMatch {
     /// problem, and this runs against every tile on every keystroke inside a session that owns the
     /// keyboard. Greedy gets the same answer for the queries people actually type (initials, or the
     /// start of a word) at a fraction of the cost.
-    private static func subsequenceScore(_ haystack: String, _ needle: String) -> Int? {
+    ///
+    /// `candidate` arrives in its original case — unlike the `haystack` its caller matches the other
+    /// two shapes against — and `needle` already lowercased; the comparison below is what bridges
+    /// them. Walking a lowercased copy instead would be simpler by one call and would throw away the
+    /// capitals `isWordStart` needs, and the case cannot be recovered afterwards by index, since a
+    /// single character can lowercase to several.
+    ///
+    /// Flattened to an array first. The walk steps back one position to find a word boundary, which
+    /// on a `String` means `index(before:)` and its own scan, and it does that once per matched
+    /// character on every tile on every keystroke.
+    private static func subsequenceScore(_ candidate: String, _ needle: String) -> Int? {
+        let characters = Array(candidate)
         var total = 0
-        var index = haystack.startIndex
-        var previousMatch: String.Index?
+        var index = 0
+        var previousMatch: Int?
         var isFirstMatch = true
 
         for character in needle {
-            guard let found = haystack[index...].firstIndex(of: character) else { return nil }
+            // The equality first: `needle` is already lowercased, so most candidate characters match
+            // outright and never pay for the `String` that `Character.lowercased()` returns.
+            guard
+                let found = characters[index...].firstIndex(where: {
+                    $0 == character || $0.lowercased() == String(character)
+                })
+            else { return nil }
 
             if isFirstMatch {
-                let offset = haystack.distance(from: haystack.startIndex, to: found)
-                total -= offset * Score.leadingGap
+                total -= found * Score.leadingGap
                 isFirstMatch = false
             }
 
-            if isWordStart(haystack, at: found) {
+            if isWordStart(characters, at: found) {
                 total += Score.wordStart
-            } else if let previous = previousMatch,
-                haystack.index(after: previous) == found {
+            } else if let previous = previousMatch, previous + 1 == found {
                 total += Score.consecutive
             } else {
                 total += Score.scattered
             }
 
             previousMatch = found
-            index = haystack.index(after: found)
+            index = found + 1
         }
         // Shorter candidates win ties, as with the other two shapes.
-        return total - min(haystack.count, 200)
+        return total - min(characters.count, 200)
     }
 
-    /// True at index 0, or wherever the preceding character is a separator — so "vsc" hits the three
-    /// word starts of "Visual Studio Code".
-    private static func isWordStart(_ string: String, at index: String.Index) -> Bool {
-        guard index != string.startIndex else { return true }
-        let previous = string[string.index(before: index)]
-        return previous == " " || previous == "-" || previous == "_" || previous == "." || previous == "/"
+    /// True at index 0, wherever the preceding character is a separator, and at a camelCase seam —
+    /// so "vsc" hits the three word starts of "Visual Studio Code" *and* of "VisualStudioCode".
+    ///
+    /// The seam matters more than the separator on this platform. Mac app names run words together
+    /// far more readily than they space them — OmniGraffle, BetterTouchTool, TextEdit, iTerm — and
+    /// typing initials is the case fuzzy matching exists to serve. Without this the capitals carried
+    /// no weight at all: "og" scored 85 against OmniGraffle where the same name written with a space
+    /// scored 168, so the run-together form, which is the common one, matched half as well.
+    ///
+    /// A run of capitals is deliberately not split. "HTTPServer" would need the extra rule that a
+    /// capital followed by a lowercase ends an acronym, and app names that would gain by it are rare
+    /// enough not to pay for a third condition here.
+    private static func isWordStart(_ characters: [Character], at index: Int) -> Bool {
+        guard index > 0 else { return true }
+        let previous = characters[index - 1]
+        if previous == " " || previous == "-" || previous == "_" || previous == "." || previous == "/" {
+            return true
+        }
+        return !previous.isUppercase && characters[index].isUppercase
     }
 }
