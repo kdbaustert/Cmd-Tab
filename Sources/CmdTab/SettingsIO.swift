@@ -25,12 +25,56 @@ enum SettingsIO {
     /// every store. Keys absent from `payload` are left alone rather than reset: a hand-edited
     /// config that mentions three settings means "change these three".
     static func apply(_ payload: [String: Any]) {
-        let defaults = UserDefaults.standard
-        let allowed = Set(keys)
-        for (key, value) in payload where allowed.contains(key) {
-            defaults.set(value, forKey: key)
+        let rejected = apply(payload, to: .standard)
+        if !rejected.isEmpty {
+            // `.public` because these are key names matched against our own allow-list, so nothing
+            // that came from the file's *values* passes through here.
+            Log.general.error(
+                """
+                config: ignored \(rejected.sorted().joined(separator: ", "), privacy: .public) \
+                — not a property list
+                """)
         }
         reloadStores()
+    }
+
+    /// The testable half, and the one that does the work.
+    ///
+    /// Split for the reason `Migration.run(in:migratingFrom:report:)` is: this rewrites settings a
+    /// user already has, against a file they are explicitly invited to edit by hand, so what it does
+    /// with a value it did not expect is part of the contract rather than an implementation detail.
+    /// `reloadStores` stays with the caller because it drives the live UI.
+    ///
+    /// - Returns: the keys it refused, so the caller can say so. Nothing else reports them — a
+    ///   silently dropped setting is the failure this whole guard exists to make visible.
+    @discardableResult
+    static func apply(_ payload: [String: Any], to defaults: UserDefaults) -> [String] {
+        let allowed = Set(keys)
+        var rejected: [String] = []
+        for (key, value) in payload where allowed.contains(key) {
+            // JSON has no way to spell "unset", so `null` is what a hand-edited config reaches for,
+            // and removing the key is exactly what it should mean: an absent key is how "use the
+            // default" is written everywhere else in this app, and `resetAll` depends on that.
+            if value is NSNull {
+                defaults.removeObject(forKey: key)
+                continue
+            }
+            // Everything else has to be a property list *before* it reaches `set(_:forKey:)`, which
+            // raises rather than returning on a value that is not one. A `null` anywhere in the file
+            // — bare, or nested inside an array — therefore aborted the process, and because
+            // `ConfigFile` re-reads and re-applies the same file at every launch, it did so again on
+            // the next one, with no way out of it from inside the app.
+            //
+            // One recursive check rather than a hand-rolled walk over arrays and dictionaries:
+            // `NSNull` is the only invalid value `JSONSerialization` can produce today, but this
+            // should not have to be revisited if that ever stops being true.
+            guard PropertyListSerialization.propertyList(value, isValidFor: .binary) else {
+                rejected.append(key)
+                continue
+            }
+            defaults.set(value, forKey: key)
+        }
+        return rejected
     }
 
     /// Serialised the one way, so a byte comparison between what we wrote and what is on disk is
