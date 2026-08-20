@@ -224,9 +224,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Template PNGs ship loose in the bundle Resources; AppKit resolves the scale variants by
         // name. `MenuBarIcon.image` flags them as templates so they tint for light/dark menu bars.
         item.button?.image = behavior.menuBarIcon.image
-        // Optionally spell out the current mode next to the icon.
-        item.button?.title = ""
-        item.button?.imagePosition = .imageOnly
         if item.menu == nil { item.menu = NSMenu() }
         statusItem = item
         refreshMenu()
