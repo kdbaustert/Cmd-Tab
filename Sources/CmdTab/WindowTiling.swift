@@ -484,9 +484,20 @@ final class WindowTilingStore: ObservableObject {
 
     /// Reads the three snap colours and pushes them into `SnapAppearance` in one go.
     ///
-    /// Assigned to the stored properties directly, which means the `didSet`s do not run — so this
-    /// deliberately does the push itself. Doing it in one `apply` rather than three keeps the load
-    /// path and the reload path identical, and is why `apply` takes all three optionally.
+    /// The `didSet`s **do** run here, and the note that used to sit in this spot said the opposite.
+    /// Swift skips property observers only for assignments written inside `init` itself; this is a
+    /// *method* that `init` calls, on a `self` that is fully initialised by the time it can be
+    /// called at all, so each assignment below fires its observer like any other. Verified rather
+    /// than reasoned about — a three-line script assigning from `init` and again from a method
+    /// called by `init` prints one `didSet`, not none.
+    ///
+    /// Nothing goes wrong as a result, which is why this survived unnoticed: each observer persists
+    /// the value that was just read back to the key it was read from, and pushes a colour that is
+    /// about to be pushed again. The push here is kept all the same — it is the one call that is
+    /// guaranteed to happen, since an observer guarded on `!= oldValue` stays silent whenever the
+    /// stored colour already equals the default. Doing it in one `apply` rather than three also
+    /// keeps the load path and the reload path identical, which is why `apply` takes all three
+    /// optionally.
     private func loadSnapColors() {
         let outline = Self.loadColor(Key.outlineHex, default: SnapAppearance.defaultOutline)
         let landing = Self.loadColor(Key.landingHex, default: SnapAppearance.defaultLanding)

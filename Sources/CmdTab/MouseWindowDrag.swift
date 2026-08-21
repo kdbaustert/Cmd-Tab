@@ -271,6 +271,23 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
     private var storedAppRules: [String: AppRule] = [:]
 
+    /// Called when a press claims the chord for a drag, so the hold-and-point gesture — which is
+    /// armed by the very same chord — stands down instead of firing a second snap of its own.
+    ///
+    /// It has to be told rather than left to notice, and that is the whole reason this exists: the
+    /// press is *swallowed* by the tap below, so it never reaches the window server's delivery to
+    /// any application and no `NSEvent` monitor — which is all `ModifierTargetHighlight` is built
+    /// from — can ever see it. There is no event left for the other gesture to observe.
+    ///
+    /// Invoked from the tap thread, so the handler hops to the main actor itself. Held under `lock`
+    /// like every other mutable field here, and read out of it before being called: running a
+    /// closure of the caller's while holding this class's lock is how a tap thread deadlocks itself.
+    var onClaimChord: (@Sendable () -> Void)? {
+        get { lock.withLock { storedOnClaimChord } }
+        set { lock.withLock { storedOnClaimChord = newValue } }
+    }
+    private var storedOnClaimChord: (@Sendable () -> Void)?
+
     // The installation, all four fields under `lock` like everything else here.
     //
     // They were not, and the type's own claim — "everything mutable below is private and taken
@@ -572,6 +589,9 @@ final class MouseWindowDrag: @unchecked Sendable {
                 isArmed = true
                 session = nil
             }
+            // Before the resolve, which is asynchronous: the other gesture has to be out of the way
+            // from the press onwards, not from whenever Accessibility gets back to us.
+            onClaimChord?()
             resolve(target: target, action: action, at: location)
             // Swallowed from the press onwards. Letting the press through and taking only the drags
             // would put a click into whatever was under the cursor — a button, a link, a text
@@ -895,6 +915,14 @@ final class ModifierTargetHighlight {
     /// The tiling gap, so a pointed snap lands exactly where the keyboard chords put it.
     var gap: CGFloat = 0
 
+    /// Per-app overrides, so an app marked "never tile" is left alone by this gesture too.
+    ///
+    /// The other three snap paths have honoured `neverTile` all along — the keyboard chords in
+    /// `SwitcherController.applyTiling`, the titlebar drag in `DragSnap.mouseDragged`, and the
+    /// modifier-drag in `MouseWindowDrag.resolve` — and this one was simply never given the rules to
+    /// check, so "No tiling" held everywhere except when you pointed at the window.
+    var appRules: [String: AppRule] = [:]
+
     private var flagsMonitors: [Any] = []
     private var moveMonitors: [Any] = []
     private let outline = TargetOutline()
@@ -966,6 +994,16 @@ final class ModifierTargetHighlight {
         guard let target = MainLoopMonitor.marking("point-gesture window lookup", {
             Self.windowUnderCursor(at: point)
         }) else { return }
+        // An app the user has told us never to tile is not offered a destination at all — no
+        // outline, no dot, no landing block. Refusing at the *drop* instead would draw the whole
+        // affordance and then silently do nothing, which reads as the gesture being broken rather
+        // than as the setting being obeyed.
+        if let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier,
+            appRules[id]?.neverTile == true {
+            Log.general.notice(
+                "point gesture: \(id, privacy: .public) is set to never tile; not arming")
+            return
+        }
         anchor = point
         self.target = target
         outline.show(target.bounds)
@@ -1015,6 +1053,31 @@ final class ModifierTargetHighlight {
         let area = areas[index]
         guard let frame = zone.frame(in: area, current: area, fraction: 0.5) else { return }
         SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
+    }
+
+    /// Gives the chord up to a drag that has claimed it, without snapping anything.
+    ///
+    /// The two gestures are deliberately on one chord — ⌃⌥ means "move this window" whether you
+    /// drag it or point it — and the *press* is the only thing that separates them. Nothing
+    /// separated them before, and the result was that every modifier-drag ended in a second,
+    /// unasked-for snap: holding the chord armed this gesture and `follow()` set `zone` to
+    /// `.maximize` (the dead-zone answer for a cursor that has not moved yet), the drag then ran on
+    /// top of it without touching that value — macOS posts `leftMouseDragged`, not `mouseMoved`, so
+    /// nothing here re-read it — and the modifier coming up fired `complete()` on a stale zone. The
+    /// window you had just placed by hand was maximized, or thrown at whichever sector the cursor
+    /// happened to be in.
+    ///
+    /// Worse than merely wrong about *where*: by then `target.bounds` names the window's frame from
+    /// before the drag, so `WindowTiler.resolve` matched nothing, fell back to `AX.frontWindow`, and
+    /// could snap a different window of the app entirely.
+    ///
+    /// Called by `MouseWindowDrag` rather than detected here — see its `onClaimChord`, which
+    /// explains why there is no event left for this gesture to notice on its own. Re-arming needs a
+    /// fresh `flagsChanged`, so the chord stays stood down for the rest of the hold.
+    func standDown() {
+        guard anchor != nil else { return }
+        Log.general.notice("point gesture: stood down, a drag has claimed the chord")
+        cancel()
     }
 
     /// The chord came up: snap to whatever was being offered.

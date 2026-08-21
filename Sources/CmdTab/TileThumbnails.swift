@@ -51,6 +51,23 @@ final class TileThumbnails: ObservableObject {
     /// restart it and re-capture what is already on screen.
     private var inFlight: Set<CGWindowID> = []
 
+    /// Bumped by `cancel()`. A capture pass carries the value it started under and publishes
+    /// nothing once that value has moved on.
+    ///
+    /// `task?.cancel()` is not enough on its own, which is the bug this closes. `begin` chains each
+    /// pass behind the last (`await previous?.value`) and keeps only the newest in `task`, so a
+    /// second pass leaves the first unstructured, unreferenced and *uncancelled* — `Task.isCancelled`
+    /// inside it stays false. Ending the session then cancelled the newest pass and left the older
+    /// one running, to finish some time later and write its images straight back into the map
+    /// `cancel()` had just emptied. Those republish into `SwitcherModel.thumbnails`, so the next
+    /// session opened showing photographs of the last one's windows — exactly what the note on
+    /// `cancel()` says must not happen.
+    ///
+    /// The same generation counter `SwitchTarget.focusGeneration` and
+    /// `TargetProvider.activationGeneration` use, for the same reason: cancellation cannot reach
+    /// work that nothing holds a handle to, but a token the work checks for itself always can.
+    private var generation = 0
+
     /// Begins capturing thumbnails for `targets`, dropping anything already captured.
     ///
     /// Called on every list mutation, including the fresh list that folds in a moment after the
@@ -70,11 +87,12 @@ final class TileThumbnails: ObservableObject {
 
         inFlight.formUnion(missing)
         let previous = task
+        let generation = self.generation
         task = Task { [weak self] in
             // Serialised behind whatever was already running rather than cancelling it: the earlier
             // pass is capturing tiles the user is looking at right now.
             await previous?.value
-            await self?.capture(missing)
+            await self?.capture(missing, generation: generation)
         }
     }
 
@@ -82,13 +100,17 @@ final class TileThumbnails: ObservableObject {
     /// is a photograph of a moment, and showing the next session what the last one looked like is
     /// worse than showing it an icon.
     func cancel() {
+        // First, so a pass already past its own `Task.isCancelled` check is still stopped from
+        // publishing — and so the passes this cannot cancel at all are stopped too. See `generation`.
+        generation &+= 1
         task?.cancel()
         task = nil
         inFlight.removeAll()
         images.removeAll()
     }
 
-    private func capture(_ ids: [CGWindowID]) async {
+    private func capture(_ ids: [CGWindowID], generation: Int) async {
+        guard generation == self.generation else { return }
         guard
             let content = try? await SCShareableContent.excludingDesktopWindows(
                 // `onScreenWindowsOnly: false` so windows on other Spaces are included —
@@ -96,7 +118,7 @@ final class TileThumbnails: ObservableObject {
                 // frontmost, which is exactly what a switcher needs.
                 true, onScreenWindowsOnly: false)
         else {
-            inFlight.subtract(ids)
+            release(ids, generation: generation)
             return
         }
         let byID = Dictionary(
@@ -105,7 +127,7 @@ final class TileThumbnails: ObservableObject {
         for chunk in stride(from: 0, to: ids.count, by: Self.maxConcurrent).map({ start in
             Array(ids[start..<min(start + Self.maxConcurrent, ids.count)])
         }) {
-            if Task.isCancelled { break }
+            if Task.isCancelled || generation != self.generation { break }
             let captured = await withTaskGroup(of: (CGWindowID, CGImage?).self) { group in
                 for id in chunk {
                     guard let found = byID[id] else { continue }
@@ -121,11 +143,22 @@ final class TileThumbnails: ObservableObject {
                 }
                 return out
             }
-            if Task.isCancelled { break }
+            if Task.isCancelled || generation != self.generation { break }
             // Published per batch rather than per image: each assignment redraws every tile bound to
             // this object, and a thirty-window list would otherwise lay the panel out thirty times.
             for (id, image) in captured { images[id] = image }
         }
+        release(ids, generation: generation)
+    }
+
+    /// Gives up the claim this pass had on `ids`, unless the session it belonged to has ended.
+    ///
+    /// The generation check is not merely tidiness. `cancel()` empties `inFlight` outright, and a
+    /// later `begin` can have re-claimed some of these ids for a pass that is still running — so a
+    /// stale pass subtracting them would free ids the live pass owns, and the next `begin` would
+    /// queue a duplicate capture of windows already being photographed.
+    private func release(_ ids: [CGWindowID], generation: Int) {
+        guard generation == self.generation else { return }
         inFlight.subtract(ids)
     }
 

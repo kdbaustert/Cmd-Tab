@@ -22,14 +22,32 @@ final class FilteringAndMetricsTests: XCTestCase {
 
     // MARK: - Filtering
 
+    /// The titles a query matches, in list order.
+    ///
+    /// Goes through `matchingIndices`, which is the rule the panel actually applies: it dims
+    /// non-matches rather than removing them, so there is no filtered list in production to assert
+    /// against. An empty match set means "no filter", which is why the two empty-query cases below
+    /// ask the model instead of coming through here.
+    private func matches(_ list: [SwitchTarget], query: String) -> [String] {
+        SwitcherModel.matchingIndices(list, query: query).sorted().map { list[$0].title }
+    }
+
     func testEmptyQueryKeepsEverything() {
-        XCTAssertEqual(SwitcherModel.filtered(sample, query: "").count, 3)
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("")
+        XCTAssertEqual(model.targets.count, 3)
+        XCTAssertTrue(model.matchingIndices.isEmpty)  // nothing marked = nothing filtered out
     }
 
     /// A query of only spaces splits into no words, which must mean "no filter" rather than
     /// "match nothing".
     func testWhitespaceOnlyQueryKeepsEverything() {
-        XCTAssertEqual(SwitcherModel.filtered(sample, query: "   ").count, 3)
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("   ")
+        XCTAssertEqual(model.targets.count, 3)
+        XCTAssertTrue(model.matchingIndices.isEmpty)
     }
 
     /// The space bar must not move the highlight.
@@ -59,31 +77,30 @@ final class FilteringAndMetricsTests: XCTestCase {
     }
 
     func testMatchIsCaseInsensitive() {
-        XCTAssertEqual(SwitcherModel.filtered(sample, query: "SAFARI").map(\.title), ["Safari"])
+        XCTAssertEqual(matches(sample, query: "SAFARI"), ["Safari"])
     }
 
     func testMatchIsASubstringNotAPrefix() {
-        XCTAssertEqual(SwitcherModel.filtered(sample, query: "chrome").map(\.title), ["Google Chrome"])
+        XCTAssertEqual(matches(sample, query: "chrome"), ["Google Chrome"])
     }
 
     /// Every word has to match somewhere, but not in order and not adjacently — this is what makes
     /// "saf 2" find "Safari" window 2.
     func testAllWordsMustMatchInAnyOrder() {
-        XCTAssertEqual(
-            SwitcherModel.filtered(sample, query: "chrome google").map(\.title), ["Google Chrome"])
-        XCTAssertTrue(SwitcherModel.filtered(sample, query: "google safari").isEmpty)
+        XCTAssertEqual(matches(sample, query: "chrome google"), ["Google Chrome"])
+        XCTAssertTrue(matches(sample, query: "google safari").isEmpty)
     }
 
     func testNoMatchYieldsEmpty() {
-        XCTAssertTrue(SwitcherModel.filtered(sample, query: "zzz").isEmpty)
+        XCTAssertTrue(matches(sample, query: "zzz").isEmpty)
     }
 
     /// The window title and the app name are searched as one haystack, so a window can be found by
     /// the app that owns it.
     func testAppNameIsSearchedAlongsideTitle() {
         let windows = [target("Inbox — 3 unread", app: "Mail", pid: 4)]
-        XCTAssertEqual(SwitcherModel.filtered(windows, query: "mail").count, 1)
-        XCTAssertEqual(SwitcherModel.filtered(windows, query: "mail inbox").count, 1)
+        XCTAssertEqual(matches(windows, query: "mail").count, 1)
+        XCTAssertEqual(matches(windows, query: "mail inbox").count, 1)
     }
 
     // MARK: - Model state
@@ -103,7 +120,6 @@ final class FilteringAndMetricsTests: XCTestCase {
         model.begin(sample)
         model.setQuery("zzz")
         // All tiles remain visible
-        XCTAssertFalse(model.isEmpty)
         XCTAssertEqual(model.targets.count, 3)
         // But none match
         XCTAssertTrue(model.matchingIndices.isEmpty)
@@ -136,6 +152,126 @@ final class FilteringAndMetricsTests: XCTestCase {
         let model = SwitcherModel()
         model.begin([])
         model.step(1)
+        XCTAssertEqual(model.selection, 0)
+    }
+
+    // MARK: - Row navigation
+
+    /// `count` tiles, the ones named in `matching` carrying a token `findme` picks out.
+    ///
+    /// The token has no letter in common with the others' names, so the match set below is exactly
+    /// the one asked for rather than whatever the fuzzy matcher happens to think of "tile3".
+    private func tiles(_ count: Int, matching: Set<Int> = []) -> [SwitchTarget] {
+        (0..<count).map { index in
+            let name = matching.contains(index) ? "tile\(index) findme" : "tile\(index)"
+            return target(name, app: name, pid: pid_t(index + 1))
+        }
+    }
+
+    /// A whole row at a time, which is the one direction ← and → cannot reach in fewer than
+    /// `columns` presses.
+    func testDownMovesOneRowInAGrid() {
+        let model = SwitcherModel()
+        model.begin(tiles(9))
+        model.selection = 0
+        model.stepRow(1, stride: 3)
+        XCTAssertEqual(model.selection, 3)
+        model.stepRow(1, stride: 3)
+        XCTAssertEqual(model.selection, 6)
+    }
+
+    func testUpMovesOneRowBack() {
+        let model = SwitcherModel()
+        model.begin(tiles(9))
+        model.selection = 7
+        model.stepRow(-1, stride: 3)
+        XCTAssertEqual(model.selection, 4)
+    }
+
+    /// Wrapping keeps the column, which is what makes a grid read as a grid: ↑ from the top row
+    /// lands under the very tile it started above, and ↓ brings it straight back.
+    func testWrappingKeepsTheColumn() {
+        let model = SwitcherModel()
+        model.begin(tiles(9))
+        model.selection = 1
+        model.stepRow(-1, stride: 3)
+        XCTAssertEqual(model.selection, 7)
+        model.stepRow(1, stride: 3)
+        XCTAssertEqual(model.selection, 1)
+    }
+
+    /// The case a plain modulo over the flat index gets wrong. Eight tiles in rows of three leaves
+    /// the last row one short, so wrapping the index alone would shift the column by one.
+    func testARaggedLastRowDoesNotShiftTheColumn() {
+        let model = SwitcherModel()
+        model.begin(tiles(8))  // rows: [0 1 2] [3 4 5] [6 7]
+        model.selection = 0
+        model.stepRow(-1, stride: 3)
+        XCTAssertEqual(model.selection, 6)
+        model.selection = 1
+        model.stepRow(-1, stride: 3)
+        XCTAssertEqual(model.selection, 7)
+    }
+
+    /// That short row has no third column, so the nearest tile in it takes the press rather than
+    /// the row being skipped — no arrow press is ever a silent no-op.
+    func testAMissingCellInAShortRowTakesTheLastTile() {
+        let model = SwitcherModel()
+        model.begin(tiles(8))  // rows: [0 1 2] [3 4 5] [6 7]
+        model.selection = 5
+        model.stepRow(1, stride: 3)
+        XCTAssertEqual(model.selection, 7)
+    }
+
+    /// One row means there is nowhere to go, and the press must not throw the highlight elsewhere.
+    func testASingleRowStaysPut() {
+        let model = SwitcherModel()
+        model.begin(tiles(3))
+        model.selection = 1
+        model.stepRow(1, stride: 3)
+        XCTAssertEqual(model.selection, 1)
+    }
+
+    /// The list layout fills each of its columns top to bottom, so one row along is one index
+    /// along. The stride carries the whole of the difference between the two layouts.
+    func testAStrideOfOneWalksTheListOneAtATime() {
+        let model = SwitcherModel()
+        model.begin(tiles(4))
+        model.selection = 3
+        model.stepRow(1, stride: 1)
+        XCTAssertEqual(model.selection, 0)
+        model.stepRow(-1, stride: 1)
+        XCTAssertEqual(model.selection, 3)
+    }
+
+    /// Filtering dims tiles rather than removing them, so a row move is measured in screen
+    /// positions and only then landed on a tile the filter allows. Stepping `columns` *matches*
+    /// along instead — which is what `step` would do — travels several rows on a sparse list.
+    func testARowMoveLandsOnTheNearestMatchInTheDirectionOfTravel() {
+        let model = SwitcherModel()
+        model.begin(tiles(9, matching: [0, 5]))
+        model.setQuery("findme")
+        XCTAssertEqual(model.matchingIndices, [0, 5])
+        model.selection = 0
+        // One row down from 0 is 3, which is dimmed; 5 is the next tile along that is not.
+        model.stepRow(1, stride: 3)
+        XCTAssertEqual(model.selection, 5)
+    }
+
+    func testARowMoveUpwardsScansBackwards() {
+        let model = SwitcherModel()
+        model.begin(tiles(9, matching: [1, 8]))
+        model.setQuery("findme")
+        model.selection = 8
+        // One row up from 8 is 5, which is dimmed; scanning back reaches 1.
+        model.stepRow(-1, stride: 3)
+        XCTAssertEqual(model.selection, 1)
+    }
+
+    func testRowMoveOnAnEmptyListDoesNotCrash() {
+        let model = SwitcherModel()
+        model.begin([])
+        model.stepRow(1, stride: 3)
         XCTAssertEqual(model.selection, 0)
     }
 

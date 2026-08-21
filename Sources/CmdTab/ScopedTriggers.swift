@@ -103,12 +103,6 @@ final class ScopedTriggersStore: ObservableObject {
         persist()
     }
 
-    func setScope(_ scope: SwitcherScope, for id: String) {
-        guard let index = scoped.triggers.firstIndex(where: { $0.id == id }) else { return }
-        scoped.triggers[index].scope = scope
-        persist()
-    }
-
     func setHotkey(_ hotkey: Hotkey?, for id: String) {
         guard let index = scoped.triggers.firstIndex(where: { $0.id == id }) else { return }
         scoped.triggers[index].hotkey = hotkey ?? Hotkey(keyCode: -1, modifierRaw: 0)

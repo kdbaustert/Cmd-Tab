@@ -125,6 +125,19 @@ final class PanelGroup {
     /// The frame of the panel the cursor is on.
     var anchorFrame: NSRect { anchor?.frame ?? frame }
 
+    /// How many indices the up/down arrows move by — see `SwitcherPanel.rowStride`.
+    ///
+    /// The anchor's, for the reason `tileScreenRect(for:)` prefers it: mirrored panels are laid out
+    /// against their own displays and can wrap at different column counts, so a row means a
+    /// different number of tiles on each. The cursor is the only clue available as to which one the
+    /// user is actually reading, and it is the clue the highlight and the hit-testing already
+    /// follow — the arrows agreeing with them matters more than any of the three being provably
+    /// right about a question the keyboard cannot answer.
+    ///
+    /// Costs one `NSEvent.mouseLocation` on the key path, which is the read the hover poll already
+    /// takes sixty times a second on the very same run loop.
+    var rowStride: Int { anchor?.rowStride ?? 1 }
+
     /// One clause per panel: where it is, and whether the window server has it on screen. Logged on
     /// every show rather than kept for a debug build, because "the switcher did not appear" is
     /// reported against a release copy and the show path is otherwise silent about the ways it can
@@ -143,9 +156,6 @@ final class PanelGroup {
     }
 
     var effectiveAppearance: NSAppearance? { anchor?.effectiveAppearance }
-
-    /// The highlighted tile's rect on whichever panel the cursor is over.
-    var selectedTileScreenRect: NSRect? { anchor?.selectedTileScreenRect }
 
     /// Everything the preview strip needs to place itself against a tile, resolved from the tile's
     /// own rect rather than from the cursor.

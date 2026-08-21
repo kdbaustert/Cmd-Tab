@@ -63,7 +63,6 @@ final class ConfigFile: ObservableObject {
     /// The bytes last written or read, so our own writes do not read back as external edits.
     private var lastSynced: Data?
     private var watcher: DispatchSourceFileSystemObject?
-    private var watchedDirectory: CInt = -1
     private var writeWorkItem: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
 
@@ -232,6 +231,7 @@ final class ConfigFile: ObservableObject {
     private func transition(from before: State) {
         guard isEnabled else {
             stopWatching()
+            stopObservingSettingsChanges()
             // The file is deliberately left on disk. It may be a symlink into a repo, or the copy
             // the *other* Macs are still syncing against, and deleting either because a checkbox
             // was unticked is not ours to do.
@@ -400,7 +400,6 @@ final class ConfigFile: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fd = open(directory.path, O_EVTONLY)
         guard fd >= 0 else { return }
-        watchedDirectory = fd
 
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
@@ -415,8 +414,19 @@ final class ConfigFile: ObservableObject {
     private func stopWatching() {
         watcher?.cancel()  // its cancel handler closes the descriptor
         watcher = nil
-        watchedDirectory = -1
         writeWorkItem?.cancel()
         writeWorkItem = nil
+    }
+
+    /// Drops the `UserDefaults` observer.
+    ///
+    /// Only meaningful when mirroring stops for good — a *move* keeps the observer, since the same
+    /// settings are still being written, just somewhere else. `scheduleWrite` already declines to
+    /// act with both switches off, so leaving one registered was inert rather than wrong; it was
+    /// still a live subscription standing behind a preference that says the feature is off, which
+    /// is the sort of half-torn-down state `reload` exists to keep this class out of.
+    private func stopObservingSettingsChanges() {
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        defaultsObserver = nil
     }
 }

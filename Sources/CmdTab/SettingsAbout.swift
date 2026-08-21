@@ -77,7 +77,7 @@ struct AboutSettings: View {
 
             SettingsSection(
                 title: "Updates", anchor: SettingsAnchor.updates,
-                footer: updater.isConfigured
+                footer: Updater.isConfigured
                     ? "Updates are downloaded over HTTPS and checked against this app's signing key "
                         + "before anything is installed, so a replaced download cannot install a "
                         + "different app."
@@ -90,7 +90,7 @@ struct AboutSettings: View {
                     subtitle: Self.lastCheckDescription(updater.lastCheck)
                 ) {
                     Button("Check Now") { updater.checkForUpdates() }
-                        .disabled(!updater.canCheck || !updater.isConfigured)
+                        .disabled(!updater.canCheck || !Updater.isConfigured)
                 }
                 SettingsToggle(
                     title: "Check automatically",
@@ -99,7 +99,7 @@ struct AboutSettings: View {
                     isOn: Binding(
                         get: { updater.automaticallyChecks },
                         set: { updater.automaticallyChecks = $0 }))
-                    .disabled(!updater.isConfigured)
+                    .disabled(!Updater.isConfigured)
                 SettingsToggle(
                     title: "Install automatically",
                     subtitle: "Download and install without asking, applying it the next time "
@@ -108,7 +108,7 @@ struct AboutSettings: View {
                     isOn: Binding(
                         get: { updater.automaticallyDownloads },
                         set: { updater.automaticallyDownloads = $0 }))
-                    .disabled(!updater.isConfigured || !updater.automaticallyChecks)
+                    .disabled(!Updater.isConfigured || !updater.automaticallyChecks)
             }
 
             SettingsSection(title: "Build", anchor: SettingsAnchor.build) {

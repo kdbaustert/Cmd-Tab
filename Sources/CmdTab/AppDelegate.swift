@@ -85,6 +85,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // few hundred Info.plist reads mid-keystroke.
         InstalledApps.warm()
 
+        // Sparkle's scheduled check does not exist until the updater object does, and the only
+        // thing that ever built one was `AboutSettings`' stored property — a view constructed only
+        // when the About tab is selected, which is not the tab Settings opens on. So a user who
+        // never went looking for the version number never got a background check at all, which is
+        // the whole of the feature. Constructed here, once, on the main thread at launch.
+        //
+        // Skipped for a `build.sh` bundle: it has no feed and no public key, so an updater there
+        // could only fail on a timer. See `Updater.isConfigured`, which is static precisely so this
+        // question can be asked without building the thing it gates.
+        if Updater.isConfigured { _ = Updater.shared }
+
         // Same reason, from the main thread: the Desktop-transition observer a cross-Desktop pick
         // waits on should not be registered from inside the pick that first needs it.
         SwitchTarget.warmSpaceTracking()

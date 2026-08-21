@@ -659,6 +659,7 @@ struct ShortcutSettings: View {
     /// The keys the panel handles itself, listed in the order someone meets them.
     private static let panelKeys: [(title: String, keys: String)] = [
         ("Move the selection", "Tab / ⇧Tab, ← / →"),
+        ("Move a whole row", "↑ / ↓"),
         ("Switch to the selection", "Return"),
         ("Jump straight to a tile", "1–9, 0"),
         ("Filter the list", "type"),

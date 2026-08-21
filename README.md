@@ -38,7 +38,8 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | --- | --- |
 | ⌘-Tab | Open the switcher / advance |
 | ⌘-⇧-Tab | Go backwards |
-| ⌘-← / ⌘-→ | Move the selection |
+| ⌘-← / ⌘-→ | Move the selection by one tile |
+| ⌘-↑ / ⌘-↓ | Move the selection by one row — `columns` tiles in the grid, one in the list, keeping the column when it wraps. With a filter active it lands on the nearest tile the filter allows, since filtering dims tiles rather than removing them |
 | *type* | Filter the list by app / window name |
 | ⌫ | Delete the last character of the filter |
 | ⌘-1 … ⌘-9, ⌘-0 | Switch straight to that tile (no filter active). 0 is the tenth tile |

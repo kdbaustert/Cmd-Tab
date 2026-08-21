@@ -160,6 +160,22 @@ final class SwitcherController {
     /// Outlines the window the chord would grab, before anything is pressed.
     private let targetHighlight = ModifierTargetHighlight()
 
+    /// Wires the one thing the two mouse gestures have to agree about.
+    ///
+    /// They share a chord by design and are told apart only by whether a button goes down — and the
+    /// press that tells them apart is swallowed by the drag's own tap, so the pointing gesture
+    /// cannot see it. Both objects are owned here, so the introduction is made here, which is where
+    /// every other cross-object hook in this class is set up.
+    ///
+    /// In `init` rather than `start()`: the mouse gestures install themselves from settings pushed
+    /// by `AppDelegate`, which happens whether or not the keyboard tap ever comes up, and `start()`
+    /// returns early when it does not.
+    init() {
+        mouseWindowDrag.onClaimChord = { [weak self] in
+            Task { @MainActor in self?.targetHighlight.standDown() }
+        }
+    }
+
     /// Brings up the two mouse gestures if an earlier attempt was refused for want of Accessibility.
     ///
     /// Called alongside `start()`, because both need the same grant and neither notices it arriving:
@@ -198,6 +214,7 @@ final class SwitcherController {
             provider.appRules = appRules
             dragSnap.appRules = appRules
             mouseWindowDrag.appRules = appRules
+            targetHighlight.appRules = appRules
             launchArrangements.appRules = appRules
             provider.refresh()
         }
@@ -707,6 +724,17 @@ final class SwitcherController {
         scheduleLayout()
     }
 
+    /// Moves the highlight one row up or down.
+    ///
+    /// The stride comes from the panel, which is the only thing that knows where the list wrapped —
+    /// it is a function of the display the panel drew on and the metrics it drew with, neither of
+    /// which the controller may go reading from here. See `PanelGroup.rowStride`.
+    private func advanceRow(_ delta: Int) {
+        model.stepRow(delta, stride: panels.rowStride)
+        // Off the tap callback, exactly as `advance` is.
+        scheduleLayout()
+    }
+
     private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
         // The trigger key. While the chord is held it advances the selection, the classic cycle; once
         // the chord is up — a stay-open session — it switches to whatever is highlighted, because
@@ -769,6 +797,11 @@ final class SwitcherController {
             return true
         case Key.rightArrow: advance(1); return true
         case Key.leftArrow: advance(-1); return true
+        // A row rather than a tile. Both keys were swallowed and did nothing until now, which in a
+        // grid is the one arrow direction there is no other way to travel in: reaching the tile
+        // below meant pressing → as many times as the grid is wide.
+        case Key.downArrow: advanceRow(1); return true
+        case Key.upArrow: advanceRow(-1); return true
         case Key.enter: commit(); return true
         case Key.delete:
             if !model.query.isEmpty { setQuery(String(model.query.dropLast())) }

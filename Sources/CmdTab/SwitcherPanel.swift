@@ -88,6 +88,21 @@ final class SwitcherPanel: NSPanel {
     var positionMode: PanelPosition = .center
     /// 0 = automatic (wrap at the screen-fraction limit); otherwise a hard cap on columns.
     var maxColumns = 0
+
+    /// How many indices one row is worth in the layout currently on screen, for the up/down arrows.
+    ///
+    /// The two layouts fill in different directions and the number is not the same for both. The
+    /// grid is a `LazyVGrid` and fills row-major, so a row down is `columns` tiles along. The list
+    /// fills each of its columns top to bottom before starting the next, so its columns are runs of
+    /// *consecutive* indices and a row down is one along — there `columns` counts vertical columns,
+    /// and moving by it would jump a whole column rather than a row.
+    ///
+    /// Reported by the panel rather than worked out by the controller, because the wrap point is a
+    /// fact about the screen this panel is on and the metrics it drew with, not about the list.
+    /// `layout()` has already decided it in order to build the view; deriving it a second time
+    /// somewhere else is a second answer waiting to disagree with the first — and it would have to
+    /// reach for `NSScreen` from the event-tap callback to do so.
+    private(set) var rowStride = 1
     /// Fade the panel in and out instead of appearing instantly.
     var fade = false
 
@@ -218,9 +233,6 @@ final class SwitcherPanel: NSPanel {
         NSAnimationContext.endGrouping()
     }
 
-    /// The highlighted tile's screen rect, for positioning a keyboard-driven preview against it.
-    var selectedTileScreenRect: NSRect? { tileScreenRect(for: model.selection) }
-
     /// The screen rect of tile `index`, in bottom-up screen coordinates — the reported content-space
     /// frame flipped back out to the screen.
     func tileScreenRect(for index: Int) -> NSRect? {
@@ -254,6 +266,9 @@ final class SwitcherPanel: NSPanel {
             return
         }
         let columns = Self.columns(for: model, on: screen, cap: maxColumns)
+        // Recorded from the value the view is about to be built with, so the arrows and the grid can
+        // never disagree about where a row ends. See `rowStride` for why the list's answer is 1.
+        rowStride = model.layout == .list ? 1 : max(columns, 1)
         // Deliberately does NOT clear `tileFrames`. `onPreferenceChange` only fires when the reported
         // value actually changes, so wiping the cache here does not provoke a fresh report — it just
         // empties it until the tiles happen to move. Relayouts that keep the same geometry (stepping

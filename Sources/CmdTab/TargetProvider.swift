@@ -721,10 +721,7 @@ final class TargetProvider {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
         }
-        // `uniquingKeysWith` rather than `uniqueKeysWithValues`: a duplicate pid should never
-        // reach here, but the strict initializer would trap on it, and trapping inside the
-        // switcher would take the whole app down mid-⌘-Tab.
-        let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let rank = RecencyList<pid_t>.ranks(of: order)
         return apps.enumerated().sorted { a, b in
             let ra = rank[a.element.pid] ?? Int.max
             let rb = rank[b.element.pid] ?? Int.max
@@ -755,7 +752,7 @@ final class TargetProvider {
         _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder,
         windowMRU: [CGWindowID], screenFrames: [CGRect], badges: [String: String] = [:]
     ) -> [SwitchTarget] {
-        let mruRank = Dictionary(windowMRU.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let mruRank = RecencyList<CGWindowID>.ranks(of: windowMRU)
         return sorted(apps, by: order, sortOrder: sortOrder).flatMap { app -> [SwitchTarget] in
             // `AX.application` applies the messaging timeout: a wedged app must not wedge the
             // switcher with it.

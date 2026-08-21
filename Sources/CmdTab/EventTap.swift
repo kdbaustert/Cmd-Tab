@@ -22,6 +22,17 @@ final class EventTap {
         self.handler = handler
     }
 
+    /// A backstop, not a code path anything takes today: `SwitcherController` owns the only tap and
+    /// calls `stop()` before dropping it.
+    ///
+    /// Worth having because of what the alternative costs. The run-loop source outlives this object
+    /// — it is retained by the main run loop, not by us — and the callback reaches back through an
+    /// `Unmanaged.passUnretained(self)` pointer that nothing keeps alive. So a tap released without
+    /// being stopped does not leak quietly; it leaves a live source dereferencing freed memory on
+    /// the next keystroke, which surfaces as a crash somewhere unrelated. One line to make that
+    /// impossible by construction rather than by convention.
+    deinit { stop() }
+
     var isRunning: Bool { tap != nil }
 
     @discardableResult

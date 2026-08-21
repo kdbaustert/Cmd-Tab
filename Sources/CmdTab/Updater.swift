@@ -108,7 +108,12 @@ final class Updater: ObservableObject {
     /// EdDSA public key baked in, and points at no feed. Reporting that plainly is better than
     /// showing a check button that fails: a developer build updating itself out from under the
     /// developer would be worse than one that says it will not try.
-    var isConfigured: Bool {
+    ///
+    /// `static` so it can be asked *before* an updater exists. `AppDelegate` consults it to decide
+    /// whether to construct one at all, and an instance property could only be reached through
+    /// `shared` — which would answer the question by doing the very thing the answer is meant to
+    /// gate. Nothing here reads instance state; it is two `Info.plist` keys.
+    static var isConfigured: Bool {
         let info = Bundle.main.infoDictionary
         let feed = info?["SUFeedURL"] as? String
         let key = info?["SUPublicEDKey"] as? String

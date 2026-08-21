@@ -35,13 +35,22 @@ struct RecencyList<Element: Hashable> {
         entries.removeAll { $0 == element }
     }
 
-    /// Rank by recency, 0 being most recent.
+    /// Rank by recency, 0 being most recent, over a snapshot of somebody's entries.
+    ///
+    /// Static and taking an array, because that is the shape the real callers are in. Both of them
+    /// live in `TargetProvider`, and neither has a `RecencyList` to ask: the list is read on the
+    /// main thread and only the flat `entries` cross to `axQueue`, which is the whole point of that
+    /// hand-off. So both spelled this expression out for themselves, which left the rule stated in
+    /// three places and asserted in none of the two that ran.
     ///
     /// `uniquingKeysWith: min` rather than the strict initializer: a duplicate should be impossible
     /// given `touch` above, but the strict one traps on it, and trapping inside the switcher would
     /// take the whole app down mid-⌘-Tab. `min` also picks the answer a caller would want if one
     /// ever did appear — the more recent of the two positions.
-    func ranks() -> [Element: Int] {
+    static func ranks(of entries: [Element]) -> [Element: Int] {
         Dictionary(entries.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
     }
+
+    /// The same rule, for a caller holding the list itself.
+    func ranks() -> [Element: Int] { Self.ranks(of: entries) }
 }

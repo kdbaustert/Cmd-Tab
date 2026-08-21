@@ -67,8 +67,6 @@ final class SwitcherModel: ObservableObject {
         targets.indices.contains(selection) ? targets[selection] : nil
     }
 
-    var isEmpty: Bool { targets.isEmpty }
-
     /// Whether the current query matched anything at all. Empty query counts as matching — there is
     /// no filter to fail.
     var matchesAnything: Bool { query.isEmpty || !matchingIndices.isEmpty }
@@ -110,6 +108,54 @@ final class SwitcherModel: ObservableObject {
                 selection = sorted.first ?? 0
             }
         }
+    }
+
+    /// Moves the highlight one row, for the up and down arrows.
+    ///
+    /// `stride` is how many indices a row is worth in the layout on screen — see
+    /// `SwitcherPanel.rowStride`, which is where it comes from. One formula covers both layouts: at
+    /// a stride of 1 the arithmetic below degenerates to a plain ±1 step, which is exactly what one
+    /// row means in a list whose columns are vertical runs.
+    ///
+    /// Deliberately **not** `step(_:)` with a larger delta, and that is the whole reason this
+    /// exists. `step` walks the *match* list, so under a filter a delta of `columns` moves that many
+    /// matches along rather than one row down — several rows at once on a sparsely-matching list.
+    /// Filtering does not remove tiles: non-matches are dimmed and stay exactly where they were, so
+    /// a row move has to be measured in screen positions first and only then landed on a tile the
+    /// filter allows.
+    ///
+    /// The column survives the wrap, which a plain modulo over the flat index does not manage: the
+    /// last row is usually short, so wrapping the index shifts the column by however many tiles that
+    /// row is missing. A target cell past the end of a short row takes the last tile in it — the way
+    /// an icon grid does — rather than being skipped, so no key press is ever a silent no-op.
+    func stepRow(_ delta: Int, stride: Int) {
+        guard !targets.isEmpty, delta != 0 else { return }
+        let count = targets.count
+        let columns = max(stride, 1)
+        let rows = Int((Double(count) / Double(columns)).rounded(.up))
+        // Clamped rather than trusted: `selection` is assigned from several places and only
+        // `selected` guards it, so a stale one out of range would make the division below nonsense.
+        let current = min(max(selection, 0), count - 1)
+        let wrapped = ((current / columns + delta) % rows + rows) % rows
+        let target = min(wrapped * columns + current % columns, count - 1)
+        selection = nearestSelectable(from: target, direction: delta < 0 ? -1 : 1)
+    }
+
+    /// `index` when the current filter allows it, else the next tile along `direction` that does.
+    ///
+    /// The identity whenever nothing is filtered — an empty `matchingIndices` means "no filter", so
+    /// every index is selectable and the common path pays one `isEmpty` check. Bounded by the list
+    /// length so it terminates on any input, though it cannot actually run out: it is only reached
+    /// with a non-empty match set.
+    private func nearestSelectable(from index: Int, direction: Int) -> Int {
+        guard !matchingIndices.isEmpty else { return index }
+        let count = targets.count
+        var candidate = index
+        for _ in 0..<count {
+            if matchingIndices.contains(candidate) { return candidate }
+            candidate = ((candidate + direction) % count + count) % count
+        }
+        return index
     }
 
     /// Starts a fresh session: replaces the whole list and clears any previous query. The caller
@@ -163,17 +209,17 @@ final class SwitcherModel: ObservableObject {
         }
     }
 
-    /// Fuzzy match against the tile's title and app name. See `FuzzyMatch`.
-    ///
-    /// A query with several space-separated words requires every word to match, so "saf 2" still
-    /// finds Safari's second window — but each word now matches as a subsequence rather than a
-    /// substring, so "vsc" finds Visual Studio Code.
-    static func filtered(_ list: [SwitchTarget], query: String) -> [SwitchTarget] {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return list }
-        return list.filter { score($0, query: query) != nil }
-    }
-
     /// Returns indices of targets matching the query.
+    ///
+    /// Fuzzy match against the tile's title and app name — see `FuzzyMatch`. A query with several
+    /// space-separated words requires every word to match, so "saf 2" still finds Safari's second
+    /// window, and each word matches as a subsequence rather than a substring, so "vsc" finds Visual
+    /// Studio Code.
+    ///
+    /// Indices rather than a filtered list, because the panel dims non-matches instead of removing
+    /// them: every existing index — hit-testing, ⌘-number, the caption — has to keep its meaning.
+    /// An empty set is how "no filter" is spelled, which is why an empty or whitespace-only query
+    /// answers with one rather than with everything.
     static func matchingIndices(_ list: [SwitchTarget], query: String) -> Set<Int> {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
         return Set(list.indices.filter { score(list[$0], query: query) != nil })
