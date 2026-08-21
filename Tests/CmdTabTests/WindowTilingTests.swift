@@ -207,6 +207,8 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertFalse(WindowArrangement.restore.takesGap)
         XCTAssertFalse(WindowArrangement.previousDisplay.takesGap)
         XCTAssertFalse(WindowArrangement.nextDisplay.takesGap)
+        XCTAssertFalse(WindowArrangement.previousDesktop.takesGap)
+        XCTAssertFalse(WindowArrangement.nextDesktop.takesGap)
         for arrangement in [WindowArrangement.leftHalf, .topRight, .centerThird, .maximize] {
             XCTAssertTrue(arrangement.takesGap, "\(arrangement.rawValue) should take a gap")
         }
@@ -230,6 +232,7 @@ final class WindowTilingTests: XCTestCase {
     func testDisabledTilingStillMatchesTheMoves() {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = false
+        tiling.desktopMoves = true
         for arrangement in WindowArrangement.moves {
             let chord = arrangement.defaultHotkey
             XCTAssertEqual(
@@ -248,13 +251,133 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertNil(tiling.arrangement(code: chord.keyCode, flags: chord.modifiers))
     }
 
+    /// The Desktop moves answer to a switch of their own on top of the tiling one, because the
+    /// gesture behind them takes the pointer and opens Mission Control — see `DesktopMover`.
+    func testDesktopMovesAreInertUntilSwitchedOn() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.isEnabled = true
+        tiling.desktopMoves = false
+        for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
+            let chord = arrangement.defaultHotkey
+            XCTAssertNil(
+                tiling.arrangement(code: chord.keyCode, flags: chord.modifiers),
+                "\(arrangement.rawValue) should not fire with the Desktop switch off")
+        }
+    }
+
+    /// The switch is specific to its own family: turning it off must not take the display moves —
+    /// or anything else — down with it.
+    func testTheDesktopSwitchLeavesTheOtherArrangementsAlone() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.isEnabled = true
+        tiling.desktopMoves = false
+        let next = WindowArrangement.nextDisplay.defaultHotkey
+        XCTAssertEqual(
+            tiling.arrangement(code: next.keyCode, flags: next.modifiers), .nextDisplay)
+        let left = WindowArrangement.leftHalf.defaultHotkey
+        XCTAssertEqual(tiling.arrangement(code: left.keyCode, flags: left.modifiers), .leftHalf)
+    }
+
+    func testDesktopMovesFireWithTilingOffOnceSwitchedOn() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.isEnabled = false
+        tiling.desktopMoves = true
+        for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
+            let chord = arrangement.defaultHotkey
+            XCTAssertEqual(
+                tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), arrangement,
+                "\(arrangement.rawValue) should fire with tiling off but its own switch on")
+        }
+    }
+
+    /// Following defaults to on, and is a *stored* default rather than a fallback: the loader has to
+    /// tell "absent" from "explicitly false", because `bool(forKey:)` reports false for both and
+    /// would ship the opposite of what is documented.
+    func testFollowingADesktopMoveDefaultsToOn() {
+        XCTAssertTrue(WindowTilingBindings.defaults.followsDesktopMove)
+        XCTAssertFalse(WindowTilingBindings.defaults.desktopMoves)
+    }
+
+    /// The follow switch is about what happens *after* a move; it must not decide whether the move
+    /// happens at all. Turning it off still leaves the chords firing.
+    func testTurningFollowingOffStillFiresTheMove() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.desktopMoves = true
+        tiling.followsDesktopMove = false
+        for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
+            let chord = arrangement.defaultHotkey
+            XCTAssertEqual(
+                tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), arrangement,
+                "\(arrangement.rawValue) should still fire with following off")
+        }
+    }
+
+    /// The Desktop chords are ordinary bindings: whatever the user records replaces the default,
+    /// and the default stops firing. Nothing about the family is special-cased in the recorder — it
+    /// is `TilingShortcutRecorder` over `WindowArrangement`, like every other row on the pane.
+    func testACustomDesktopChordReplacesTheDefault() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.desktopMoves = true
+        let custom = Hotkey(
+            keyCode: 46,  // M
+            modifierRaw: CGEventFlags.maskControl.union(.maskAlternate).union(.maskCommand).rawValue)
+        tiling.bindings[.nextDesktop] = custom
+        XCTAssertEqual(
+            tiling.arrangement(code: custom.keyCode, flags: custom.modifiers), .nextDesktop)
+        let old = WindowArrangement.nextDesktop.defaultHotkey
+        XCTAssertNil(
+            tiling.arrangement(code: old.keyCode, flags: old.modifiers),
+            "the replaced default must stop firing")
+    }
+
+    /// Cleared means handed back to whatever app wants the chord, not "fall back to the default".
+    func testAClearedDesktopChordFiresNothing() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.desktopMoves = true
+        let chord = WindowArrangement.previousDesktop.defaultHotkey
+        tiling.bindings[.previousDesktop] = nil
+        XCTAssertNil(tiling.arrangement(code: chord.keyCode, flags: chord.modifiers))
+    }
+
+    /// Each family steps one the right way, and the two families are disjoint — nothing is both a
+    /// display move and a Desktop move.
+    func testEachMoveFamilyStepsInBothDirections() {
+        XCTAssertEqual(WindowArrangement.previousDesktop.desktopStep, -1)
+        XCTAssertEqual(WindowArrangement.nextDesktop.desktopStep, 1)
+        XCTAssertNil(WindowArrangement.previousDisplay.desktopStep)
+        XCTAssertNil(WindowArrangement.nextDisplay.desktopStep)
+        XCTAssertNil(WindowArrangement.previousDesktop.displayStep)
+        XCTAssertNil(WindowArrangement.nextDesktop.displayStep)
+        XCTAssertNil(WindowArrangement.leftHalf.desktopStep)
+    }
+
+    /// The four move chords have to be four distinct combinations, or one of them silently shadows
+    /// another — the arrows are shared and only the modifiers tell them apart.
+    func testTheMoveChordsDoNotCollide() {
+        let moves = WindowArrangement.moves
+        for (index, arrangement) in moves.enumerated() {
+            for other in moves[moves.index(after: index)...] {
+                XCTAssertNotEqual(
+                    arrangement.defaultHotkey, other.defaultHotkey,
+                    "\(arrangement.rawValue) and \(other.rawValue) share a default chord")
+            }
+        }
+        for arrangement in WindowArrangement.moves {
+            XCTAssertTrue(
+                arrangement.defaultHotkey.isUsableGlobally,
+                "\(arrangement.rawValue) needs a globally usable default")
+        }
+    }
+
     func testTheTwoFamiliesPartitionTheArrangements() {
         XCTAssertEqual(
             Set(WindowArrangement.moves).union(WindowArrangement.tilingArrangements),
             Set(WindowArrangement.allCases))
         XCTAssertTrue(
             Set(WindowArrangement.moves).isDisjoint(with: WindowArrangement.tilingArrangements))
-        XCTAssertEqual(Set(WindowArrangement.moves), Set([.previousDisplay, .nextDisplay]))
+        XCTAssertEqual(
+            Set(WindowArrangement.moves),
+            Set([.previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop]))
     }
 
     func testEnabledTilingMatchesItsOwnChord() {
@@ -356,15 +479,34 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertEqual(Set(chords).count, WindowArrangement.allCases.count)
     }
 
-    /// Every default holds ⌃⌘. ⇧ is a qualifier on top — the display moves sit on the same arrows
-    /// as the halves, "throw it further" — so the invariant is on `heldModifiers`, which masks it.
+    /// Every default is anchored on ⌃⌘, the combination macOS leaves almost entirely free.
+    ///
+    /// Containment rather than equality, because the arrows carry three families that share a key
+    /// and are told apart by what is stacked on top: the halves are bare ⌃⌘, the display moves add
+    /// ⇧ ("throw it further"), and the Desktop moves add ⌥ ("further still"). ⇧ never reaches
+    /// `heldModifiers` at all — it is masked there, since Shift only ever means "backwards" — so
+    /// before the Desktop moves existed equality and containment could not be told apart, and
+    /// equality was the tighter-looking way to write it. ⌥ is a real held modifier, so they part
+    /// company here. The invariant that matters is the anchor, not the absence of qualifiers.
     func testDefaultChordsAllHoldControlCommand() {
-        let expected = CGEventFlags.maskControl.union(.maskCommand)
+        let anchor = CGEventFlags.maskControl.union(.maskCommand)
         for arrangement in WindowArrangement.allCases {
-            XCTAssertEqual(
-                arrangement.defaultHotkey.heldModifiers, expected,
-                "\(arrangement.rawValue) should hold ⌃⌘")
+            XCTAssertTrue(
+                arrangement.defaultHotkey.heldModifiers.isSuperset(of: anchor),
+                "\(arrangement.rawValue) should be anchored on ⌃⌘")
         }
+    }
+
+    /// The qualifier stacking above, asserted directly: bare ⌃⌘ tiles, ⌥ on top moves a Desktop.
+    /// Without this the containment test would pass just as happily if every Desktop default
+    /// quietly became a bare ⌃⌘ chord and started shadowing a half.
+    func testDesktopMovesQualifyTheAnchorWithOption() {
+        for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
+            XCTAssertTrue(
+                arrangement.defaultHotkey.heldModifiers.contains(.maskAlternate),
+                "\(arrangement.rawValue) should add ⌥ to the anchor")
+        }
+        XCTAssertFalse(WindowArrangement.leftHalf.defaultHotkey.heldModifiers.contains(.maskAlternate))
     }
 
     /// The shifted display moves must stay distinct from the unshifted halves they share a key with,
@@ -646,5 +788,41 @@ final class DragSnapZoneTests: XCTestCase {
         // A top-left resize moves the origin *and* changes the size; still not a move.
         let cornerResized = CGRect(x: 80, y: 80, width: 820, height: 620)
         XCTAssertFalse(DragSnap.isMove(from: initial, to: cornerResized))
+    }
+}
+
+/// The marker that keeps this app's own synthetic drags out of its own gestures.
+final class SyntheticEventTests: XCTestCase {
+    private func mouseEvent() -> CGEvent? {
+        CGEvent(
+            mouseEventSource: nil, mouseType: .leftMouseDragged,
+            mouseCursorPosition: CGPoint(x: 10, y: 10), mouseButton: .left)
+    }
+
+    func testAnUnmarkedEventIsNotOurs() throws {
+        let event = try XCTUnwrap(mouseEvent())
+        XCTAssertFalse(SyntheticEvent.isOurs(event), "a plain event must read as the user's")
+    }
+
+    func testAMarkedEventIsOurs() throws {
+        let event = try XCTUnwrap(mouseEvent())
+        SyntheticEvent.mark(event)
+        XCTAssertTrue(SyntheticEvent.isOurs(event))
+    }
+
+    /// The guard is asked about events that may not exist — `NSEvent.cgEvent` is optional — and must
+    /// answer "not ours" rather than trapping, or a monitor would crash on the first odd event.
+    func testANilEventIsNotOurs() {
+        XCTAssertFalse(SyntheticEvent.isOurs(nil))
+    }
+
+    /// Marking must not disturb the event otherwise: it rides in a spare field, and the position and
+    /// type the drag depends on have to survive it.
+    func testMarkingLeavesTheEventOtherwiseIntact() throws {
+        let event = try XCTUnwrap(mouseEvent())
+        let before = event.location
+        SyntheticEvent.mark(event)
+        XCTAssertEqual(event.location, before)
+        XCTAssertEqual(event.type, .leftMouseDragged)
     }
 }

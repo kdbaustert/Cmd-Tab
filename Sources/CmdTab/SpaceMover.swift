@@ -7,10 +7,15 @@ import Foundation
 /// graceful no-op rather than a crash. Inherently best-effort and fragile across OS versions.
 ///
 /// Deliberately read-and-reveal only. *Moving* a window to another Space is not here because it
-/// cannot be done from an ordinary process on macOS 26: `CGSMoveWindowsToManagedSpace`,
-/// `SLSMoveWindowsToManagedSpace` and the remove-then-add pair all resolve, are all accepted, and
-/// all silently do nothing for a window this process does not own. The tools that manage it inject
-/// into Dock, which requires SIP to be partially disabled.
+/// cannot be done through these APIs from an ordinary process on macOS 26:
+/// `CGSMoveWindowsToManagedSpace`, `SLSMoveWindowsToManagedSpace` and the remove-then-add pair all
+/// resolve, are all accepted, and all silently do nothing for a window this process does not own.
+/// Re-measured on 26.6.2 with a control that settles what the failure means: the identical call
+/// moves the *calling process's own* window on the first try. They are gated on ownership, not
+/// broken, and the tools that get around it inject into Dock, which requires SIP partially disabled.
+///
+/// `DesktopMover` does the move instead, by driving the gesture a person would — see its header for
+/// the three cheaper routes that were measured dead first.
 enum SpaceMover {
     private typealias MainConnectionFn = @convention(c) () -> Int32
     private typealias CopyManagedFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
@@ -298,11 +303,25 @@ enum SpaceMover {
         return (value as? Bool) ?? true
     }
 
+    /// Every user Space on one display, in order.
+    ///
+    /// Per display rather than flattened, unlike the badge's list below, because a Desktop move has
+    /// to clamp against the ends of the list the window's own display actually has — and because
+    /// Mission Control draws one Spaces Bar per display, so this is the list the drop target is
+    /// indexed into. Empty when the display is unknown, which callers treat as "cannot move".
+    static func userSpaceIDs(ofDisplay display: String) -> [UInt64] {
+        for entry in managedDisplays() where (entry["Display Identifier"] as? String) == display {
+            guard let spaces = entry["Spaces"] as? [[String: Any]] else { return [] }
+            return spaces.filter { ($0["type"] as? Int) == 0 }.compactMap(spaceID(from:))
+        }
+        return []
+    }
+
     /// Every user Space in order, flattened across displays.
     ///
     /// Flattened deliberately: the badge numbers Spaces the way the user counts them ("Desktop 3"),
     /// and on the single-display setups where Spaces are actually numbered that is exactly right.
-    /// `move` does *not* use this — it has to stay within one display's list to clamp correctly.
+    /// `userSpaceIDs(ofDisplay:)` is the per-display one, for callers that must clamp.
     private static func userSpaceIDs(in displays: [[String: Any]]) -> [UInt64] {
         displays.flatMap { display -> [UInt64] in
             guard let spaces = display["Spaces"] as? [[String: Any]] else { return [] }

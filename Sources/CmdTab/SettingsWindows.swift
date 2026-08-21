@@ -28,6 +28,12 @@ struct WindowSettings: View {
     /// is the one the tiling switch does not govern, and the footer has to say so.
     private static let moveGroup = ("Displays", [WindowArrangement.previousDisplay, .nextDisplay])
 
+    /// The Desktop moves. Their own card again, because they are the one family with a switch of
+    /// their own and the footer has to explain what that switch is protecting the user from.
+    private static let desktopGroup = (
+        "Desktops", [WindowArrangement.previousDesktop, .nextDesktop]
+    )
+
     private var isEnabled: Binding<Bool> {
         Binding(get: { store.isEnabled }, set: { store.isEnabled = $0 })
     }
@@ -46,6 +52,14 @@ struct WindowSettings: View {
 
     private var mouseDragEnabled: Binding<Bool> {
         Binding(get: { store.mouseDrag.isEnabled }, set: { store.mouseDragEnabled = $0 })
+    }
+
+    private var desktopMoves: Binding<Bool> {
+        Binding(get: { store.desktopMoves }, set: { store.desktopMoves = $0 })
+    }
+
+    private var followsDesktopMove: Binding<Bool> {
+        Binding(get: { store.followsDesktopMove }, set: { store.followsDesktopMove = $0 })
     }
 
     var body: some View {
@@ -171,6 +185,38 @@ struct WindowSettings: View {
                 }
             }
 
+            // The only move behind a switch, and the footer says why rather than leaving someone to
+            // discover the Mission Control flash by pressing the key.
+            SettingsSection(
+                title: Self.desktopGroup.0, anchor: anchor(for: Self.desktopGroup.0),
+                footer: "macOS has no way to move another app's window between desktops, so this "
+                    + "performs the gesture instead: it picks the window up, opens Mission Control "
+                    + "for a moment and drops it on the next desktop along. That means it takes "
+                    + "over the pointer for about two seconds, which is why it is off by default. "
+                    + "Stops at the first and last desktop rather than wrapping around."
+            ) {
+                SettingsToggle(
+                    title: "Move windows between desktops",
+                    subtitle: "Off by default — unlike the display moves, this one drives the "
+                        + "mouse and flashes Mission Control, so it is not claimed until you ask.",
+                    isOn: desktopMoves)
+                SettingsToggle(
+                    title: "Follow the window",
+                    subtitle: "Switch to the desktop the window landed on, so you arrive with it "
+                        + "instead of watching it go. Turn this off to throw a window somewhere and "
+                        + "stay where you are.",
+                    isOn: followsDesktopMove)
+                ForEach(Self.desktopGroup.1) { arrangement in
+                    SettingsRow(
+                        title: arrangement.title,
+                        subtitle: subtitle(for: arrangement),
+                        controlWidth: 168
+                    ) {
+                        TilingShortcutRecorder(arrangement: arrangement, store: store)
+                    }
+                }
+            }
+
             SettingsSection(
                 title: "All windows", anchor: SettingsAnchor.allWindows,
                 footer: "Unbound by default: these act system-wide and have no natural home key, so "
@@ -223,6 +269,11 @@ struct WindowSettings: View {
             // use than a bare "conflict".
             let winner = WindowArrangement.allCases.first { $0 == arrangement || clashes.contains($0) }
             return "Same shortcut as \(names) — only \(winner?.title ?? arrangement.title) will fire."
+        }
+        // Said on the row rather than only in the footer: a recorder showing a chord reads as bound,
+        // and "bound but switched off" is exactly the state someone will press the key in.
+        if arrangement.desktopStep != nil, !store.desktopMoves {
+            return "Switched off above — this will not fire."
         }
         switch arrangement {
         case .center: return "Keeps the window's size and centres it."

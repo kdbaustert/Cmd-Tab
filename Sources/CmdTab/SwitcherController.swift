@@ -688,6 +688,7 @@ final class SwitcherController {
     private func applyTiling(_ arrangement: WindowArrangement) {
         let cycleWidths = tiling.cycleWidths
         let gap = tiling.gap
+        let follows = tiling.followsDesktopMove
         // Posted, not inline. `frontmostApplication` and the screen walk are both NSWorkspace/AppKit
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
@@ -707,6 +708,16 @@ final class SwitcherController {
             // so the tiler stays a pure geometry writer with no opinion about settings.
             if let id = front.bundleIdentifier, rules[id]?.neverTile == true {
                 Log.tap.notice("tiling: \(id, privacy: .public) is set to never tile")
+                return
+            }
+            // A Desktop move is not geometry, so it does not go to the tiler. `WindowTiler.apply`
+            // computes a frame and writes it over Accessibility; there is no frame that expresses
+            // "one Desktop along", and the move takes seconds and drives the pointer. See
+            // `DesktopMover`.
+            if let step = arrangement.desktopStep {
+                Log.tap.notice(
+                    "desktop move: pid \(pid, privacy: .public), step \(step, privacy: .public)")
+                DesktopMover.move(pid: pid, step: step, follow: follows)
                 return
             }
             Log.tap.notice(

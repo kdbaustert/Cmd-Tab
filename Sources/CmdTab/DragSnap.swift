@@ -84,15 +84,22 @@ final class DragSnap {
     private func install() {
         // Global monitors only — local ones would fire for our own windows, and the settings window
         // is the one place we must not snap.
+        // Our own synthetic drags are skipped throughout. `DesktopMover` moves a window between
+        // Desktops by performing a real drag, and its route to Mission Control's Spaces Bar crosses
+        // the top-edge snap zone — so without this, dropping a window on another Desktop also reads
+        // as "maximize it", and the window arrives resized or inset by the gap. See `SyntheticEvent`.
         let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) {
             [weak self] event in
+            guard !SyntheticEvent.isOurs(event.cgEvent) else { return }
             MainActor.assumeIsolated { self?.mouseDown(at: NSEvent.mouseLocation, event: event) }
         }
         let dragged = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) {
-            [weak self] _ in
+            [weak self] event in
+            guard !SyntheticEvent.isOurs(event.cgEvent) else { return }
             MainActor.assumeIsolated { self?.mouseDragged(to: NSEvent.mouseLocation) }
         }
-        let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
+        let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            guard !SyntheticEvent.isOurs(event.cgEvent) else { return }
             MainActor.assumeIsolated { self?.mouseUp() }
         }
         monitors = [down, dragged, up].compactMap { $0 }

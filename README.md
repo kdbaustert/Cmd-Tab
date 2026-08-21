@@ -297,6 +297,7 @@ you are looking at, which is why they are not on the Shortcuts tab with the swit
 | Thirds | Left, middle, right — a third of the width, full height. | ⌃⌘ 1 2 3 |
 | Corners | Top-left, top-right, bottom-left, bottom-right — each a quarter of the usable area. | ⌃⌘ U I J K |
 | Move to previous / next display | Keeps the window's size and its relative position on the new display. ⇧ on the halves' own arrows: same key, "throw it further". Fires whether or not tiling is on. | ⌃⇧⌘ ← → |
+| Move to previous / next desktop | Sends the focused window to the next **desktop** (Space) along, stopping at the first and last rather than wrapping. ⌥ on the halves' own arrows, one row along from the display moves' ⇧ — same key again, "further still". **Off by default**, and the only move with a switch of its own: macOS offers no way to move another app's window between desktops, so this performs the gesture instead — it picks the window up, opens Mission Control for a moment and drops it on the destination's thumbnail. That takes over the pointer for about two seconds, which is not something to claim on your behalf. It acts on the frontmost app's focused window, and because it has to *grab* that window it declines — with a line in the log rather than a half-move — if the title bar is covered at the moment it presses, or if the window is full screen or minimized. The synthetic drag is posted with the modifier flags explicitly cleared: a `leftMouseDown` inherits the live modifier state, and since the chord that triggered it is still under your fingers, a ⌃ riding along would make the press a Control-click — a right click — and nothing would move. Two settings sit with it. **Follow the window** (on) switches you to the desktop it landed on, by pressing that desktop's own thumbnail — a real transition performed by macOS, not the bookkeeping-only private Space switch. And the window is put back on the frame it started with: the drag genuinely carries it up to the Spaces Bar, so macOS drops it wherever the gesture ended, which read as the move shoving windows to the left. The synthetic drag is also stamped as ours (`SyntheticEvent`) so *Snap by dragging* and the modifier-drag ignore it — without that, the route across the top of the screen is the maximize snap zone, and a moved window arrived maximized or inset by the gap. Persisted as `windowTilingDesktopMoves` and `windowTilingFollowsDesktopMove`. | Off / On, ⌃⌥⌘ ← → |
 | Snap by dragging | Drag a window to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, **the centre of the screen gives full screen**, with a translucent preview of where it will land. Grab the window **anywhere**, not just its titlebar: what tells a window drag from a text selection is not where the press landed but whether the window actually *moved* — origin changed, size unchanged — which is also how Rectangle's `SnappingManager` decides. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
 | Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block are fixed at light grey on black — Rectangle's own footprint styling (`FootprintWindow`: `borderColor = .lightGray`, `fillColor = .black`, `borderWidth = 2`, alpha `0.3`) — and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
 | Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
@@ -669,15 +670,24 @@ after that. Remove the identity in Keychain Access to undo it.
 - Windows on other Spaces are listed, and switching to one follows macOS's normal Space-switch
   behavior. The hover preview shows them too — only *minimized* windows can't be previewed, since
   they have no live surface to capture.
-- Moving a window to another **desktop** (Space) is **not supported**, and deliberately so. There
-  is no public API, and on macOS 26 every private SkyLight route — `CGSMoveWindowsToManagedSpace`,
-  `SLSMoveWindowsToManagedSpace`, and the `RemoveWindowsFromSpaces`/`AddWindowsToSpaces` pair — is
-  accepted and then silently ignored for a window the calling process does not own. All of them
-  resolve, so a caller cannot tell success from failure; only a Space-managing connection may move
-  another app's window, which is why the tools that do it inject into Dock and require SIP to be
-  partially disabled. `SpaceMover` therefore reads Space membership and switches Spaces, and does
-  not pretend to move windows between them. Moving to another **display** is on ⌃⇧⌘-←/→, is plain
-  Accessibility geometry, and keeps the window's relative position on the display it arrives at.
+- Moving a window to another **desktop** (Space) works, but not through any API — it is the one
+  feature here that drives the interface rather than calling into it, so it is **off by default**
+  (`windowTilingDesktopMoves`) and costs about two seconds of the pointer per press. Every private
+  SkyLight route is a dead end on macOS 26: `CGSMoveWindowsToManagedSpace`,
+  `SLSMoveWindowsToManagedSpace`, the `RemoveWindowsFromSpaces`/`AddWindowsToSpaces` pair and the
+  `SLSSpaceSetCompatID`/`SLSSetWindowListWorkspace` trick are all accepted and then silently ignored
+  for a window the calling process does not own. All of them resolve, so a caller cannot tell
+  success from failure — and the control that settles what that means is that the identical call
+  moves the *calling process's own* window first time. They are gated on ownership, not broken, and
+  the tools that get around it inject into Dock and require SIP partially disabled. Three cheaper
+  workarounds were measured dead too, and `DesktopMover`'s header records them so nobody re-measures
+  them: synthetic ⌃-arrow (the window server refuses synthetic input for its own symbolic hotkeys,
+  checked with those hotkeys verified enabled), a drag paired with `SpaceMover`'s private Space
+  switch (the display switches, the window stays — the carry needs a real transition), and dragging
+  to the screen edge and holding (macOS does no edge-switching for window drags). What is left is
+  the gesture a person performs, which is what `DesktopMover` does. Moving to another **display** is
+  a different thing entirely: ⌃⇧⌘-←/→, plain Accessibility geometry, instant, and on whether or not
+  tiling is.
 - Live window thumbnails are optional in both modes and off by default: the hover preview in app
   mode, and **Thumbnail tiles** in window mode. Without either, tiles are app icons and Screen
   Recording is never touched.
@@ -691,6 +701,8 @@ after that. Remove the identity in Keychain Access to undo it.
 | --- | --- |
 | `SystemSwitcher.swift` | The private SkyLight shim that disables the Dock's switcher |
 | `SpaceMover.swift` | Private SkyLight shim for reading a window's Space and switching to it |
+| `DesktopMover.swift` | Moves a window between desktops by performing the drag-into-Mission-Control gesture |
+| `SyntheticEvent.swift` | Marks the mouse events this app posts, so its own gestures ignore them |
 | `FavoritesStore.swift` | Pinned apps, in the user's order, shown as launchable tiles when not running |
 | `EventTap.swift` | Session event tap; swallows keys, self-heals if the system disables it |
 | `SwitcherController.swift` | State machine — decides what to swallow and when to commit |

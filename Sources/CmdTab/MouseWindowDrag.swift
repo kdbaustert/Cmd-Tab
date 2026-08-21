@@ -551,6 +551,10 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// uncontended lock, which is what keeps it inside the system's deadline — overrun it and the
     /// tap is killed, taking every click on the machine with it.
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
+        // Never act on a drag this app posted itself — `DesktopMover`'s move between Desktops is a
+        // real drag, and grabbing it here would have two of our own gestures fighting over one
+        // window. See `SyntheticEvent`.
+        guard !SyntheticEvent.isOurs(event) else { return false }
         let location = event.location
         switch type {
         case .leftMouseDown:

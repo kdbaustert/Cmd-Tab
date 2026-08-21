@@ -16,6 +16,7 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     case topLeft, topRight, bottomLeft, bottomRight
     case maximize, center, restore
     case previousDisplay, nextDisplay
+    case previousDesktop, nextDesktop
 
     var id: String { rawValue }
 
@@ -37,6 +38,8 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .restore: return "Restore previous size"
         case .previousDisplay: return "Move to previous display"
         case .nextDisplay: return "Move to next display"
+        case .previousDesktop: return "Move to previous desktop"
+        case .nextDesktop: return "Move to next desktop"
         }
     }
 
@@ -69,6 +72,16 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .nextDisplay:
             return Hotkey(
                 keyCode: 124, modifierRaw: CGEventFlags(rawValue: mods).union(.maskShift).rawValue)
+        // ⌥ on top of the halves' arrows, one row along from the display moves' ⇧. Same key again,
+        // "throw it further still" — and ⌃⌥⌘-arrow is free on macOS, which ⌃⌥-arrow is not.
+        case .previousDesktop:
+            return Hotkey(
+                keyCode: 123,
+                modifierRaw: CGEventFlags(rawValue: mods).union(.maskAlternate).rawValue)
+        case .nextDesktop:
+            return Hotkey(
+                keyCode: 124,
+                modifierRaw: CGEventFlags(rawValue: mods).union(.maskAlternate).rawValue)
         }
     }
 
@@ -81,19 +94,29 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Whether this sends the window to another display rather than resizing it where it is.
+    /// How far this moves a window between Desktops (Spaces), or nil if it does not.
+    var desktopStep: Int? {
+        switch self {
+        case .previousDesktop: return -1
+        case .nextDesktop: return 1
+        default: return nil
+        }
+    }
+
+    /// Whether this sends the window somewhere else rather than resizing it where it is.
     ///
-    /// A family of one, kept as a family: moving a window to another **Desktop** belongs here too
-    /// and cannot be built. macOS only lets a Space-managing connection move another app's window
-    /// between Spaces, so every SkyLight route (`CGS`/`SLSMoveWindowsToManagedSpace`, and the
-    /// remove-then-add pair) is accepted and silently ignored from an ordinary process. The tools
-    /// that manage it inject into Dock, which needs SIP partially disabled.
+    /// Two families now, and the note that used to sit here said the Desktop half could not be
+    /// built. That was true of every route it named — the SkyLight calls are gated on window
+    /// ownership and silently ignore a window this process does not own, which is re-measured in
+    /// `SpaceMover`'s header. It was not true of the problem. `DesktopMover` performs the gesture a
+    /// person performs, and that works; its header records the three cheaper routes that do not.
     ///
     /// The moves are *not* gated on the tiling switch: they take nothing away from the window's own
     /// layout, so "I don't want Cmd-Tab resizing my windows" is not a reason to lose them.
     /// Everything else is tiling proper, off until asked for. See
-    /// `WindowTilingBindings.arrangement(code:flags:)`, which is where that split is enforced.
-    var isMove: Bool { displayStep != nil }
+    /// `WindowTilingBindings.arrangement(code:flags:)`, which is where that split is enforced. The
+    /// Desktop moves carry a second switch of their own on top — see `desktopMoves` there.
+    var isMove: Bool { displayStep != nil || desktopStep != nil }
 
     /// The moves, in the order the Windows tab lists them.
     static let moves: [WindowArrangement] = allCases.filter(\.isMove)
@@ -115,7 +138,9 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// a size it did not pick; the moves change no geometry at all.
     var takesGap: Bool {
         switch self {
-        case .center, .restore, .previousDisplay, .nextDisplay: return false
+        case .center, .restore, .previousDisplay, .nextDisplay, .previousDesktop,
+            .nextDesktop:
+            return false
         default: return true
         }
     }
@@ -183,7 +208,7 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
                 x: area.minX + (area.width - size.width) / 2,
                 y: area.minY + (area.height - size.height) / 2,
                 width: size.width, height: size.height)
-        case .restore, .previousDisplay, .nextDisplay:
+        case .restore, .previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop:
             return nil
         }
     }
@@ -244,6 +269,26 @@ struct WindowTilingBindings: Equatable {
     /// Drag a window to a screen edge to tile it there. Independent of `isEnabled`: someone may want
     /// the mouse gesture and no global chords at all, or the reverse.
     var dragSnap: Bool = false
+    /// Whether the two Desktop moves fire. Off by default, and the only *move* with a switch in
+    /// front of it.
+    ///
+    /// The display moves are pure Accessibility geometry — a frame written to a window, invisible
+    /// and instant — so shipping them live costs nothing. A Desktop move is not that. There is no
+    /// API for it (see `DesktopMover`), so it performs the gesture instead: it takes the pointer,
+    /// opens Mission Control for about two seconds and drops the window on a thumbnail. Claiming a
+    /// system-wide chord that does *that* on someone's behalf, on an update they did not ask for,
+    /// is not a guess worth making — the same reasoning `GlobalActions` gives for shipping no
+    /// default bindings at all. The chords are pre-filled so turning it on is one click, and inert
+    /// until then.
+    var desktopMoves: Bool = false
+    /// Whether a Desktop move takes you with it. On by default — the whole reason to throw a window
+    /// to the next Desktop is usually to go and work on it there, and a move you do not follow
+    /// leaves you looking at the space the window just vacated.
+    ///
+    /// Its own setting rather than always-on because the opposite is a real workflow: parking
+    /// something out of the way — a build log, a chat window — is a *throw*, and following it would
+    /// undo the point of the gesture. Only meaningful while `desktopMoves` is on.
+    var followsDesktopMove: Bool = true
     /// Pixels of space left around a tiled window: the whole gap against a screen edge, half of it
     /// where two tiles meet. 0 keeps windows flush, which is what tiling has always done.
     var gap: CGFloat = 0
@@ -299,7 +344,10 @@ struct WindowTilingBindings: Equatable {
     /// system-wide as soon as they are bound, tiling on or off — which is what the pane says.
     func arrangement(code: Int, flags: CGEventFlags) -> WindowArrangement? {
         let held = flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-        let candidates = isEnabled ? WindowArrangement.allCases : WindowArrangement.moves
+        let candidates = (isEnabled ? WindowArrangement.allCases : WindowArrangement.moves)
+            // The Desktop moves answer to their own switch as well, so with it off their chords go
+            // back to whatever app wants them rather than being claimed and doing nothing.
+            .filter { desktopMoves || $0.desktopStep == nil }
         return candidates.first {
             guard let hotkey = bindings[$0], hotkey.isUsableGlobally else { return false }
             let want = hotkey.modifiers.intersection(
@@ -323,6 +371,8 @@ final class WindowTilingStore: ObservableObject {
         static let cycleWidths = "windowTilingCycleWidths"
         static let shortcuts = "windowTilingShortcuts"
         static let dragSnap = "windowTilingDragSnap"
+        static let desktopMoves = "windowTilingDesktopMoves"
+        static let followsDesktopMove = "windowTilingFollowsDesktopMove"
         static let gap = "windowTilingGap"
         /// The four per-edge gaps, from the version that split this setting in four. Read once to
         /// migrate back to a single value, never written. See `load`.
@@ -340,7 +390,8 @@ final class WindowTilingStore: ObservableObject {
 
     /// Every key this store owns, for export/import/reset.
     static let defaultsKeys = [
-        Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap,
+        Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap, Key.desktopMoves,
+        Key.followsDesktopMove,
         Key.gap, Key.gapTop, Key.gapBottom, Key.gapLeft, Key.gapRight,
         Key.dotHex, Key.outlineHex, Key.landingHex,
         Key.mouseDrag, Key.mouseMove, Key.mouseResize,
@@ -472,6 +523,24 @@ final class WindowTilingStore: ObservableObject {
         set {
             guard newValue != tiling.dragSnap else { return }
             tiling.dragSnap = newValue
+            persist()
+        }
+    }
+
+    var desktopMoves: Bool {
+        get { tiling.desktopMoves }
+        set {
+            guard newValue != tiling.desktopMoves else { return }
+            tiling.desktopMoves = newValue
+            persist()
+        }
+    }
+
+    var followsDesktopMove: Bool {
+        get { tiling.followsDesktopMove }
+        set {
+            guard newValue != tiling.followsDesktopMove else { return }
+            tiling.followsDesktopMove = newValue
             persist()
         }
     }
@@ -635,6 +704,13 @@ final class WindowTilingStore: ObservableObject {
             defaults.object(forKey: Key.cycleWidths) != nil
             ? defaults.bool(forKey: Key.cycleWidths) : true
         result.dragSnap = defaults.bool(forKey: Key.dragSnap)
+        result.desktopMoves = defaults.bool(forKey: Key.desktopMoves)
+        // Defaults to *true*, so absent has to be told from false — `bool(forKey:)` reports false
+        // for both, which would silently ship the opposite of the documented default. Same shape as
+        // `cycleWidths` above, and for the same reason.
+        result.followsDesktopMove =
+            defaults.object(forKey: Key.followsDesktopMove) != nil
+            ? defaults.bool(forKey: Key.followsDesktopMove) : true
         // Absent means never set, which is 0 — `double(forKey:)` already reports 0 for a missing
         // key, so the two cases need no telling apart here.
         //
@@ -672,6 +748,8 @@ final class WindowTilingStore: ObservableObject {
         defaults.set(tiling.isEnabled, forKey: Key.enabled)
         defaults.set(tiling.cycleWidths, forKey: Key.cycleWidths)
         defaults.set(tiling.dragSnap, forKey: Key.dragSnap)
+        defaults.set(tiling.desktopMoves, forKey: Key.desktopMoves)
+        defaults.set(tiling.followsDesktopMove, forKey: Key.followsDesktopMove)
         defaults.set(Double(tiling.gap), forKey: Key.gap)
         // The four per-edge keys are deliberately not written back. They are a migration source
         // only — see `load()` — and left where they are, so a downgrade finds what it wrote.

@@ -172,9 +172,13 @@ enum ShortcutAudit {
                 entry(
                     .tiling, "tiling.\(arrangement.rawValue)", arrangement.title,
                     tiling.hotkey(for: arrangement),
-                    // The display and Desktop moves do not answer to the tiling switch, so a bound
-                    // one can collide with something while the rest of the family is inert.
-                    active: tiling.isEnabled || arrangement.isMove))
+                    // The moves do not answer to the tiling switch, so a bound one can collide with
+                    // something while the rest of the family is inert. The Desktop moves have a
+                    // second switch of their own on top, and a chord that switch is holding shut is
+                    // not claimed from anyone — reporting it as active would invent a collision.
+                    active: arrangement.desktopStep != nil
+                        ? tiling.desktopMoves
+                        : tiling.isEnabled || arrangement.isMove))
         }
 
         let actions = SwitcherShortcutsStore.shared
