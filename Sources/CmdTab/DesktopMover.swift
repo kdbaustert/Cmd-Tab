@@ -41,9 +41,21 @@ enum DesktopMover {
     /// second press into a no-op rather than queueing it up to run the whole gesture again.
     private static let queue = DispatchQueue(label: "com.cmdtab.desktopmove", qos: .userInitiated)
 
-    /// Whether a move is in flight. Touched only on `queue`, which is what keeps it safe without a
-    /// lock — the same rule `WindowTiler`'s restore tables follow.
+    /// Whether a move is in flight, claimed by `move` *before* it dispatches.
+    ///
+    /// The claim has to happen on the caller's thread, and that is the whole point of the lock. This
+    /// used to be set inside the `queue.async` block, which cannot work: the queue is serial, so a
+    /// second block does not run until the first has finished and already cleared the flag. The
+    /// guard could therefore never fire, and holding the chord down — key auto-repeat, which is the
+    /// ordinary way this gets pressed twice — queued a move per repeat and walked the window across
+    /// several Desktops. Measured before the fix: a burst of five presses moved it two Desktops.
+    ///
+    /// Rejecting rather than coalescing. A held key means "go one Desktop", not "keep going".
     private nonisolated(unsafe) static var isMoving = false
+
+    /// Guards `isMoving` across the tap callback and `queue`. `NSLock` to match the other
+    /// cross-thread flags in this app; uncontended in every real case.
+    private static let lock = NSLock()
 
     private typealias CoreDockSendNotificationFn = @convention(c) (CFString, Int32) -> Void
 
@@ -82,15 +94,34 @@ enum DesktopMover {
     /// the window instead of watching it leave.
     static func move(pid: pid_t, step: Int, follow: Bool) {
         guard step != 0 else { return }
+        guard beginIfIdle() else {
+            Log.general.notice("desktop move: already moving a window; ignoring")
+            return
+        }
         queue.async {
-            guard !isMoving else {
-                Log.general.notice("desktop move: already moving a window; ignoring")
-                return
-            }
-            isMoving = true
-            defer { isMoving = false }
+            defer { end() }
             perform(pid: pid, step: step, follow: follow)
         }
+    }
+
+    /// Claims the gesture, or reports that one is already running.
+    ///
+    /// Split out from `move` so the invariant can be tested without a window, a Desktop or three
+    /// seconds — the bug this replaced was not in the gesture but in *where* the claim happened, and
+    /// that is exactly what a test can pin down cheaply. Internal for the same reason.
+    static func beginIfIdle() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isMoving else { return false }
+        isMoving = true
+        return true
+    }
+
+    /// Releases the claim taken by `beginIfIdle`.
+    static func end() {
+        lock.lock()
+        isMoving = false
+        lock.unlock()
     }
 
     // MARK: - The gesture
@@ -100,6 +131,13 @@ enum DesktopMover {
             Log.general.notice("desktop move: CoreDockSendNotification unavailable")
             return
         }
+        // Not while the user is holding the button themselves. The gesture posts its own press and
+        // release, and interleaving those with a real drag in progress leaves the window server with
+        // a press it never sees released — and drops whatever the user was actually dragging.
+        guard !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
+            Log.general.notice("desktop move: the mouse button is already down; ignoring")
+            return
+        }
         guard let plan = plan(pid: pid, step: step) else { return }
 
         // From here the mouse button is down and Mission Control is on its way up, so every exit
@@ -107,9 +145,24 @@ enum DesktopMover {
         // gives up in five different places, and a button left down is the one failure the user
         // cannot recover from without clicking something themselves.
         let cursor = CGEvent(source: nil)?.location
+        var released = false
+        // Hoisted above the `defer` so the cleanup can see whether the window was ever picked up.
+        var grabbed = false
         defer {
-            release(at: CGEvent(source: nil)?.location ?? plan.grab)
+            // Only if the gesture did not get as far as its own release. A second `leftMouseUp` is
+            // not free — it lands wherever the pointer is, which after a follow is the menu bar —
+            // and posting one for tidiness on the path that already released is how a stray click
+            // gets into somebody's session.
+            if !released { release(at: CGEvent(source: nil)?.location ?? plan.grab) }
             closeMissionControlIfOpen()
+            awaitMissionControlGone()
+            // Every path that picked the window up puts it back, not just the one that finished.
+            // The engage drag nudges the window before Mission Control is even asked for, so a
+            // gesture that gives up after that — the Spaces Bar never appearing is the realistic
+            // case — used to leave the window sitting a few dozen pixels from where it started, with
+            // nothing to say why. Restoring here covers the successful path too, which is why there
+            // is no longer a separate call at the end.
+            if grabbed { restore(plan) }
             if let cursor {
                 CGWarpMouseCursorPosition(cursor)
                 CGAssociateMouseAndMouseCursorPosition(1)
@@ -129,7 +182,6 @@ enum DesktopMover {
         // fixed count has to be the worst case for everyone. `didGrab` is the exact signal, so it is
         // the loop condition rather than a check afterwards.
         var point = plan.grab
-        var grabbed = false
         for index in 1...engageStepLimit {
             point = CGPoint(x: plan.grab.x + CGFloat(index) * 5, y: plan.grab.y - CGFloat(index) * 2)
             post(.leftMouseDragged, point, dx: 5, dy: -2)
@@ -150,7 +202,9 @@ enum DesktopMover {
         // slower with many windows on the Desktop, and a fixed wait long enough for the worst case
         // is a wait everyone pays. The drag has to be kept alive while we wait, or the window server
         // drops it.
-        guard let target = awaitSpacesBar(holdingAt: point, index: plan.destination) else {
+        guard let target = awaitSpacesBar(
+            holdingAt: point, index: plan.destination, on: plan.display)
+        else {
             Log.general.notice("desktop move: Mission Control's Spaces Bar never appeared")
             return
         }
@@ -171,26 +225,28 @@ enum DesktopMover {
             usleep(stepInterval)
         }
         release(at: target)
-        let landed = awaitLanding(plan)
-        if !landed {
+        released = true
+        // One line, either way. This used to log "did not land" and then "dropped on desktop N"
+        // immediately after, which is a contradiction to read back at three in the morning.
+        if awaitLanding(plan) {
             Log.general.notice(
-                "desktop move: window \(plan.window, privacy: .public) did not land on the thumbnail")
+                """
+                desktop move: window \(plan.window, privacy: .public) dropped on desktop \
+                \(plan.destination + 1, privacy: .public)
+                """)
+        } else {
+            Log.general.notice(
+                """
+                desktop move: window \(plan.window, privacy: .public) did not land on desktop \
+                \(plan.destination + 1, privacy: .public); leaving it where it is
+                """)
         }
 
-        Log.general.notice(
-            """
-            desktop move: window \(plan.window, privacy: .public) dropped on desktop \
-            \(plan.destination + 1, privacy: .public)
-            """)
-
-        // Mission Control is closed here rather than left to the `defer`, because the frame write
-        // below has to happen after it has gone: a window is still the drag's to place while the
-        // overlay is up, and a frame written into that lands nowhere.
-        if !follow || !followTo(plan.destination) {
-            closeMissionControlIfOpen()
-            awaitMissionControlGone()
-        }
-        restore(plan)
+        // Only the follow happens here. Closing Mission Control, waiting for it to go and putting
+        // the window back are all in the `defer`, because they have to happen however this ends —
+        // and the frame write in particular has to come after the overlay has gone, since a window
+        // is still the drag's to place while it is up.
+        if follow { followTo(plan.destination, on: plan.display) }
     }
 
     /// Waits for the window to actually arrive on the destination Desktop.
@@ -267,7 +323,7 @@ enum DesktopMover {
     /// before it can press anything twice. Returns false if it never closes, and the caller falls
     /// back to shutting Mission Control the ordinary way.
     @discardableResult
-    private static func followTo(_ destination: Int) -> Bool {
+    private static func followTo(_ destination: Int, on display: CGRect?) -> Bool {
         // Pressing the thumbnail is the whole of the follow, and it is a better switch than
         // anything this app could issue itself.
         //
@@ -288,7 +344,7 @@ enum DesktopMover {
         for attempt in 1...followAttempts {
             // Re-read every time: the drop re-lays out the Spaces Bar, and a press already
             // half-accepted can leave a stale element behind.
-            let buttons = desktopButtons()
+            let buttons = desktopButtons(on: display)
             guard buttons.indices.contains(destination) else {
                 Log.general.notice("desktop move: no thumbnail to follow to; staying put")
                 return false
@@ -327,6 +383,10 @@ enum DesktopMover {
         /// The destination's Space id. The drop is confirmed against this rather than slept
         /// through — see `awaitLanding`.
         let destinationSpace: UInt64
+        /// The rectangle of the display the window is on, used to pick that display's Spaces Bar out
+        /// of Mission Control. nil when it cannot be worked out, which falls back to taking the
+        /// whole screen's worth — see `desktopButtons(on:)`.
+        let display: CGRect?
     }
 
     /// Resolves the window, checks it can actually be dragged, and works out which Desktop to aim
@@ -389,7 +449,8 @@ enum DesktopMover {
         }
         return Plan(
             window: window, element: element, bounds: bounds, grab: grab,
-            destination: destination, destinationSpace: spaces[destination])
+            destination: destination, destinationSpace: spaces[destination],
+            display: displayBounds(containing: bounds))
     }
 
     /// Whether the drag actually took hold, judged by the window having moved.
@@ -406,11 +467,13 @@ enum DesktopMover {
 
     /// Waits for Mission Control's Spaces Bar and returns the point to drop on, keeping the drag
     /// alive while it waits. nil if it never appears, or has no such Desktop.
-    private static func awaitSpacesBar(holdingAt point: CGPoint, index: Int) -> CGPoint? {
+    private static func awaitSpacesBar(
+        holdingAt point: CGPoint, index: Int, on display: CGRect?
+    ) -> CGPoint? {
         for _ in 0..<Int(spacesBarTimeout / spacesBarPoll) {
             post(.leftMouseDragged, point)
             usleep(useconds_t(spacesBarPoll * 1_000_000))
-            let buttons = desktopButtons()
+            let buttons = desktopButtons(on: display)
             guard buttons.indices.contains(index) else { continue }
             // The button's own rectangle is the *label* under the thumbnail, and its reported y sits
             // outside the Spaces Bar group. The x is right, so take that and aim at the middle of
@@ -428,6 +491,56 @@ enum DesktopMover {
     /// Matched on the `AXDescription` — "exit to Desktop 3" — rather than the title, because the
     /// title is localized and the description has proved the stable one. Both come from the Dock,
     /// which is the process that draws Mission Control.
+    /// The display a frame sits on, by its centre, falling back to the largest overlap.
+    ///
+    /// `CGDisplayBounds` rather than `NSScreen`, because everything here is already in the window
+    /// server's top-left coordinate space and this runs off the main thread, where `NSScreen` may
+    /// not be touched.
+    private static func displayBounds(containing frame: CGRect) -> CGRect? {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return nil }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return nil }
+        let centre = CGPoint(x: frame.midX, y: frame.midY)
+        var best: CGRect?
+        var bestArea: CGFloat = 0
+        for id in ids {
+            let bounds = CGDisplayBounds(id)
+            if bounds.contains(centre) { return bounds }
+            let overlap = bounds.intersection(frame)
+            let area = overlap.isNull || overlap.isEmpty ? 0 : overlap.width * overlap.height
+            if area > bestArea {
+                bestArea = area
+                best = bounds
+            }
+        }
+        return best
+    }
+
+    /// The Desktop thumbnails belonging to one display.
+    ///
+    /// Mission Control draws a Spaces Bar per display, and `plan.destination` counts Desktops within
+    /// the window's *own* display — `SpaceMover.userSpaceIDs(ofDisplay:)` is per display too. Taking
+    /// every "exit to Desktop" button in the Dock's tree and indexing into the concatenation means
+    /// that on two displays the index can name a thumbnail on the other one, and the window lands on
+    /// the wrong Desktop entirely.
+    ///
+    /// Matched on x alone: the buttons report a y outside the Spaces Bar's own group (they are the
+    /// labels beneath the thumbnails), so it is not usable for this, while displays are laid out
+    /// side by side and x separates them cleanly. The unfiltered list is the fallback, which is
+    /// exactly the old behaviour and is what a single-display setup gets either way — every button
+    /// is on the one display, so the filter keeps all of them.
+    ///
+    /// Reasoned rather than measured: this was written on a one-display machine, so the two-display
+    /// case has not been observed. The fallback is what keeps that honest — a filter that matches
+    /// nothing degrades to what shipped before rather than to no move at all.
+    private static func desktopButtons(on display: CGRect?) -> [(element: AXUIElement, frame: CGRect)] {
+        let all = desktopButtons()
+        guard let display else { return all }
+        let scoped = all.filter { $0.frame.midX >= display.minX && $0.frame.midX < display.maxX }
+        return scoped.isEmpty ? all : scoped
+    }
+
     private static func desktopButtons() -> [(element: AXUIElement, frame: CGRect)] {
         var out: [(element: AXUIElement, frame: CGRect)] = []
         walk(dockElement()) { element, role, description in

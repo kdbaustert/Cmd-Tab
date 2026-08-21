@@ -826,3 +826,58 @@ final class SyntheticEventTests: XCTestCase {
         XCTAssertEqual(event.type, .leftMouseDragged)
     }
 }
+
+/// The re-entrancy claim behind the Desktop move.
+///
+/// Worth its own tests because the bug it replaced was invisible in the gesture and obvious in the
+/// invariant: the claim used to be taken *inside* the serial queue, where a second block cannot run
+/// until the first has finished and already released it — so it never rejected anything, and holding
+/// the chord down walked the window across several Desktops.
+final class DesktopMoveClaimTests: XCTestCase {
+    override func tearDown() {
+        DesktopMover.end()
+        super.tearDown()
+    }
+
+    func testASecondClaimIsRefusedWhileTheFirstIsHeld() {
+        XCTAssertTrue(DesktopMover.beginIfIdle())
+        XCTAssertFalse(DesktopMover.beginIfIdle(), "a move already running must refuse the next")
+        XCTAssertFalse(DesktopMover.beginIfIdle(), "and keep refusing")
+    }
+
+    func testTheClaimIsAvailableAgainOnceReleased() {
+        XCTAssertTrue(DesktopMover.beginIfIdle())
+        DesktopMover.end()
+        XCTAssertTrue(DesktopMover.beginIfIdle(), "a finished move must not block the next one")
+    }
+
+    /// A burst arriving from several threads at once — key auto-repeat through the tap is the real
+    /// case — must still let exactly one through.
+    func testConcurrentClaimsLetExactlyOneThrough() {
+        let granted = NSCounter()
+        let group = DispatchGroup()
+        for _ in 0..<32 {
+            DispatchQueue.global().async(group: group) {
+                if DesktopMover.beginIfIdle() { granted.increment() }
+            }
+        }
+        group.wait()
+        XCTAssertEqual(granted.value, 1, "exactly one of a concurrent burst may claim the gesture")
+    }
+}
+
+/// A counter that is safe to bump from several queues at once.
+private final class NSCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
