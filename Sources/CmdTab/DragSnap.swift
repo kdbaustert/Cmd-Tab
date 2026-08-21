@@ -62,6 +62,14 @@ final class DragSnap {
     private var draggedWindowID: CGWindowID?
     private var initialBounds: CGRect?
     private var currentZone: WindowArrangement?
+    /// The visible area the preview for `currentZone` was drawn against.
+    ///
+    /// Kept rather than re-derived at drop time, because the two answers can differ: the drop used
+    /// to pass no display at all and `WindowTiler.apply` re-derived one from the *window's* frame,
+    /// while the preview came from the *cursor's* display. A window grabbed near its right edge and
+    /// nudged right puts those on different monitors, so the user was shown one and given the
+    /// other.
+    private var currentArea: CGRect?
     /// How long after the press this drag may keep asking whether its window has moved yet.
     ///
     /// The check is a window-server round trip, it runs on the main thread — the one servicing the
@@ -150,10 +158,18 @@ final class DragSnap {
             }
             isDragging = true
         }
-        let zone = Self.zone(for: point)
+        // The screen resolved once and both answers taken from it, rather than `zone(for:)` and
+        // `visibleArea(containing:)` each doing their own `NSScreen` lookup. That also removes the
+        // question of whether the two could disagree — and keeps `currentArea` honest across a
+        // cursor that crosses displays without changing which zone it is in, which the zone-change
+        // guard below would otherwise skip right over.
+        let index = NSScreen.screens.firstIndex { NSMouseInRect(point, $0.frame, false) }
+        let zone = index.flatMap { Self.zone(for: point, in: NSScreen.screens[$0].frame) }
+        let area = zone == nil ? nil : index.flatMap(Self.visibleArea(atScreen:))
+        currentArea = area
         guard zone != currentZone else { return }
         currentZone = zone
-        if let zone, let area = Self.visibleArea(containing: point),
+        if let zone, let area,
             let frame = zone.frame(in: area, current: area, fraction: 0.5) {
             preview.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
         } else {
@@ -184,11 +200,13 @@ final class DragSnap {
         // callback. A nil — the window closed as it was dropped — degrades to the previous
         // behaviour rather than to no snap at all.
         let windowID = draggedWindowID
+        // The display the preview was painted on — see `currentArea`.
+        let area = currentArea
         DispatchQueue.main.async {
             let dropped = windowID.flatMap(Self.bounds(of:))
             WindowTiler.apply(
                 zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
-                target: dropped.map(WindowTiler.Target.bounds))
+                target: dropped.map(WindowTiler.Target.bounds), destination: area)
         }
     }
 
@@ -199,34 +217,38 @@ final class DragSnap {
         draggedWindowID = nil
         initialBounds = nil
         currentZone = nil
+        currentArea = nil
         moveCheckDeadline = nil
         preview.hide()
     }
 
     // MARK: - Geometry
 
-    /// The arrangement a cursor position is over, or nil away from every edge.
+    /// The arrangement a cursor position is over, against an explicit screen frame, or nil away
+    /// from every edge.
     ///
     /// Corners are tested first and given a much wider threshold: hitting a 12pt band exactly at the
     /// meeting of two edges is finicky with a window in hand, whereas a generous corner box is easy
     /// to aim at and unambiguous once you are there.
-    static func zone(for point: CGPoint) -> WindowArrangement? {
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) else {
-            return nil
-        }
-        return zone(for: point, in: screen.frame)
-    }
-
-    /// The geometry, against an explicit screen frame.
     ///
-    /// Split from the lookup above so it can be tested: with the screen resolved internally, every
-    /// assertion ran against whatever display the machine happened to have, which is neither
-    /// reproducible nor what the test meant to describe.
+    /// The screen is a parameter rather than resolved here, which is what makes it testable: with
+    /// the lookup inside, every assertion ran against whatever display the machine happened to
+    /// have, which is neither reproducible nor what the test meant to describe. The one-argument
+    /// wrapper that used to sit above this is gone with its last caller — `mouseDragged` resolves
+    /// the screen itself now, because it needs the index for `visibleArea(atScreen:)` anyway and
+    /// two independent lookups could disagree at a boundary.
     nonisolated static func zone(
         for point: CGPoint, in frame: CGRect, threshold: CGFloat? = nil
     ) -> WindowArrangement? {
         let edge = threshold ?? edgeThreshold
-        guard frame.contains(point) else { return nil }
+        // `NSMouseInRect`, not `CGRect.contains`, and the difference is the whole top edge.
+        // `contains` is `minY <= y < maxY`; these points are Cocoa bottom-up, so the topmost
+        // physical row — where the cursor clamps when it is shoved at the top of the screen — is
+        // exactly `maxY`, the one value `contains` rejects. That made `.maximize`, `.topLeft` and
+        // `.topRight` unreachable by the gesture aimed straight at them. `NSMouseInRect` is
+        // maxY-inclusive and minY-exclusive, and its rejection of `minY` is harmless because the
+        // bottom physical row maps to y = 1. `SwitcherPanel.underCursor` already asks this way.
+        guard NSMouseInRect(point, frame, false) else { return nil }
         let nearLeft = point.x - frame.minX <= edge
         let nearRight = frame.maxX - point.x <= edge
         // Cocoa's screen space is bottom-up, so "top" is the maximum y.
@@ -259,11 +281,13 @@ final class DragSnap {
         return nil
     }
 
-    /// The visible area containing a point, in Accessibility coordinates.
-    private static func visibleArea(containing point: CGPoint) -> CGRect? {
-        guard let index = NSScreen.screens.firstIndex(where: { $0.frame.contains(point) }) else {
-            return nil
-        }
+    /// The visible area of a screen, by index into `NSScreen.screens`, in Accessibility
+    /// coordinates.
+    ///
+    /// By index rather than by point: the caller has already resolved which screen the cursor is
+    /// on in order to ask `zone(for:in:)`, and resolving it twice invites the two answers to
+    /// disagree at a display boundary.
+    private static func visibleArea(atScreen index: Int) -> CGRect? {
         let areas = WindowTiler.visibleAreas()
         return index < areas.count ? areas[index] : nil
     }

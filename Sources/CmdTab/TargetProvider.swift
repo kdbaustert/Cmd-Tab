@@ -157,6 +157,22 @@ final class TargetProvider {
     /// order an app's windows by real recency rather than raw AX z-order. Clicking a background app's
     /// window activates it and fires this too, so the MRU tracks external switches, not just ours.
     /// Runs the Accessibility read off the main thread — the same event-tap constraint as elsewhere.
+    /// Records a window the switcher itself brought forward.
+    ///
+    /// `windowMRU` was otherwise written from one place — `touchFocusedWindow`, reached only from
+    /// `didActivateApplicationNotification`. A same-app pick fronts a window *within* the app that
+    /// is already frontmost, so no activation fires and the pick went unrecorded. That is worse
+    /// than not tracking it at all: the single stale entry ranks 0 while every sibling ranks
+    /// `Int.max`, so it outranks the AX z-order the README says this case falls back to, and stays
+    /// pinned at index 0. A second tap of the same-app chord then re-selected the window already in
+    /// front and the third window of an app was unreachable by tapping.
+    ///
+    /// No generation guard, unlike `touchFocusedWindow`: this is not a late answer to an
+    /// asynchronous read, it is the switcher stating what it just did.
+    func noteFocused(window id: CGWindowID) {
+        windowMRU.touch(id)
+    }
+
     private func touchFocusedWindow(
         of pid: pid_t, generation: Int, remaining: Int = TargetProvider.focusedWindowAttempts
     ) {
@@ -448,7 +464,12 @@ final class TargetProvider {
                 let sortOrder = self.sortOrder
                 let order = self.mru.entries
                 let windowMRU = self.windowMRU.entries
-                let screenFrames = Self.screenCGFrames()
+                // Guarded on the screen count like the other two builders: `displayIndex` is only
+                // meant to be set with more than one display, and that nil is what suppresses the
+                // badge. Unguarded, one display returned a one-element array and every window
+                // resolved to index 0 — a "1" on every tile in a scoped session, on a machine
+                // where the main switcher shows none.
+                let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
 
                 self.axQueue.async {
                     let targets = Self.windowTargets(

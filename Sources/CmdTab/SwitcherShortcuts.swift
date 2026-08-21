@@ -132,6 +132,39 @@ struct SwitcherShortcuts: Equatable {
         }
     }
 
+    /// Every chord that opens a session, and therefore holds its modifiers for the whole of it.
+    ///
+    /// The switcher trigger, the same-app cycle when it is on, and every bound scoped trigger.
+    /// Scoped triggers belong here and were the family nobody checked: `openScoped` sets
+    /// `activeHeld` exactly as the main trigger does, so it shadows in-switcher actions in exactly
+    /// the same way — but every shadow check in the app tested `BehaviorStore.hotkey` alone.
+    /// Recording ⌘⌥-A as an "all windows" trigger therefore killed ⌥Q and ⌥W silently: no alert, no
+    /// orange text, no log line, and the keys fell through to type-to-filter.
+    ///
+    /// Deduplicated on the held modifiers rather than the whole chord: what shadows an action is
+    /// which modifiers a session holds, not which key opened it, so two triggers on ⌘⌥ are one
+    /// answer and repeating it would put the same warning up twice.
+    @MainActor
+    static func openingChords() -> [Hotkey] {
+        let behavior = BehaviorStore.shared
+        var chords = [behavior.hotkey]
+        if behavior.sameAppCycle { chords.append(behavior.sameAppHotkey) }
+        chords += ScopedTriggersStore.shared.scoped.triggers.filter(\.isBound).map(\.hotkey)
+        var seen: Set<UInt64> = []
+        return chords.filter { seen.insert($0.heldModifiers.rawValue).inserted }
+    }
+
+    /// The first opening chord that shadows a binding built on `extras`, with the modifiers it
+    /// claims. nil when every chord leaves them free.
+    @MainActor
+    static func chordShadowing(_ extras: CGEventFlags) -> (trigger: Hotkey, claimed: CGEventFlags)? {
+        for chord in openingChords() {
+            let claimed = modifiersClaimed(by: chord).intersection(extras)
+            if !claimed.isEmpty { return (chord, claimed) }
+        }
+        return nil
+    }
+
     /// The action modifier still free under `trigger`, or nil when it claims both.
     static func freeModifier(under trigger: Hotkey) -> CGEventFlags? {
         let claimed = Self.modifiersClaimed(by: trigger)
@@ -171,7 +204,7 @@ final class SwitcherShortcutsStore: ObservableObject {
     /// app is not something a user should discover by mistyping a filter.
     @Published var isEnabled: Bool = UserDefaults.standard.bool(forKey: enabledKey) {
         didSet {
-            guard isEnabled != oldValue else { return }
+            guard isEnabled != oldValue, !isReloading else { return }
             UserDefaults.standard.set(isEnabled, forKey: Self.enabledKey)
             onChange?(shortcuts)
         }
@@ -182,7 +215,7 @@ final class SwitcherShortcutsStore: ObservableObject {
     /// can be undone.
     @Published var confirmsDestructive: Bool = true {
         didSet {
-            guard confirmsDestructive != oldValue else { return }
+            guard confirmsDestructive != oldValue, !isReloading else { return }
             UserDefaults.standard.set(confirmsDestructive, forKey: Self.confirmKey)
             onChange?(shortcuts)
         }
@@ -191,6 +224,8 @@ final class SwitcherShortcutsStore: ObservableObject {
     /// The action currently armed for recording, if any.
     @Published private(set) var recordingAction: SwitcherAction?
     private var recordingMonitor: Any?
+    /// This store's claim on `KeyRecorder`.
+    private var recordingToken: Int?
 
     var onChange: ((SwitcherShortcuts) -> Void)?
 
@@ -209,6 +244,8 @@ final class SwitcherShortcutsStore: ObservableObject {
         _ action: SwitcherAction, validate: @escaping (Int, CGEventFlags) -> Bool
     ) {
         stopRecording()
+        // Across kinds too, not just this store's own rows — see `KeyRecorder`.
+        recordingToken = KeyRecorder.arm { [weak self] in self?.stopRecording() }
         recordingAction = action
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
@@ -240,6 +277,8 @@ final class SwitcherShortcutsStore: ObservableObject {
         if let recordingMonitor { NSEvent.removeMonitor(recordingMonitor) }
         recordingMonitor = nil
         recordingAction = nil
+        if let recordingToken { KeyRecorder.disarmed(recordingToken) }
+        recordingToken = nil
     }
 
     /// The extra modifiers of a recorded event. ⌘ is excluded — it is the held trigger, so it is
@@ -273,10 +312,20 @@ final class SwitcherShortcutsStore: ObservableObject {
         persist()
     }
 
+    /// Suppresses the write half of the `didSet` handlers while `reload()` runs. Same guard as
+    /// `BehaviorStore.isReloading`, and here for the same reason: every value assigned below was
+    /// just read out of its key, so the write is a no-op where the key existed and a fabrication
+    /// where it did not. The effect is milder than `AppearanceStore`'s — the values written back
+    /// after a reset equal the defaults — but it still re-creates keys that `resetAll()` removed
+    /// on purpose, and "absent" is the only state a future default change can reach.
+    private var isReloading = false
+
     func reload() {
+        isReloading = true
         shortcuts = Self.load()
         isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         confirmsDestructive = Self.loadConfirms()
+        isReloading = false
         onChange?(shortcuts)
     }
 

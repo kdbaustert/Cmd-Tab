@@ -1,12 +1,65 @@
 import AppKit
 import SwiftUI
 
+/// The one armed key recorder in Settings, whichever kind it is.
+///
+/// Every recorder installs an `NSEvent` local monitor that returns nil for keys it does not want,
+/// which discards them app-wide. Two armed at once is therefore not cosmetic: the stray one keeps
+/// swallowing every plain keystroke in the window, so the sidebar search field and the per-app Name
+/// field stop accepting typing until the user notices a second button still reading "Press keys…"
+/// and clicks it.
+///
+/// The four store-owned recorders open `beginRecording` with `stopRecording()` and so never
+/// collided with *their own kind*. `HotkeyRecorder` and `ModifierChordRecorder` keep `recording`
+/// and their monitor in view-local `@State`, where nothing outside the view can reach them — and
+/// two of each are rendered side by side (the switcher and app-cycle triggers; the Move and Resize
+/// chords). Clicking the second is a mouse event the first one's `.keyDown` monitor ignores, so
+/// nothing told it to stand down.
+///
+/// One arbiter rather than moving both views' state into stores: what has to hold is "at most one
+/// monitor is installed", which is a single fact about the process, not a property of any store.
+/// Routing the store-owned recorders through it too is what makes that true across kinds, so
+/// arming a trigger recorder disarms an armed action recorder and vice versa.
+@MainActor
+enum KeyRecorder {
+    private static var nextToken = 0
+    private static var armed: (token: Int, disarm: () -> Void)?
+
+    /// Stops whatever was armed, then arms `disarm`. The returned token is what `stop()` hands back
+    /// so a recorder can only ever clear *itself*.
+    @discardableResult
+    static func arm(_ disarm: @escaping () -> Void) -> Int {
+        stopCurrent()
+        nextToken += 1
+        armed = (nextToken, disarm)
+        return nextToken
+    }
+
+    /// Clears the record if `token` still names the armed recorder.
+    ///
+    /// The token is what makes this safe to call unconditionally from every `stop()`. The recorder
+    /// `arm` just stopped calls its own `stop()` on the way out, holding a token that no longer
+    /// names anyone — without the check it would clear the recorder that had just replaced it.
+    static func disarmed(_ token: Int) {
+        if armed?.token == token { armed = nil }
+    }
+
+    /// Stops whatever is armed, if anything.
+    static func stopCurrent() {
+        guard let current = armed else { return }
+        armed = nil
+        current.disarm()
+    }
+}
+
 /// Click, then press a combination to rebind the trigger. A modifier (⌘/⌥/⌃) is required, since the
 /// switcher stays open only while that modifier is held.
 struct HotkeyRecorder: View {
     @Binding var hotkey: Hotkey
     @State private var recording = false
     @State private var monitor: Any?
+    /// This recorder's claim on `KeyRecorder`, so `stop()` can only ever release its own.
+    @State private var token: Int?
 
     var body: some View {
         Button(recording ? "Press keys…" : hotkey.displayString) {
@@ -20,11 +73,13 @@ struct HotkeyRecorder: View {
 
     private func start() {
         recording = true
+        // Disarms any other recorder first — see `KeyRecorder`.
+        token = KeyRecorder.arm(stop)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             let flags = event.modifierFlags
             // Ignore Escape so there is a way to abort without binding it.
             if event.keyCode == 53 { stop(); return nil }
-            let mods = Self.cgFlags(from: flags)
+            let mods = Hotkey.flags(from: flags)
             // A hold-to-open hotkey needs a non-Shift modifier to hold.
             guard mods.intersection([.maskCommand, .maskAlternate, .maskControl]) != [] else {
                 return nil
@@ -94,16 +149,10 @@ struct HotkeyRecorder: View {
         recording = false
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let token { KeyRecorder.disarmed(token) }
+        token = nil
     }
 
-    private static func cgFlags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
-        var out: CGEventFlags = []
-        if flags.contains(.command) { out.insert(.maskCommand) }
-        if flags.contains(.option) { out.insert(.maskAlternate) }
-        if flags.contains(.control) { out.insert(.maskControl) }
-        if flags.contains(.shift) { out.insert(.maskShift) }
-        return out
-    }
 }
 
 /// Records a binding for one in-switcher action: a key plus *extra* modifiers (⌘ is the held
@@ -129,33 +178,32 @@ struct ActionShortcutRecorder: View {
         .onDisappear { if isRecording { store.stopRecording() } }
     }
 
-    /// Rejects a binding built on a modifier the current trigger already holds.
+    /// Rejects a binding built on a modifier an opening chord already holds.
     ///
     /// The trigger recorder has always checked this from its side, but the check has to exist on
     /// both: recording ⌥W here while the trigger is ⌘⌥-Tab produced a binding that can never match,
     /// because the trigger's ⌥ is subtracted before matching. The key then falls through to
     /// type-to-filter and types "w" instead of closing the window — the exact silent failure the
     /// conflict alert was introduced to make impossible.
+    ///
+    /// Every opening chord, not just `BehaviorStore.hotkey`: a scoped trigger holds its modifiers
+    /// for its session in exactly the same way. See `SwitcherShortcuts.openingChords()`.
     private func validate(keyCode: Int, extras: CGEventFlags) -> Bool {
-        let trigger = BehaviorStore.shared.hotkey
-        let claimed = SwitcherShortcuts.modifiersClaimed(by: trigger).intersection(extras)
-        guard claimed.isEmpty else {
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText =
-                "That shortcut can't fire while \(trigger.displayString) opens the switcher"
-            alert.informativeText = """
-                The trigger holds \(Self.name(for: claimed)) for the whole session, so a binding \
-                that also needs it is indistinguishable from typing — this would filter the list \
-                instead of running "\(action.title)".
+        guard let (trigger, claimed) = SwitcherShortcuts.chordShadowing(extras) else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText =
+            "That shortcut can't fire while \(trigger.displayString) opens the switcher"
+        alert.informativeText = """
+            The trigger holds \(Self.name(for: claimed)) for the whole session, so a binding \
+            that also needs it is indistinguishable from typing — this would filter the list \
+            instead of running "\(action.title)".
 
-                \(Self.remedy(under: trigger))
-                """
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-            return false
-        }
-        return true
+            \(Self.remedy(under: trigger))
+            """
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        return false
     }
 
     private static func name(for flags: CGEventFlags) -> String {

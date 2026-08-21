@@ -162,19 +162,28 @@ enum MouseDragGeometry {
         var right = frame.maxX
         var bottom = frame.maxY
 
+        // Floored at the *smaller* of the configured minimum and the extent the window already
+        // has. As an absolute floor this inflated a window that started under it: a 360x40 mini
+        // player dragged from the top-left computed `top = min(minY + 0, bottom - 90)` and threw
+        // its top edge 50pt upward on the first event, before any size change had been asked for,
+        // then held it there for the rest of the gesture. The clamp is here to stop a corner
+        // crossing its anchor, not to grow a window the user never asked to grow.
+        let floorWidth = min(minimum.width, frame.width)
+        let floorHeight = min(minimum.height, frame.height)
+
         switch corner {
         case .topLeft:
-            left = min(frame.minX + delta.width, right - minimum.width)
-            top = min(frame.minY + delta.height, bottom - minimum.height)
+            left = min(frame.minX + delta.width, right - floorWidth)
+            top = min(frame.minY + delta.height, bottom - floorHeight)
         case .topRight:
-            right = max(frame.maxX + delta.width, left + minimum.width)
-            top = min(frame.minY + delta.height, bottom - minimum.height)
+            right = max(frame.maxX + delta.width, left + floorWidth)
+            top = min(frame.minY + delta.height, bottom - floorHeight)
         case .bottomLeft:
-            left = min(frame.minX + delta.width, right - minimum.width)
-            bottom = max(frame.maxY + delta.height, top + minimum.height)
+            left = min(frame.minX + delta.width, right - floorWidth)
+            bottom = max(frame.maxY + delta.height, top + floorHeight)
         case .bottomRight:
-            right = max(frame.maxX + delta.width, left + minimum.width)
-            bottom = max(frame.maxY + delta.height, top + minimum.height)
+            right = max(frame.maxX + delta.width, left + floorWidth)
+            bottom = max(frame.maxY + delta.height, top + floorHeight)
         }
         return CGRect(x: left, y: top, width: right - left, height: bottom - top)
     }
@@ -359,6 +368,10 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// The zone the cursor is currently over, if any. Set on the tap thread, cleared on release —
     /// and what decides whether the drop tiles the window or leaves it where the drag put it.
     private var zone: WindowArrangement?
+    /// The visible area `zone`'s preview was drawn against, under the same lock. The drop passes it
+    /// on rather than letting the tiler re-derive a display from the window's frame — the cursor's
+    /// display and the window's are not always the same one, and the user was shown the cursor's.
+    private var zoneArea: CGRect?
     /// True from the press that armed a gesture until the release, whether or not the window has
     /// been resolved yet. What decides that an event is ours to swallow.
     private var isArmed = false
@@ -621,9 +634,8 @@ final class MouseWindowDrag: @unchecked Sendable {
             return true
 
         case .leftMouseUp:
-            let state: (armed: Bool, zone: WindowArrangement?, session: Session?) = lock.withLock {
-                (isArmed, zone, session)
-            }
+            let state: (armed: Bool, zone: WindowArrangement?, session: Session?, area: CGRect?) =
+                lock.withLock { (isArmed, zone, session, zoneArea) }
             guard state.armed else { return false }
             if let zone = state.zone, let session = state.session {
                 Log.general.notice(
@@ -637,6 +649,7 @@ final class MouseWindowDrag: @unchecked Sendable {
                 //
                 // Read on the queue that owns `draggedWindow`, and enqueued before `end()`'s own hop
                 // clears it — the queue is serial, so the ordering holds.
+                let area = state.area
                 queue.async {
                     let dragged = Self.draggedWindow
                     // Off the tap thread: this reads screens on the main actor and then does the
@@ -645,7 +658,7 @@ final class MouseWindowDrag: @unchecked Sendable {
                         WindowTiler.apply(
                             zone, pid: session.pid, areas: WindowTiler.visibleAreas(),
                             cycleWidths: false, gap: gap,
-                            target: dragged.map(WindowTiler.Target.element))
+                            target: dragged.map(WindowTiler.Target.element), destination: area)
                     }
                 }
             }
@@ -752,6 +765,7 @@ final class MouseWindowDrag: @unchecked Sendable {
             session = nil
             pending = nil
             zone = nil
+            zoneArea = nil
             return had
         }
         if hadZone { Task { @MainActor in SnapPreview.shared.hide() } }
@@ -784,7 +798,7 @@ final class MouseWindowDrag: @unchecked Sendable {
     private func snapZone(at point: CGPoint) -> (zone: WindowArrangement, area: CGRect)? {
         let (screens, height) = lock.withLock { (displays, primaryHeight) }
         let flipped = CGPoint(x: point.x, y: height - point.y)
-        for display in screens where display.frame.contains(flipped) {
+        for display in screens where NSMouseInRect(flipped, display.frame, false) {
             guard let zone = DragSnap.zone(for: flipped, in: display.frame) else { return nil }
             return (zone, display.area)
         }
@@ -796,6 +810,7 @@ final class MouseWindowDrag: @unchecked Sendable {
     private func updatePreview(at point: CGPoint) {
         let match = snapZone(at: point)
         let changed: Bool = lock.withLock {
+            zoneArea = match?.area
             guard zone != match?.zone else { return false }
             zone = match?.zone
             return true
@@ -938,6 +953,9 @@ final class ModifierTargetHighlight {
     private var target: (pid: pid_t, bounds: CGRect)?
     /// The destination currently being offered.
     private var zone: WindowArrangement?
+    /// The visible area the offer was drawn against, handed to the tiler at completion so the
+    /// outline and the snap cannot land on different displays.
+    private var area: CGRect?
 
     /// Rebuilds the monitors after an install made without the Accessibility grant.
     ///
@@ -980,11 +998,7 @@ final class ModifierTargetHighlight {
 
     /// The chord going down starts the gesture; letting it go completes one.
     private func flagsChanged(_ flags: NSEvent.ModifierFlags) {
-        var held: CGEventFlags = []
-        if flags.contains(.command) { held.insert(.maskCommand) }
-        if flags.contains(.option) { held.insert(.maskAlternate) }
-        if flags.contains(.control) { held.insert(.maskControl) }
-        if flags.contains(.shift) { held.insert(.maskShift) }
+        let held = Hotkey.flags(from: flags)
 
         guard settings.action(for: held) != nil else {
             complete()
@@ -1048,13 +1062,21 @@ final class ModifierTargetHighlight {
     }
 
     /// Draws the destination on the display the gesture started on.
+    ///
+    /// `NSMouseInRect` rather than `CGRect.contains` for the same reason `DragSnap.zone` uses it:
+    /// the anchor is Cocoa bottom-up, so a chord pressed on the topmost row of pixels sits at
+    /// exactly `maxY`, the one value `contains` rejects.
     private func showPreview(_ zone: WindowArrangement, near point: CGPoint) {
-        guard let index = NSScreen.screens.firstIndex(where: { $0.frame.contains(point) }) else {
+        area = nil
+        guard
+            let index = NSScreen.screens.firstIndex(where: { NSMouseInRect(point, $0.frame, false) })
+        else {
             return
         }
         let areas = WindowTiler.visibleAreas()
         guard index < areas.count else { return }
         let area = areas[index]
+        self.area = area
         guard let frame = zone.frame(in: area, current: area, fraction: 0.5) else { return }
         SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
     }
@@ -1102,7 +1124,10 @@ final class ModifierTargetHighlight {
         // name it.
         WindowTiler.apply(
             zone, pid: target.pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
-            target: .bounds(target.bounds))
+            // The display the outline was drawn on. Anchored at the chord-press point, so this only
+            // diverged from the window's own display for a window straddling a boundary — but that
+            // is the case where being shown one monitor and given the other is hardest to explain.
+            target: .bounds(target.bounds), destination: area)
     }
 
     private func cancel() {
@@ -1111,6 +1136,7 @@ final class ModifierTargetHighlight {
         anchor = nil
         target = nil
         zone = nil
+        area = nil
         outline.hide()
         dot.hide()
         SnapPreview.shared.hide()

@@ -408,6 +408,8 @@ final class WindowTilingStore: ObservableObject {
     /// One owner, one monitor, no race.
     @Published private(set) var recordingArrangement: WindowArrangement?
     private var recordingMonitor: Any?
+    /// This store's claim on `KeyRecorder`.
+    private var recordingToken: Int?
 
     var onChange: ((WindowTilingBindings) -> Void)?
     /// Separate from `onChange` because the two go to different taps — the key tap takes the
@@ -451,7 +453,7 @@ final class WindowTilingStore: ObservableObject {
     /// The border drawn around the window a gesture is about to act on.
     @Published var outlineColor: Color = SnapAppearance.defaultOutline {
         didSet {
-            guard outlineColor != oldValue else { return }
+            guard outlineColor != oldValue, !isReloading else { return }
             persist(outlineColor, forKey: Key.outlineHex)
             SnapAppearance.shared.apply(outline: outlineColor)
         }
@@ -461,7 +463,7 @@ final class WindowTilingStore: ObservableObject {
     /// washed to `SnapAppearance.blockAlpha`, so one colour covers both.
     @Published var landingColor: Color = SnapAppearance.defaultLanding {
         didSet {
-            guard landingColor != oldValue else { return }
+            guard landingColor != oldValue, !isReloading else { return }
             persist(landingColor, forKey: Key.landingHex)
             SnapAppearance.shared.apply(landing: landingColor)
         }
@@ -470,7 +472,7 @@ final class WindowTilingStore: ObservableObject {
     /// The anchor dot the hold-and-point gesture measures its direction from.
     @Published var dotColor: Color = SnapAppearance.defaultDot {
         didSet {
-            guard dotColor != oldValue else { return }
+            guard dotColor != oldValue, !isReloading else { return }
             persist(dotColor, forKey: Key.dotHex)
             SnapAppearance.shared.apply(dot: dotColor)
         }
@@ -560,22 +562,30 @@ final class WindowTilingStore: ObservableObject {
     /// than reasoned about — a three-line script assigning from `init` and again from a method
     /// called by `init` prints one `didSet`, not none.
     ///
-    /// Nothing goes wrong as a result, which is why this survived unnoticed: each observer persists
-    /// the value that was just read back to the key it was read from, and pushes a colour that is
-    /// about to be pushed again. The push here is kept all the same — it is the one call that is
-    /// guaranteed to happen, since an observer guarded on `!= oldValue` stays silent whenever the
-    /// stored colour already equals the default. Doing it in one `apply` rather than three also
-    /// keeps the load path and the reload path identical, which is why `apply` takes all three
-    /// optionally.
+    /// The note that used to end here said nothing goes wrong as a result. That is true of the
+    /// `init` path, where the value assigned equals the one just read, and false of the reload
+    /// path: after `resetAll()` the three keys are *absent*, `loadColor` falls through to the
+    /// built-in default, and the observer writes that default back as though it had been chosen —
+    /// re-creating keys that should have stayed absent and pinning this build's colours against
+    /// any future change to them. `isReloading` is the same guard `BehaviorStore` carries, for the
+    /// same reason. The single `apply` is kept: it is the one push guaranteed to happen, since an
+    /// observer guarded on `!= oldValue` stays silent when the stored colour already equals the
+    /// default, and it keeps the load and reload paths identical.
     private func loadSnapColors() {
         let outline = Self.loadColor(Key.outlineHex, default: SnapAppearance.defaultOutline)
         let landing = Self.loadColor(Key.landingHex, default: SnapAppearance.defaultLanding)
         let dot = Self.loadColor(Key.dotHex, default: SnapAppearance.defaultDot)
+        isReloading = true
         outlineColor = outline
         landingColor = landing
         dotColor = dot
+        isReloading = false
         SnapAppearance.shared.apply(outline: outline, landing: landing, dot: dot)
     }
+
+    /// Suppresses the write half of the snap-colour observers while `loadSnapColors` runs. See
+    /// that method.
+    private var isReloading = false
 
     /// The chord bound to `arrangement`, or nil when the user has cleared it.
     func hotkey(for arrangement: WindowArrangement) -> Hotkey? {
@@ -603,6 +613,8 @@ final class WindowTilingStore: ObservableObject {
         _ arrangement: WindowArrangement, validate: @escaping (Hotkey) -> Bool
     ) {
         stopRecording()
+        // Across kinds too, not just this store's own rows — see `KeyRecorder`.
+        recordingToken = KeyRecorder.arm { [weak self] in self?.stopRecording() }
         recordingArrangement = arrangement
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
@@ -618,7 +630,7 @@ final class WindowTilingStore: ObservableObject {
             default:
                 break
             }
-            let mods = Self.cgFlags(from: event.modifierFlags)
+            let mods = Hotkey.flags(from: event.modifierFlags)
             // A global chord needs a real modifier: a bare key would fire on every keystroke in
             // every app on the machine.
             guard mods.intersection([.maskCommand, .maskAlternate, .maskControl]) != [] else {
@@ -640,15 +652,8 @@ final class WindowTilingStore: ObservableObject {
         if let recordingMonitor { NSEvent.removeMonitor(recordingMonitor) }
         recordingMonitor = nil
         recordingArrangement = nil
-    }
-
-    private static func cgFlags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
-        var out: CGEventFlags = []
-        if flags.contains(.command) { out.insert(.maskCommand) }
-        if flags.contains(.option) { out.insert(.maskAlternate) }
-        if flags.contains(.control) { out.insert(.maskControl) }
-        if flags.contains(.shift) { out.insert(.maskShift) }
-        return out
+        if let recordingToken { KeyRecorder.disarmed(recordingToken) }
+        recordingToken = nil
     }
 
     /// Restores the default *chords*, and nothing else.
@@ -854,9 +859,39 @@ enum WindowTiler {
         }
     }
 
+    /// A window's frame carried from one display to another: the same fractional position, shrunk
+    /// to fit if the destination is smaller, then clamped so it stays fully on it.
+    ///
+    /// One copy, called from both places that move a window across displays — `apply`'s
+    /// `displayStep` branch, which is the ⌃⇧⌘-←/→ chord, and
+    /// `SwitchTarget.moveWindow(acrossDisplays:)`, which is the in-switcher move. They were
+    /// identical expressions written out twice, each with a comment promising it agreed with the
+    /// other and neither covered by a test. The drift had already happened once: the shrink-to-fit
+    /// had to be retrofitted into the switcher path after the chord already had it.
+    ///
+    /// `from` and `to` are *visible* areas, not full display frames — measuring against the full
+    /// frame puts the window's top edge under the destination's menu bar.
+    static func carried(_ frame: CGRect, from: CGRect, to: CGRect) -> CGRect {
+        let size = CGSize(width: min(frame.width, to.width), height: min(frame.height, to.height))
+        let relX = from.width > 0 ? (frame.minX - from.minX) / from.width : 0
+        let relY = from.height > 0 ? (frame.minY - from.minY) / from.height : 0
+        return CGRect(
+            x: min(max(to.minX + relX * to.width, to.minX), max(to.minX, to.maxX - size.width)),
+            y: min(max(to.minY + relY * to.height, to.minY), max(to.minY, to.maxY - size.height)),
+            width: size.width, height: size.height)
+    }
+
+    /// `destination` overrides which display the arrangement is measured against.
+    ///
+    /// The three pointer gestures know the display the user was *shown* a preview on, and it is not
+    /// always the one `homeDisplay` picks: a window grabbed near its right edge and nudged a little
+    /// further right puts the cursor on the next display while the window's centre stays behind, so
+    /// the preview painted one monitor and the drop tiled the other — with the gap inset computed
+    /// against the wrong area too. Keyboard chords pass nothing and keep the `homeDisplay` answer;
+    /// they have no cursor to consult.
     static func apply(
         _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
-        gap: CGFloat = 0, target: Target? = nil
+        gap: CGFloat = 0, target: Target? = nil, destination: CGRect? = nil
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
@@ -876,7 +911,7 @@ enum WindowTiler {
             // Tiling still has to put the window *somewhere*, so it keeps a fallback; a window on no
             // display at all gets tiled onto the first one rather than left where it is.
             let home = resolved ?? areas.startIndex
-            let area = areas[home]
+            let area = destination ?? areas[home]
 
             let target: CGRect
             if let step = arrangement.displayStep {
@@ -884,21 +919,14 @@ enum WindowTiler {
                 // "next" one, and counting from the fallback would throw the window off a display it
                 // was never on.
                 guard resolved != nil else { return }
-                // Same fractional position on the destination display, then clamped onto it — the
-                // treatment `SwitchTarget.moveWindow(acrossDisplays:)` gives the in-switcher move,
-                // so a window thrown either way lands in the same place. Both are handed *visible*
-                // areas, which is what keeps that promise: measuring against full display frames
-                // instead puts the window's top edge under the destination's menu bar.
+                // `carried` is the shared arithmetic, and `SwitchTarget.moveWindow(acrossDisplays:)`
+                // calls the same function — which is what actually keeps the promise that a window
+                // thrown either way lands in the same place. Measured from `areas[home]` rather
+                // than `area`: a move counts from the display the window is on, and `destination`
+                // is a pointer gesture's answer, which this branch never has.
                 guard areas.count > 1 else { return }
                 let to = areas[((home + step) % areas.count + areas.count) % areas.count]
-                let relX = area.width > 0 ? (current.minX - area.minX) / area.width : 0
-                let relY = area.height > 0 ? (current.minY - area.minY) / area.height : 0
-                let size = CGSize(
-                    width: min(current.width, to.width), height: min(current.height, to.height))
-                target = CGRect(
-                    x: min(max(to.minX + relX * to.width, to.minX), to.maxX - size.width),
-                    y: min(max(to.minY + relY * to.height, to.minY), to.maxY - size.height),
-                    width: size.width, height: size.height)
+                target = carried(current, from: areas[home], to: to)
                 // A move is not a tile: it must not consume the restore point, and the width cycle
                 // has to start over on the new display.
                 cycle = nil

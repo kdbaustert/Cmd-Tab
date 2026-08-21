@@ -566,6 +566,65 @@ final class WindowTilingTests: XCTestCase {
     }
 }
 
+/// The cross-display carry: the arithmetic behind both the ⌃⇧⌘-←/→ chord and the in-switcher
+/// move. It was written out twice, identically, each copy documenting that it had to agree with the
+/// other, and neither covered by a test — so the promise that a window thrown either way lands in
+/// the same place rested on nobody editing one of them.
+final class CarriedFrameTests: XCTestCase {
+    /// A 1600x1000 laptop at the origin, and a 1000x800 external to its right.
+    private let laptop = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+    private let external = CGRect(x: 1600, y: 0, width: 1000, height: 800)
+
+    func testFractionalPositionIsPreserved() {
+        // A quarter across and a fifth down, 400x200.
+        let window = CGRect(x: 400, y: 200, width: 400, height: 200)
+        let moved = WindowTiler.carried(window, from: laptop, to: external)
+        XCTAssertEqual(moved.minX, external.minX + 250, accuracy: 0.001)
+        XCTAssertEqual(moved.minY, external.minY + 160, accuracy: 0.001)
+        XCTAssertEqual(moved.size, window.size)
+    }
+
+    /// The retrofit that had already drifted once: without it a window filling a 4K external
+    /// arrives on a laptop screen at 4K, pinned top-left with most of it off the bottom and right.
+    func testAWindowTooLargeForTheDestinationIsShrunkToFit() {
+        let window = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        let moved = WindowTiler.carried(window, from: laptop, to: external)
+        XCTAssertEqual(moved.size, external.size)
+    }
+
+    func testTheResultNeverHangsOffTheDestination() {
+        // Hard against the laptop's bottom-right corner.
+        let window = CGRect(x: 1200, y: 800, width: 400, height: 200)
+        let moved = WindowTiler.carried(window, from: laptop, to: external)
+        XCTAssertGreaterThanOrEqual(moved.minX, external.minX)
+        XCTAssertGreaterThanOrEqual(moved.minY, external.minY)
+        XCTAssertLessThanOrEqual(moved.maxX, external.maxX)
+        XCTAssertLessThanOrEqual(moved.maxY, external.maxY)
+    }
+
+    /// A zero-width source would divide by zero. It cannot happen with real displays, and the guard
+    /// is one line, so it is asserted rather than argued about.
+    func testAZeroSizedSourceDoesNotProduceNaN() {
+        let empty = CGRect(x: 0, y: 0, width: 0, height: 0)
+        let moved = WindowTiler.carried(CGRect(x: 0, y: 0, width: 100, height: 100),
+                                        from: empty, to: external)
+        XCTAssertEqual(moved.origin, external.origin)
+        XCTAssertFalse(moved.minX.isNaN || moved.minY.isNaN)
+    }
+
+    /// A round trip is not required to be the identity — the destination can be too small to give
+    /// the size back — but between two displays of the same size it must be.
+    func testARoundTripBetweenEqualDisplaysIsTheIdentity() {
+        let twin = CGRect(x: 1600, y: 0, width: 1600, height: 1000)
+        let window = CGRect(x: 400, y: 200, width: 400, height: 200)
+        let there = WindowTiler.carried(window, from: laptop, to: twin)
+        let back = WindowTiler.carried(there, from: twin, to: laptop)
+        XCTAssertEqual(back.minX, window.minX, accuracy: 0.001)
+        XCTAssertEqual(back.minY, window.minY, accuracy: 0.001)
+        XCTAssertEqual(back.size, window.size)
+    }
+}
+
 /// Zone detection for drag-to-edge snapping. Screen coordinates here are Cocoa's — bottom-up — so
 /// "top" is the maximum y, which is the opposite of everything in the tiling geometry above.
 final class DragSnapZoneTests: XCTestCase {
@@ -589,6 +648,18 @@ final class DragSnapZoneTests: XCTestCase {
         // Top is maximize, matching the edge-snap gesture every other platform ships.
         XCTAssertEqual(zone(800, 999), .maximize)
         XCTAssertEqual(zone(800, 1), .bottomHalf)
+    }
+
+    /// The topmost row of pixels is a real target, not the outside of the screen.
+    ///
+    /// Cocoa is bottom-up, so that row is `frame.maxY` — and `CGRect.contains` is `minY <= y <
+    /// maxY`, which rejects exactly it. Since the cursor *clamps* to that row when it is shoved at
+    /// the top of the screen, the three zones people aim at by shoving were the three that could
+    /// not be reached.
+    func testTheTopRowOfPixelsStillSnaps() {
+        XCTAssertEqual(zone(800, 1000), .maximize)
+        XCTAssertEqual(zone(1, 1000), .topLeft)
+        XCTAssertEqual(zone(1599, 1000), .topRight)
     }
 
     /// Corners take priority over the edges they sit on, and get a much wider catchment — a 12pt

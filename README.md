@@ -685,7 +685,12 @@ after that. Remove the identity in Keychain Access to undo it.
   checked with those hotkeys verified enabled), a drag paired with `SpaceMover`'s private Space
   switch (the display switches, the window stays — the carry needs a real transition), and dragging
   to the screen edge and holding (macOS does no edge-switching for window drags). What is left is
-  the gesture a person performs, which is what `DesktopMover` does. Moving to another **display** is
+  the gesture a person performs, which is what `DesktopMover` does. With more than one display it
+  assumes they are laid out **side by side**: Mission Control draws a Spaces Bar per display, and
+  both the thumbnail and the bar it belongs to are picked by horizontal position, so two displays
+  stacked vertically can pair a correct x with the wrong bar. Stated rather than fixed, because the
+  fix cannot be written blind — the elements report a y outside the group they sit in, so the
+  obvious containment test may reject every candidate, and this was developed on one display. Moving to another **display** is
   a different thing entirely: ⌃⇧⌘-←/→, plain Accessibility geometry, instant, and on whether or not
   tiling is.
 - Live window thumbnails are optional in both modes and off by default: the hover preview in app

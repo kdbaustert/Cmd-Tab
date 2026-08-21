@@ -197,6 +197,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // stay dead until the app is relaunched.
         controller.retryMouseGestures()
         refreshMenu()
+        watchForRevokedTrust()
+    }
+
+    /// Notices Accessibility being taken away while the app is running, and puts it back afterwards.
+    ///
+    /// Trust used to be asked about exactly once, at launch, on the branch that did *not* have it —
+    /// `waitForTrust` returns immediately when already trusted, so a process that launched trusted
+    /// never installed a poll and nothing else in the app watched `AXIsProcessTrusted()`. After a
+    /// revoke the switcher went dead machine-wide and stayed dead: the tap is non-nil, so `start()`
+    /// early-returns; `restoreNativeIfNeeded` runs only from `stop()`, so the native ⌘-Tab stayed
+    /// suppressed too; and `refreshMenu` was never re-run, so the "Open Accessibility Settings…"
+    /// item — the only in-app route back — was never built. Re-ticking the box did nothing, and
+    /// only a relaunch fixed it, which nothing told the user.
+    ///
+    /// `stop()` first, because it is what nils the tap and hands ⌘-Tab back; `startController()`
+    /// then rebuilds everything and re-arms this watch. The status item is re-evaluated in both
+    /// directions because its guard keeps the icon visible while untrusted even for a user who hid
+    /// it — the comment on that guard has always described this scenario, and this is what finally
+    /// makes it true.
+    ///
+    /// Polled, because there is no notification for it. Slower than `waitForTrust`'s second: this
+    /// one runs for the life of a healthy process, where that one runs only until a user answers a
+    /// prompt.
+    private func watchForRevokedTrust() {
+        trustWatch?.invalidate()
+        trustWatch = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !Permissions.isTrusted else { return }
+                Log.general.error("accessibility trust revoked; stopping until it is granted again")
+                self.trustWatch?.invalidate()
+                self.trustWatch = nil
+                self.controller.stop()
+                self.updateStatusItem(BehaviorStore.shared)
+                self.refreshMenu()
+                Permissions.waitForTrust { [weak self] in
+                    Log.general.notice("trust restored; starting")
+                    self?.startController()
+                    self?.updateStatusItem(BehaviorStore.shared)
+                }
+            }
+        }
     }
 
     /// Leaving the system switcher disabled after we exit would strand the user with no ⌘-Tab
@@ -221,6 +262,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Creates, removes, or restyles the menu-bar item to match settings. Hidden entirely when the
     /// user turns it off; the app is then reachable only through the shortcut (reopening it from
     /// Finder brings the settings window back — see `applicationShouldHandleReopen`).
+    /// The repeating trust check armed by `startController`. Held so a restart can replace it
+    /// rather than stack a second one.
+    private var trustWatch: Timer?
+
     private func updateStatusItem(_ behavior: BehaviorStore) {
         // Keep the item when Accessibility is not trusted even if the user hid it: the menu is the
         // only in-app path to the "Open Accessibility Settings…" recovery item, and without it a

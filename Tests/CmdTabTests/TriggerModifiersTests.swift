@@ -83,4 +83,35 @@ final class TriggerModifiersTests: XCTestCase {
     func testShiftAloneDoesNotKeepSessionAlive() {
         XCTAssertFalse(TriggerModifiers.stillHeld(shift, held: command))
     }
+
+    // MARK: - AppKit to CGEvent flags
+
+    /// The one mapping every recorder now shares. It used to be six copies inside `NSEvent` monitor
+    /// closures, which is why it had never been asserted about: nothing in a test can reach one.
+    func testEachModifierMapsToItsMask() {
+        XCTAssertEqual(Hotkey.flags(from: .command), command)
+        XCTAssertEqual(Hotkey.flags(from: .option), option)
+        XCTAssertEqual(Hotkey.flags(from: .control), control)
+        XCTAssertEqual(Hotkey.flags(from: .shift), shift)
+    }
+
+    func testCombinationsMapWholesale() {
+        XCTAssertEqual(
+            Hotkey.flags(from: [.command, .option]), command.union(option))
+        XCTAssertEqual(
+            Hotkey.flags(from: [.command, .option, .control, .shift]),
+            command.union(option).union(control).union(shift))
+    }
+
+    func testNoModifiersMapsToEmpty() {
+        XCTAssertEqual(Hotkey.flags(from: []), [])
+    }
+
+    /// Modifiers this app does not bind are dropped rather than carried through. Caps Lock and
+    /// Function both arrive on ordinary key events, and a chord that recorded them could never be
+    /// matched again — the tap's comparison masks them away.
+    func testUnboundModifiersAreDropped() {
+        XCTAssertEqual(Hotkey.flags(from: [.capsLock, .function]), [])
+        XCTAssertEqual(Hotkey.flags(from: [.command, .capsLock]), command)
+    }
 }

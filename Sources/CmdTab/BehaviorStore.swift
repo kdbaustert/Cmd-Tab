@@ -197,6 +197,28 @@ struct Hotkey: Equatable {
 
     var modifiers: CGEventFlags { CGEventFlags(rawValue: modifierRaw) }
 
+    /// AppKit's modifier set as the window server's.
+    ///
+    /// One copy, here, because there were six: four identical private `cgFlags(from:)` helpers and
+    /// two inline runs of the same four `contains`/`insert` pairs, every one of them inside an
+    /// `NSEvent` monitor closure no test can reach. They agreed, and the risk was never that one
+    /// would gain a modifier — every matcher intersects both sides down to the same four — but that
+    /// one would *lose* one, or that the matchers would widen and a copy be missed, leaving a chord
+    /// recorded in one settings pane carrying flags the tap's match refuses, with nothing failing
+    /// at build time. `TriggerModifiers` makes the same argument for the same reason: as a free
+    /// function over a value type this can be exercised without an event tap, which is the
+    /// difference between the logic being tested and not.
+    ///
+    /// Deliberately *not* `SwitcherShortcuts.extras(from:)`, which omits ⌘ on purpose and says so.
+    static func flags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
+        var out: CGEventFlags = []
+        if flags.contains(.command) { out.insert(.maskCommand) }
+        if flags.contains(.option) { out.insert(.maskAlternate) }
+        if flags.contains(.control) { out.insert(.maskControl) }
+        if flags.contains(.shift) { out.insert(.maskShift) }
+        return out
+    }
+
     static let commandTab = Hotkey(keyCode: 48, modifierRaw: CGEventFlags.maskCommand.rawValue)
 
     /// Default for the same-app window cycle, matching the system's own ⌘-` for that job.

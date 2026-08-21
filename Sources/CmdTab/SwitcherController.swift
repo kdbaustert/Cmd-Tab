@@ -97,6 +97,21 @@ final class SwitcherController {
     /// reach in and mutate a session it does not belong to.
     private var sessionToken = 0
 
+    /// Whether the open session's list was narrowed by its opener rather than built from
+    /// `provider.mode`. See `showWith`, which sets it, and the background refresh it gates.
+    private var isScopedSession = false
+
+    /// Icons already resolved for launch suggestions, held across keystrokes.
+    ///
+    /// `NSWorkspace.icon(forFile:)` is disk-backed, and `updateLaunchSuggestions` is reached
+    /// synchronously from the tap callback — the one place in this app where being slow costs the
+    /// user every keystroke on the machine. Uncached it was paid per suggestion per keystroke, with
+    /// a cold IconServices or a bundle on a slow volume in the tail. Favourites already get this
+    /// treatment through `TargetProvider.appInfoCache`; this is the same bargain for the catalogue.
+    /// Bounded by the number of installed apps, and an icon changing mid-session is not worth an
+    /// invalidation path.
+    private var launchIcons: [String: NSImage] = [:]
+
     /// Whether this session is *allowed* to stay up after the trigger is released.
     private var isSticky = false { didSet { publishTapState() } }
 
@@ -428,14 +443,19 @@ final class SwitcherController {
     /// and the symptom (actions dead, their keys typing into the filter) gives no hint of the cause.
     private func warnAboutShadowedActions() {
         guard actionsEnabled else { return }
-        let shadowed = shortcuts.actionsShadowed(by: hotkey)
-        guard !shadowed.isEmpty else { return }
-        Log.tap.error(
-            """
-            trigger \(self.hotkey.displayString, privacy: .public) claims a modifier \
-            \(shadowed.count, privacy: .public) action(s) need as an extra; they cannot fire: \
-            \(shadowed.map(\.title).joined(separator: ", "), privacy: .public)
-            """)
+        // Every opening chord. A scoped trigger sets `activeHeld` just as the main trigger does, so
+        // it shadows actions identically — and being the family no recorder checked, it is the one
+        // most likely to arrive in this state.
+        for chord in SwitcherShortcuts.openingChords() {
+            let shadowed = shortcuts.actionsShadowed(by: chord)
+            guard !shadowed.isEmpty else { continue }
+            Log.tap.error(
+                """
+                trigger \(chord.displayString, privacy: .public) claims a modifier \
+                \(shadowed.count, privacy: .public) action(s) need as an extra; they cannot fire: \
+                \(shadowed.map(\.title).joined(separator: ", "), privacy: .public)
+                """)
+        }
     }
 
     var isRunning: Bool { tap?.isRunning ?? false }
@@ -475,7 +495,23 @@ final class SwitcherController {
         // A display came or went under an open session. The targets carry a display badge resolved
         // against `NSScreen.screens` as it was when they were built, and the provider watches
         // NSWorkspace rather than screen parameters, so this is the only thing that renumbers them.
-        panels.onDisplaysChanged = { [weak self] in self?.provider.refresh() }
+        panels.onDisplaysChanged = { [weak self] in
+            guard let self else { return }
+            // A scoped session keeps the list its opener gave it — see `showWith`. Renumbering a
+            // badge is not worth widening one app's windows into every window on the machine.
+            guard !self.isScopedSession else { return self.provider.refresh() }
+            // With a handler, not bare: `refresh()` alone only rewrites the provider's cache, and
+            // `model.update(targets:)` is the one thing that reaches the open session's list. Bare,
+            // this renumbered nothing at all, which is the entire job it was wired up to do.
+            let token = self.sessionToken
+            self.provider.refresh { [weak self] fresh in
+                MainActor.assumeIsolated {
+                    guard let self, self.isVisible, token == self.sessionToken else { return }
+                    self.model.update(targets: fresh)
+                    self.finishListMutation()
+                }
+            }
+        }
         preview.onPick = { [weak self] thumb in
             guard let self, self.isVisible else { return }
             Log.tap.notice(
@@ -503,7 +539,13 @@ final class SwitcherController {
         provider.refresh { [weak self] targets in
             MainActor.assumeIsolated {
                 Log.targets.notice("initial refresh: \(targets.count) targets")
-                guard let self else { return }
+                // `!isVisible` because `begin` is a hard reset — it clears the query and the
+                // selection the caller is expected to set afterwards, which this warm-up does not.
+                // Registered before `showWith`'s handler, it would run first in the same
+                // `handlers.forEach` and destroy the very anchor `update(targets:)` exists to
+                // preserve. Reachable when trust is granted while running: the tap goes live before
+                // this is registered, so a ⌘-Tab inside the coalesce window opens a real session.
+                guard let self, !self.isVisible else { return }
                 // Here rather than beside the other `warm` calls in `AppDelegate`, because a warm-up
                 // that lays out an empty list warms the wrong thing: the tiles are most of what the
                 // first render costs. Seeding the model is what a session opening does anyway
@@ -857,8 +899,11 @@ final class SwitcherController {
     /// useful and nothing is being displaced.
     ///
     /// Runs against `InstalledApps`' in-memory catalogue — a filter over a few hundred strings, no
-    /// disk — so it is safe on the keystroke path. The icon lookup is the only I/O and happens for
-    /// at most a handful of results.
+    /// disk — so it is safe on the keystroke path. The icon lookup is the one piece of I/O, and it
+    /// is memoised in `launchIcons` for exactly that reason: this is reached from `setQuery`, which
+    /// is reached from the tap callback, so an uncached `icon(forFile:)` per suggestion per
+    /// keystroke is disk-backed LaunchServices work inline on the key path — the one thing the
+    /// class comment's invariant says must never go there.
     private func updateLaunchSuggestions(for query: String) {
         guard launchFromSearch, !model.matchesAnything, !query.isEmpty else {
             model.setLaunchSuggestions([])
@@ -883,13 +928,29 @@ final class SwitcherController {
             }
             excluded.insert(id)
         }
-        let suggestions = InstalledApps.matches(query, excluding: excluded).map { entry in
-            SwitchTarget(
-                id: "launch:\(entry.bundleID)", kind: .launch(entry.url), title: entry.name,
-                appName: entry.name,
-                icon: NSWorkspace.shared.icon(forFile: entry.url.path),
-                isMinimized: false, isHidden: false)
-        }
+        // A favourite that isn't running already carries a `launch:<bundleID>` tile, and a
+        // suggestion for the same app builds the identical id — `ForEach(id:)` then has duplicate
+        // ids, so the app shows twice and both ⌘-number and hit-testing count both. The loop above
+        // can never catch these: a launchable favourite is not running, by construction. Matched on
+        // the id rather than the name because the two names come from different sources
+        // (`FileManager.displayName` for the tile, `CFBundleDisplayName` for the catalogue), which
+        // is precisely what lets a query hit one and miss the other.
+        let alreadyTiled = Set(model.targets.map(\.id))
+        let suggestions = InstalledApps.matches(query, excluding: excluded)
+            .filter { !alreadyTiled.contains("launch:\($0.bundleID)") }
+            .map { entry -> SwitchTarget in
+                let icon: NSImage?
+                if let cached = launchIcons[entry.bundleID] {
+                    icon = cached
+                } else {
+                    let resolved = NSWorkspace.shared.icon(forFile: entry.url.path)
+                    launchIcons[entry.bundleID] = resolved
+                    icon = resolved
+                }
+                return SwitchTarget(
+                    id: "launch:\(entry.bundleID)", kind: .launch(entry.url), title: entry.name,
+                    appName: entry.name, icon: icon, isMinimized: false, isHidden: false)
+            }
         model.setLaunchSuggestions(suggestions)
         // Re-run the query so the freshly added tiles are matched and one of them is selected;
         // without it the panel would show suggestions with nothing highlighted.
@@ -1049,7 +1110,7 @@ final class SwitcherController {
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
                 let target = targets[index]
-                DispatchQueue.main.async { target.focus() }
+                DispatchQueue.main.async { self.focus(target) }
             }
             }
         }
@@ -1115,7 +1176,7 @@ final class SwitcherController {
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
                 let target = filtered[index]
-                DispatchQueue.main.async { target.focus() }
+                DispatchQueue.main.async { self.focus(target) }
             }
             }
         }
@@ -1176,6 +1237,13 @@ final class SwitcherController {
     private func showWith(
         targets: [SwitchTarget], backwards: Bool, mode: SwitcherMode? = nil
     ) {
+        // An explicit `mode` is exactly what distinguishes a narrowed session from the global one:
+        // only `openSameApp` and `openScoped` pass it, and both hand in a list already filtered to
+        // one app, one display, or the minimized windows. The global openers pass nothing and take
+        // `provider.mode`. Recorded because the background refresh below must not touch a narrowed
+        // session — see the guard there.
+        isScopedSession = mode != nil
+        let token = sessionToken
         let mode = mode ?? provider.mode
         model.mode = mode
         model.begin(targets)
@@ -1218,12 +1286,24 @@ final class SwitcherController {
                 targets=\(self.model.targets.count, privacy: .public)
                 """)
 
+            // Only the global session folds in a fresh list. `provider.refresh` rebuilds from
+            // `provider.mode` over every switchable app and has no notion of the narrowing
+            // `openSameApp` and `openScoped` applied, while `model.update` replaces the list
+            // wholesale — so for a narrowed session this swapped one app's windows for every window
+            // on the machine, mid-hold, 0.15s after the panel came up. In the default `.apps` mode
+            // the `win:` anchor is not even present in the fresh list, so `reapply` fell back to
+            // `min(selection, count - 1)`, the highlight jumped, and releasing ⌘ committed the
+            // wrong app.
+            guard !self.isScopedSession else { return }
             // The cache can be a moment stale; fold in a fresh list without disturbing the highlight.
             self.provider.refresh { [weak self] fresh in
                 // `@Sendable` because the list is built on `axQueue`; still only ever *called* on
                 // the main thread, which is where `TargetProvider` hands its handlers back.
                 MainActor.assumeIsolated {
-                    guard let self, self.isVisible else { return }
+                    // `token` for the same reason every other async completion here carries one: a
+                    // pass outlives the session that asked for it, and answering into the next one
+                    // is answering with the wrong list.
+                    guard let self, self.isVisible, token == self.sessionToken else { return }
                     self.model.update(targets: fresh)
                     self.finishListMutation()
                 }
@@ -1234,6 +1314,7 @@ final class SwitcherController {
     private func hide() {
         isVisible = false
         isSticky = false
+        isScopedSession = false
         // Anything still in flight belongs to the session just ended.
         beginSession()
         stopWatchdog()
@@ -1244,6 +1325,16 @@ final class SwitcherController {
         // looked like is worse than showing it an icon.
         thumbnails.cancel()
         model.thumbnails = [:]
+    }
+
+    /// Brings a target forward, recording a window pick on the way.
+    ///
+    /// Every commit path goes through here so the window MRU sees the pick. See
+    /// `TargetProvider.noteFocused(window:)` for why the activation notification cannot: a same-app
+    /// pick never changes the frontmost app, so it never fires one.
+    private func focus(_ target: SwitchTarget) {
+        if let id = target.windowID { provider.noteFocused(window: id) }
+        target.focus()
     }
 
     private func commit() {
@@ -1267,7 +1358,7 @@ final class SwitcherController {
             // kind and the thing without carrying a window title.
             Log.tap.notice(
                 "commit: \(target.id, privacy: .public) pid \(target.pid, privacy: .public)")
-            target.focus()
+            self.focus(target)
         }
     }
 
@@ -1310,7 +1401,7 @@ final class SwitcherController {
                 : provider.tapIndex(in: armedTargets, mode: provider.mode)
             if armedTargets.indices.contains(index) {
                 let target = armedTargets[index]
-                DispatchQueue.main.async { target.focus() }
+                DispatchQueue.main.async { self.focus(target) }
             }
             return
         }

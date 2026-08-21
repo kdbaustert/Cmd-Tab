@@ -398,6 +398,8 @@ struct ModifierChordRecorder: View {
     @State private var recording = false
     @State private var held: CGEventFlags = []
     @State private var monitor: Any?
+    /// This recorder's claim on `KeyRecorder`, so `stop()` can only ever release its own.
+    @State private var token: Int?
 
     private var chord: ModifierChord { store.mouseChord(for: action) }
 
@@ -434,6 +436,8 @@ struct ModifierChordRecorder: View {
     private func start() {
         recording = true
         held = []
+        // Disarms any other recorder first — see `KeyRecorder`.
+        token = KeyRecorder.arm(stop)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
             if event.type == .keyDown {
                 // ⎋ aborts. Any other key is swallowed rather than typed: this row takes modifiers,
@@ -441,7 +445,7 @@ struct ModifierChordRecorder: View {
                 if event.keyCode == 53 { stop() }
                 return nil
             }
-            let flags = Self.cgFlags(from: event.modifierFlags)
+            let flags = Hotkey.flags(from: event.modifierFlags)
             if flags.isEmpty {
                 // Everything released — the end of the gesture. Commit what was held at its widest.
                 let candidate = ModifierChord(held)
@@ -462,14 +466,8 @@ struct ModifierChordRecorder: View {
         held = []
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let token { KeyRecorder.disarmed(token) }
+        token = nil
     }
 
-    private static func cgFlags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
-        var out: CGEventFlags = []
-        if flags.contains(.command) { out.insert(.maskCommand) }
-        if flags.contains(.option) { out.insert(.maskAlternate) }
-        if flags.contains(.control) { out.insert(.maskControl) }
-        if flags.contains(.shift) { out.insert(.maskShift) }
-        return out
-    }
 }

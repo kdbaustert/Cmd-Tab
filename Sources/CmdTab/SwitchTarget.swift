@@ -1700,22 +1700,19 @@ extension SwitchTarget {
             guard let from = WindowTiler.homeDisplay(of: frame, in: frames) else { return }
             let to = frames[((from + delta) % frames.count + frames.count) % frames.count]
             let current = frames[from]
-            // Shrink to fit before placing, exactly as `WindowTiler.apply`'s displayStep branch does
-            // — the promise both sides document is that a window thrown either way lands in the same
-            // place. Positioning alone left a window that filled a 4K external at 4K on a laptop
-            // screen, pinned to the top-left with most of it hanging off the bottom and right.
-            let fitted = CGSize(
-                width: min(size.width, to.width), height: min(size.height, to.height))
-            // Same fractional offset within the destination display, then clamp so it stays on it.
-            let relX = current.width > 0 ? (origin.x - current.minX) / current.width : 0
-            let relY = current.height > 0 ? (origin.y - current.minY) / current.height : 0
-            let x = min(max(to.minX + relX * to.width, to.minX), max(to.minX, to.maxX - fitted.width))
-            let y = min(
-                max(to.minY + relY * to.height, to.minY), max(to.minY, to.maxY - fitted.height))
-            // Size before position: a window still at its old size can be clamped back off the
-            // destination by its own width, and AppKit applies each write independently.
-            if fitted != size { AX.setSize(window, fitted) }
-            AX.setPosition(window, CGPoint(x: x, y: y))
+            // The shared arithmetic, not a second copy of it: the promise both sides document is
+            // that a window thrown either way lands in the same place, and one function is the only
+            // thing that can keep it. Positioning without the shrink-to-fit left a window that
+            // filled a 4K external at 4K on a laptop screen, pinned to the top-left with most of it
+            // hanging off the bottom and right.
+            let placed = WindowTiler.carried(frame, from: current, to: to)
+            // Position, size, position, through the one writer — see `AX.setFrame`, which explains
+            // why all three are needed: some apps clamp a move against their *current* size and
+            // others clamp a resize against the screen edge from their old origin. This used to be
+            // `setSize` then `setPosition`, which covers the first class and not the second, and
+            // covered it differently from the chord that is meant to land in the same place. It
+            // also collapses two `onOwningThread` hops into one.
+            AX.setFrame(window, placed, sizing: true, repositionAfterSizing: true)
             // Bring it to the front of the destination display and focus it, rather than dropping it
             // behind whatever is already there.
             AXUIElementPerformAction(window, kAXRaiseAction as CFString)

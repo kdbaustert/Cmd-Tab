@@ -88,6 +88,8 @@ final class GlobalActionsStore: ObservableObject {
     /// `WindowTilingStore.beginRecording` for why these do not live in the views.
     @Published private(set) var recordingID: String?
     private var recordingMonitor: Any?
+    /// This store's claim on `KeyRecorder`.
+    private var recordingToken: Int?
 
     var onChange: (() -> Void)?
 
@@ -145,6 +147,8 @@ final class GlobalActionsStore: ObservableObject {
         _ id: String, validate: @escaping (Hotkey) -> Bool, assign: @escaping (Hotkey?) -> Void
     ) {
         stopRecording()
+        // Across kinds too, not just this store's own rows — see `KeyRecorder`.
+        recordingToken = KeyRecorder.arm { [weak self] in self?.stopRecording() }
         recordingID = id
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
@@ -160,7 +164,7 @@ final class GlobalActionsStore: ObservableObject {
             default:
                 break
             }
-            let mods = Self.cgFlags(from: event.modifierFlags)
+            let mods = Hotkey.flags(from: event.modifierFlags)
             guard mods.intersection([.maskCommand, .maskAlternate, .maskControl]) != [] else {
                 return nil
             }
@@ -178,15 +182,8 @@ final class GlobalActionsStore: ObservableObject {
         if let recordingMonitor { NSEvent.removeMonitor(recordingMonitor) }
         recordingMonitor = nil
         recordingID = nil
-    }
-
-    private static func cgFlags(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
-        var out: CGEventFlags = []
-        if flags.contains(.command) { out.insert(.maskCommand) }
-        if flags.contains(.option) { out.insert(.maskAlternate) }
-        if flags.contains(.control) { out.insert(.maskControl) }
-        if flags.contains(.shift) { out.insert(.maskShift) }
-        return out
+        if let recordingToken { KeyRecorder.disarmed(recordingToken) }
+        recordingToken = nil
     }
 
     // MARK: Persistence

@@ -54,8 +54,8 @@ enum FrontProcess {
     /// Resolved out of the ApplicationServices umbrella by path, not out of the already-loaded
     /// images: `RTLD_DEFAULT` does not find this one. Measured on macOS 26 — `import
     /// ApplicationServices` is not enough to bring the image that vends `GetProcessForPID` in, so
-    /// the search over loaded images came up empty, `isAvailable` was false, and every call here
-    /// silently fell back to the app-level activation this file exists to avoid. The umbrella is
+    /// the search over loaded images came up empty, so `getProcessForPID` was nil and every call
+    /// here silently fell back to the app-level activation this file exists to avoid. The umbrella is
     /// already a dependency of this target; `dlopen` only forces it to be resident.
     private static let getProcessForPID: GetProcessForPIDFn? = {
         guard
@@ -66,10 +66,6 @@ enum FrontProcess {
         else { return nil }
         return unsafeBitCast(pointer, to: GetProcessForPIDFn.self)
     }()
-
-    static var isAvailable: Bool {
-        setFront != nil && postEvent != nil && getProcessForPID != nil
-    }
 
     /// Brings `window` forward **without making it key** — the front change on its own.
     ///

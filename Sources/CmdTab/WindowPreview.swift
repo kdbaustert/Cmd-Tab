@@ -255,7 +255,7 @@ actor WindowCapture {
                 // A docked window's frame is where it *was*, which on a multi-display setup is not
                 // where clicking it will take you. Badge nothing rather than the wrong monitor.
                 displayIndex: isDocked
-                    ? nil : Self.displayIndex(of: window.frame, in: screenFrames),
+                    ? nil : WindowTiler.homeDisplay(of: window.frame, in: screenFrames),
                 isReachable: SwitchTarget.canReach(
                     state: placed[window.windowID], appHasWindowOnScreen: appOnScreen))
         }
@@ -290,21 +290,6 @@ actor WindowCapture {
             }
         }
         return built.sorted { $0.0 < $1.0 }.map { $0.1 }
-    }
-
-    /// Which display a window is on, from the frame SC already reported — both are in global
-    /// top-left coordinates, so no Accessibility round-trip is needed to place it.
-    ///
-    /// Centre first, then largest overlap, matching `TargetProvider.displayIndex` so a window cannot
-    /// be badged one way in the switcher and another in its preview strip. A window whose centre is
-    /// off every display still belongs to one.
-    private static func displayIndex(of frame: CGRect, in screenFrames: [CGRect]) -> Int? {
-        guard !screenFrames.isEmpty else { return nil }
-        let centre = CGPoint(x: frame.midX, y: frame.midY)
-        if let index = screenFrames.firstIndex(where: { $0.contains(centre) }) { return index }
-        return screenFrames.indices.filter { screenFrames[$0].intersection(frame).area > 0 }.max {
-            screenFrames[$0].intersection(frame).area < screenFrames[$1].intersection(frame).area
-        }
     }
 
     /// Drops the caches when a session ends.
@@ -810,5 +795,13 @@ final class WindowPreviewPanel: NSPanel {
     func dismiss() {
         orderOut(nil)
         content.hovered = nil
+        // Dropped rather than left for the next `present` to overwrite. A thumb holds a live
+        // ScreenCaptureKit capture and the window title beside it, and this panel outlives every
+        // session — a user who hovers once and never again would keep that set resident for the
+        // life of the login. Same rule `WindowCapture.clearCaches` and `TileThumbnails.cancel`
+        // already follow. Safe: `thumb(at:)` and `setHover(at:)` are gated on `isShowing`, and
+        // `present` reassigns every field before ordering back in.
+        content.thumbs = []
+        content.appName = ""
     }
 }

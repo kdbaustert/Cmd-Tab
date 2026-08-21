@@ -84,6 +84,8 @@ final class ScopedTriggersStore: ObservableObject {
     /// One monitor, one owner — see `WindowTilingStore.beginRecording`.
     @Published private(set) var recordingID: String?
     private var recordingMonitor: Any?
+    /// This store's claim on `KeyRecorder`.
+    private var recordingToken: Int?
 
     var onChange: ((ScopedTriggers) -> Void)?
 
@@ -122,6 +124,8 @@ final class ScopedTriggersStore: ObservableObject {
         _ id: String, validate: @escaping (Hotkey) -> Bool
     ) {
         stopRecording()
+        // Across kinds too, not just this store's own rows — see `KeyRecorder`.
+        recordingToken = KeyRecorder.arm { [weak self] in self?.stopRecording() }
         recordingID = id
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
@@ -137,11 +141,7 @@ final class ScopedTriggersStore: ObservableObject {
             default:
                 break
             }
-            var mods: CGEventFlags = []
-            if event.modifierFlags.contains(.command) { mods.insert(.maskCommand) }
-            if event.modifierFlags.contains(.option) { mods.insert(.maskAlternate) }
-            if event.modifierFlags.contains(.control) { mods.insert(.maskControl) }
-            if event.modifierFlags.contains(.shift) { mods.insert(.maskShift) }
+            let mods = Hotkey.flags(from: event.modifierFlags)
             // A scoped trigger is held open like the main one, so it needs a modifier to hold.
             guard mods.intersection([.maskCommand, .maskAlternate, .maskControl]) != [] else {
                 return nil
@@ -160,6 +160,8 @@ final class ScopedTriggersStore: ObservableObject {
         if let recordingMonitor { NSEvent.removeMonitor(recordingMonitor) }
         recordingMonitor = nil
         recordingID = nil
+        if let recordingToken { KeyRecorder.disarmed(recordingToken) }
+        recordingToken = nil
     }
 
     // MARK: Persistence
@@ -241,15 +243,43 @@ struct ScopedShortcutRecorder: View {
 
     private func start() {
         store.beginRecording(trigger.id) { candidate in
-            guard let claimer = WindowTilingBindings.triggerClaiming(candidate, in: .shared) else {
-                return true
+            if let claimer = WindowTilingBindings.triggerClaiming(candidate, in: .shared) {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "\(candidate.displayString) is already \(claimer)"
+                alert.informativeText =
+                    "Both built-in triggers are matched before scoped ones, so this combination "
+                    + "would open the full switcher instead — the binding would look set and never "
+                    + "fire."
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+                return false
             }
+            // The other half, which this recorder never had. A scoped trigger holds its modifiers
+            // for the whole of its session exactly as the main trigger does, so binding one on ⌘⌥
+            // takes ⌥ away from every in-switcher action — and nothing said so: no alert here, no
+            // orange subtitle on the action rows, no log line. The keys fell through to
+            // type-to-filter, which is the silent failure `HotkeyRecorder`'s own call to
+            // `actionsShadowed` exists to prevent for the trigger it records.
+            let actions = SwitcherShortcutsStore.shared
+            guard actions.isEnabled else { return true }
+            let shadowed = actions.shortcuts.actionsShadowed(by: candidate)
+            guard !shadowed.isEmpty else { return true }
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "\(candidate.displayString) is already \(claimer)"
-            alert.informativeText =
-                "Both built-in triggers are matched before scoped ones, so this combination would "
-                + "open the full switcher instead — the binding would look set and never fire."
+            alert.messageText =
+                "\(candidate.displayString) would stop \(shadowed.count) switcher action"
+                + (shadowed.count == 1 ? "" : "s") + " working"
+            alert.informativeText = """
+                Holding this trigger claims the modifier \
+                \(shadowed.map(\.title).joined(separator: ", ")) \
+                need\(shadowed.count == 1 ? "s" : "") as an extra, so \
+                \(shadowed.count == 1 ? "it would" : "they would") type into the filter instead of \
+                running.
+
+                Pick a trigger on a different modifier, or rebind the action\
+                \(shadowed.count == 1 ? "" : "s") under Shortcuts.
+                """
             alert.addButton(withTitle: "OK")
             alert.runModal()
             return false

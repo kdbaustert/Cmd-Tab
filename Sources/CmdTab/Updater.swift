@@ -40,7 +40,17 @@ final class Updater: ObservableObject {
     /// call for a settings-window-sized app: an update flow is exactly the kind of thing where the
     /// familiar, tested UI beats a bespoke one, and it is the only part of this app that is *allowed*
     /// to activate and take focus.
-    private let controller: SPUStandardUpdaterController
+    /// nil when `isConfigured` is false.
+    ///
+    /// The gate lives here rather than only in `AppDelegate` because `AppDelegate` was never the
+    /// only door: `AboutSettings` holds `@ObservedObject var updater = Updater.shared` as a stored
+    /// property, so merely selecting the About tab built the controller and started its timer in a
+    /// bundle with no feed — the exact thing the gate was written to prevent. Every other updater
+    /// reference in that pane is already `.disabled(!Updater.isConfigured)`; making the controller
+    /// itself optional closes the door instead of adding a sixth check that a seventh caller can
+    /// forget. With it nil the published values stay at their inert defaults and the accessors are
+    /// no-ops, which is what the disabled rows show anyway.
+    private let controller: SPUStandardUpdaterController?
 
     /// False while a check is in flight, so the button can disable itself rather than starting a
     /// second one. Mirrored out of KVO — see the class comment.
@@ -55,10 +65,10 @@ final class Updater: ObservableObject {
     /// rather than shadowed in `Defaults`: Sparkle reads its own key at scheduling time, so a second
     /// copy of this value would be a second source of truth that the timer ignores.
     var automaticallyChecks: Bool {
-        get { controller.updater.automaticallyChecksForUpdates }
+        get { controller?.updater.automaticallyChecksForUpdates ?? false }
         set {
             objectWillChange.send()
-            controller.updater.automaticallyChecksForUpdates = newValue
+            controller?.updater.automaticallyChecksForUpdates = newValue
         }
     }
 
@@ -66,18 +76,24 @@ final class Updater: ObservableObject {
     /// default — see `Info.plist`. An app that owns ⌘-Tab machine-wide should not replace itself
     /// mid-session without having been told it may.
     var automaticallyDownloads: Bool {
-        get { controller.updater.automaticallyDownloadsUpdates }
+        get { controller?.updater.automaticallyDownloadsUpdates ?? false }
         set {
             objectWillChange.send()
-            controller.updater.automaticallyDownloadsUpdates = newValue
+            controller?.updater.automaticallyDownloadsUpdates = newValue
         }
     }
 
     private var observers: [NSKeyValueObservation] = []
 
     private init() {
-        controller = SPUStandardUpdaterController(
+        guard Self.isConfigured else {
+            controller = nil
+            canCheck = false
+            return
+        }
+        let controller = SPUStandardUpdaterController(
             startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        self.controller = controller
         canCheck = controller.updater.canCheckForUpdates
         lastCheck = controller.updater.lastUpdateCheckDate
 
@@ -99,7 +115,7 @@ final class Updater: ObservableObject {
     /// up to date". A background check that found nothing must stay silent, or the app would
     /// interrupt the user to tell them nothing happened.
     func checkForUpdates() {
-        controller.updater.checkForUpdates()
+        controller?.updater.checkForUpdates()
     }
 
     /// Whether this build can update itself at all.

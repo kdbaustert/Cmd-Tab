@@ -59,10 +59,12 @@ enum DesktopMover {
 
     private typealias CoreDockSendNotificationFn = @convention(c) (CFString, Int32) -> Void
 
-    /// `nonisolated(unsafe)` for the same reason as `SpaceMover.handle`: a dyld handle is an opaque
-    /// pointer and so not `Sendable`, but it is a `let` initialised once by the runtime's
-    /// thread-safe lazy-static machinery, and `dlsym` against it is itself thread-safe.
-    private nonisolated(unsafe) static let dockNotify: CoreDockSendNotificationFn? = {
+    /// No `nonisolated(unsafe)` here, unlike `SpaceMover.handle` and `FrontProcess.handle`, and the
+    /// difference is what the constant holds rather than how it is reached: those two store the
+    /// dyld handle itself, which is an opaque pointer and so not `Sendable`. This one stores the
+    /// resolved `@convention(c)` function pointer, which is `Sendable` — the handle never leaves
+    /// the initialiser. Annotating it to match its siblings is a compiler warning, not caution.
+    private static let dockNotify: CoreDockSendNotificationFn? = {
         guard
             let handle = dlopen(
                 "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
@@ -78,8 +80,6 @@ enum DesktopMover {
     /// Held as a `String` and bridged at the call site: a `CFString` constant is not `Sendable`,
     /// and this type is reached from `queue`.
     private static let missionControl = "com.apple.expose.awake"
-
-    static var isAvailable: Bool { dockNotify != nil }
 
     /// Moves the focused window of `pid` `step` Desktops along, clamped to the ends.
     ///
@@ -228,7 +228,8 @@ enum DesktopMover {
         released = true
         // One line, either way. This used to log "did not land" and then "dropped on desktop N"
         // immediately after, which is a contradiction to read back at three in the morning.
-        if awaitLanding(plan) {
+        let landed = awaitLanding(plan)
+        if landed {
             Log.general.notice(
                 """
                 desktop move: window \(plan.window, privacy: .public) dropped on desktop \
@@ -246,7 +247,13 @@ enum DesktopMover {
         // the window back are all in the `defer`, because they have to happen however this ends —
         // and the frame write in particular has to come after the overlay has gone, since a window
         // is still the drag's to place while it is up.
-        if follow { followTo(plan.destination, on: plan.display) }
+        // Gated on the landing. Following a drop that did not land put the user on an empty
+        // Desktop with their window still behind them — worse than the gesture doing nothing, and
+        // the `defer`'s `restore` has already erased the evidence by then. Note what a false
+        // `landed` means: not on the destination within `awaitLanding`'s second, which on a loaded
+        // machine can be a move that did land slightly late. Staying put is the better of the two
+        // wrong answers — the window is where the log says it is.
+        if follow, landed { followTo(plan.destination, on: plan.display) }
     }
 
     /// Waits for the window to actually arrive on the destination Desktop.
@@ -478,7 +485,8 @@ enum DesktopMover {
             // The button's own rectangle is the *label* under the thumbnail, and its reported y sits
             // outside the Spaces Bar group. The x is right, so take that and aim at the middle of
             // the bar itself, which is the thumbnail the label belongs to.
-            let bar = spacesBarFrame() ?? CGRect(x: 0, y: 0, width: 0, height: defaultSpacesBarHeight)
+            let bar = spacesBarFrame(on: display)
+                ?? CGRect(x: 0, y: 0, width: 0, height: defaultSpacesBarHeight)
             return CGPoint(x: buttons[index].frame.midX, y: bar.minY + bar.height / 2)
         }
         return nil
@@ -553,15 +561,29 @@ enum DesktopMover {
     }
 
     /// The Spaces Bar's own rectangle, which is what gives the drop its y.
-    private static func spacesBarFrame() -> CGRect? {
-        var found: CGRect?
+    ///
+    /// Scoped to `display` for the same reason `desktopButtons(on:)` is: Mission Control draws a
+    /// Spaces Bar *per display*, and taking whichever one the tree happened to yield first paired a
+    /// correctly-scoped x with another display's y. On displays that are not vertically aligned —
+    /// an external at the origin and a laptop below and to the right of it — that drop lands off
+    /// every Spaces Bar and the window does not move.
+    ///
+    /// Matched on midX only, like the buttons. A centre-containment test would be the obvious
+    /// thing and is the wrong thing here: the comment on the drop point records that these
+    /// elements report a y outside the group they belong to, so a test against the full rect could
+    /// reject every candidate. Same honesty as `desktopButtons(on:)` — no match falls back to the
+    /// first bar rather than to no move at all.
+    private static func spacesBarFrame(on display: CGRect? = nil) -> CGRect? {
+        var found: [CGRect] = []
         walk(dockElement()) { element, role, _ in
-            guard found == nil, role == "AXGroup",
-                AX.copyString(element, kAXTitleAttribute as String) == spacesBarTitle
+            guard role == "AXGroup",
+                AX.copyString(element, kAXTitleAttribute as String) == spacesBarTitle,
+                let frame = elementFrame(element)
             else { return }
-            found = elementFrame(element)
+            found.append(frame)
         }
-        return found
+        guard let display else { return found.first }
+        return found.first { $0.midX >= display.minX && $0.midX < display.maxX } ?? found.first
     }
 
     /// Whether Mission Control is still showing. Checked before toggling it shut, because the

@@ -524,6 +524,7 @@ struct GeneralSettings: View {
                     isOn: $behavior.showMenuBarIcon)
                 SettingsToggle(
                     title: "Start at login",
+                    subtitle: loginItem.subtitle,
                     isOn: Binding(
                         get: { loginItem.startAtLogin },
                         set: { loginItem.setStartAtLogin($0) }))
@@ -759,8 +760,12 @@ struct ShortcutSettings: View {
     /// A shadowed action says so in place of its description: its binding is recorded and looks
     /// fine, and the only visible symptom is the key typing into the filter instead.
     private func actionSubtitle(for action: SwitcherAction) -> String? {
-        if actions.shortcuts.actionsShadowed(by: behavior.hotkey).contains(action) {
-            return "\(behavior.hotkey.displayString) already holds that modifier — this cannot fire."
+        // Every opening chord, not just the switcher trigger: a scoped trigger holds its
+        // modifiers for its session in exactly the same way, and was the one family this row never
+        // reported. See `SwitcherShortcuts.openingChords()`.
+        for chord in SwitcherShortcuts.openingChords()
+        where actions.shortcuts.actionsShadowed(by: chord).contains(action) {
+            return "\(chord.displayString) already holds that modifier — this cannot fire."
         }
         return action.detail
     }

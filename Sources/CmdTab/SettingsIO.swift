@@ -92,8 +92,25 @@ enum SettingsIO {
         panel.message = "Export Cmd-Tab settings"
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        guard let data = encode(currentPayload()) else { return }
-        try? data.write(to: url)
+        // Reported rather than swallowed, the same bargain `ThemeStore.importTheme` and
+        // `ConfigFile.readFromDisk` already make: a save that silently does nothing is
+        // indistinguishable from a broken button, and leaves a support request with no evidence.
+        guard let data = encode(currentPayload()) else {
+            Log.general.error("settings export failed: payload is not serialisable")
+            report(
+                title: "Those settings could not be exported",
+                body: "The current settings could not be turned into a settings file.", detail: nil)
+            return
+        }
+        do {
+            try data.write(to: url)
+        } catch {
+            Log.general.error(
+                "settings export failed: \(error.localizedDescription, privacy: .public)")
+            report(
+                title: "Those settings could not be saved",
+                body: "\(url.lastPathComponent) could not be written.", detail: error)
+        }
     }
 
     static func importSettings() {
@@ -101,11 +118,46 @@ enum SettingsIO {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.message = "Import Cmd-Tab settings"
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? Data(contentsOf: url),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return }
+        // Cancel stays silent — it is not a failure. Everything past it is.
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // One `guard` used to fold three distinguishable failures — unreadable file, invalid JSON,
+        // and valid JSON that is not an object — into the same bare `return` as Cancel, with no
+        // alert and nothing in the log. `ThemeStore.importTheme` carries the argument against that
+        // at length, and `ConfigFile.readFromDisk` logs the same class of failure already.
+        let dict: [String: Any]
+        do {
+            let data = try Data(contentsOf: url)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                Log.general.error("settings import failed: root is not a JSON object")
+                report(
+                    title: "That file could not be read as settings",
+                    body: "\(url.lastPathComponent) is not a Cmd-Tab settings file.", detail: nil)
+                return
+            }
+            dict = object
+        } catch {
+            Log.general.error(
+                "settings import failed: \(error.localizedDescription, privacy: .public)")
+            report(
+                title: "That file could not be read as settings",
+                body: "\(url.lastPathComponent) is not a Cmd-Tab settings file, or it is damaged.",
+                detail: error)
+            return
+        }
         apply(dict)
+    }
+
+    /// The alert every failure above puts up. Split out so the shape stays identical between them;
+    /// `body` differs because reading a damaged file and failing to write one are not the same
+    /// news, and an alert that names the wrong problem is barely better than none.
+    private static func report(title: String, body: String, detail: Error?) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = detail.map { body + "\n\n" + $0.localizedDescription } ?? body
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     static func reset() {

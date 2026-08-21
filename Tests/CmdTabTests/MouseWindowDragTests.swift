@@ -96,6 +96,24 @@ final class MouseWindowDragTests: XCTestCase {
         }
     }
 
+    /// A window that is *already* smaller than the minimum must not be inflated to reach it.
+    ///
+    /// The clamp is a "do not cross the anchor" rule, not a size policy. Read as an absolute floor
+    /// it moved a window nobody had asked to resize: a 360x40 mini player resized from the top-left
+    /// by nothing at all computed `top = min(40 + 0, 40 - 90)` and threw its top edge 50pt upward.
+    func testResizeDoesNotInflateAWindowStartingUnderTheMinimum() {
+        let small = CGRect(x: 0, y: 40, width: 360, height: 40)
+        for corner in ResizeCorner.allCases {
+            XCTAssertEqual(
+                MouseDragGeometry.resized(small, corner: corner, by: .zero), small,
+                "\(corner) moved a window that was not being resized")
+        }
+        // And it still tracks the cursor from there rather than snapping to the minimum.
+        let taller = MouseDragGeometry.resized(
+            small, corner: .bottomRight, by: CGSize(width: 0, height: 10))
+        XCTAssertEqual(taller.height, 50)
+    }
+
     /// Each axis clamps on its own: squashing the height to nothing must not also freeze the width.
     func testTheAxesClampIndependently() {
         let resized = MouseDragGeometry.resized(
