@@ -275,7 +275,7 @@ struct WindowTilingBindings: Equatable {
     /// The display moves are pure Accessibility geometry — a frame written to a window, invisible
     /// and instant — so shipping them live costs nothing. A Desktop move is not that. There is no
     /// API for it (see `DesktopMover`), so it performs the gesture instead: it takes the pointer,
-    /// opens Mission Control for about two seconds and drops the window on a thumbnail. Claiming a
+    /// opens Mission Control for a moment and drops the window on a thumbnail. Claiming a
     /// system-wide chord that does *that* on someone's behalf, on an update they did not ask for,
     /// is not a guess worth making — the same reasoning `GlobalActions` gives for shipping no
     /// default bindings at all. The chords are pre-filled so turning it on is one click, and inert

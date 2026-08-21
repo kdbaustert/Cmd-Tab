@@ -192,7 +192,7 @@ struct WindowSettings: View {
                 footer: "macOS has no way to move another app's window between desktops, so this "
                     + "performs the gesture instead: it picks the window up, opens Mission Control "
                     + "for a moment and drops it on the next desktop along. That means it takes "
-                    + "over the pointer for about two seconds, which is why it is off by default. "
+                    + "over the pointer for about half a second, which is why it is off by default. "
                     + "Stops at the first and last desktop rather than wrapping around."
             ) {
                 SettingsToggle(

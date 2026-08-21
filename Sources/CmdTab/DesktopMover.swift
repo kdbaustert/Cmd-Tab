@@ -32,10 +32,10 @@ import CoreGraphics
 //
 // What is left is the real gesture, and it does work — verified end to end before any of this was
 // written. It is slower and more visible than a private call would be (Mission Control opens for
-// about two seconds), and it drives the pointer, which is why `WindowTilingBindings.desktopMoves`
+// roughly half a second), and it drives the pointer, which is why `WindowTilingBindings.desktopMoves`
 // keeps it behind a switch of its own rather than shipping it live like the display moves.
 enum DesktopMover {
-    /// Serial on purpose. A move holds the mouse button down for around two seconds; two of them
+    /// Serial on purpose. A move holds the mouse button down for the length of the gesture; two of them
     /// interleaved would fight over the pointer and leave a button stuck down. Key repeat on a
     /// bound chord makes that the *likely* case, not the exotic one — `isMoving` below turns the
     /// second press into a no-op rather than queueing it up to run the whole gesture again.
@@ -117,20 +117,29 @@ enum DesktopMover {
         }
 
         CGWarpMouseCursorPosition(plan.grab)
-        usleep(120_000)
+        usleep(cursorSettle)
         post(.leftMouseDown, plan.grab)
-        usleep(140_000)
+        usleep(pressSettle)
 
-        // A few small drags before anything else. The window server does not treat a bare mouse-down
-        // as a drag in progress, and opening Mission Control without one leaves the window behind
-        // and simply shows Mission Control.
+        // Small drags until the window actually moves. The window server does not treat a bare
+        // mouse-down as a drag in progress, and opening Mission Control without one leaves the
+        // window behind and simply shows Mission Control — so something has to convince it first.
+        //
+        // How many events that takes varies with what the owning app does on its mouse-down, and a
+        // fixed count has to be the worst case for everyone. `didGrab` is the exact signal, so it is
+        // the loop condition rather than a check afterwards.
         var point = plan.grab
-        for index in 1...8 {
+        var grabbed = false
+        for index in 1...engageStepLimit {
             point = CGPoint(x: plan.grab.x + CGFloat(index) * 5, y: plan.grab.y - CGFloat(index) * 2)
             post(.leftMouseDragged, point, dx: 5, dy: -2)
-            usleep(25_000)
+            usleep(stepInterval)
+            if didGrab(window: plan.window, from: plan.bounds) {
+                grabbed = true
+                break
+            }
         }
-        guard didGrab(window: plan.window, from: plan.bounds) else {
+        guard grabbed else {
             Log.general.notice(
                 "desktop move: window \(plan.window, privacy: .public) did not follow the drag")
             return
@@ -148,21 +157,25 @@ enum DesktopMover {
 
         // Ease onto the thumbnail rather than jumping. A single event at the destination is a
         // teleport, and the Spaces Bar does not light up as a drop target for one.
-        for index in 1...16 {
-            let t = CGFloat(index) / 16
+        for index in 1...travelSteps {
+            let t = CGFloat(index) / CGFloat(travelSteps)
             let next = CGPoint(
                 x: point.x + (target.x - point.x) * t, y: point.y + (target.y - point.y) * t)
             post(.leftMouseDragged, next, dx: next.x - point.x, dy: next.y - point.y)
             point = next
-            usleep(25_000)
+            usleep(stepInterval)
         }
         // Settle on the target so the Spaces Bar registers the hover before the drop.
-        for _ in 1...6 {
+        for _ in 1...hoverSteps {
             post(.leftMouseDragged, target)
-            usleep(40_000)
+            usleep(stepInterval)
         }
         release(at: target)
-        usleep(400_000)
+        let landed = awaitLanding(plan)
+        if !landed {
+            Log.general.notice(
+                "desktop move: window \(plan.window, privacy: .public) did not land on the thumbnail")
+        }
 
         Log.general.notice(
             """
@@ -173,9 +186,47 @@ enum DesktopMover {
         // Mission Control is closed here rather than left to the `defer`, because the frame write
         // below has to happen after it has gone: a window is still the drag's to place while the
         // overlay is up, and a frame written into that lands nowhere.
-        if follow { followTo(plan.destination) } else { closeMissionControlIfOpen() }
-        usleep(450_000)
+        if !follow || !followTo(plan.destination) {
+            closeMissionControlIfOpen()
+            awaitMissionControlGone()
+        }
         restore(plan)
+    }
+
+    /// Waits for the window to actually arrive on the destination Desktop.
+    ///
+    /// The drop is what moves the window and it is not synchronous, so something has to wait for it.
+    /// Polling the window's Space is waiting for the thing itself; the fixed sleep this replaced had
+    /// to be long enough for the worst case, which meant every move paid it. Returns false if it
+    /// never arrives, which is a real outcome — a drop that misses the thumbnail leaves the window
+    /// where it was.
+    ///
+    /// This calls `spaceState` in a loop, which its own documentation warns against — it costs a
+    /// window-server round trip per Space every time. The warning is aimed at callers placing *many*
+    /// windows, which should take one `windowSpaces()` map instead; here there is one window and the
+    /// answer changes underneath us, so re-reading is the point. It is bounded twice over: the loop
+    /// gives up after `landingTimeout`, and in practice it is measured to return on the first or
+    /// second look, because the drop has usually landed before the release finishes.
+    private static func awaitLanding(_ plan: Plan) -> Bool {
+        for _ in 0..<Int(landingTimeout / pollInterval) {
+            if SpaceMover.spaceState(of: plan.window)?.windowSpace == plan.destinationSpace {
+                return true
+            }
+            usleep(useconds_t(pollInterval * 1_000_000))
+        }
+        return false
+    }
+
+    /// Waits for Mission Control to leave the screen, so the frame write below is not swallowed.
+    ///
+    /// Same trade as `awaitLanding`: the Spaces Bar vanishing from the Dock's Accessibility tree is
+    /// the exact signal, where the sleep it replaced was a guess sized for a slow machine.
+    private static func awaitMissionControlGone() {
+        for _ in 0..<Int(closeTimeout / pollInterval) {
+            if spacesBarFrame() == nil { return }
+            usleep(useconds_t(pollInterval * 1_000_000))
+        }
+        Log.general.notice("desktop move: Mission Control did not close; restoring anyway")
     }
 
     /// Puts the window back on the frame it had before the gesture.
@@ -203,8 +254,20 @@ enum DesktopMover {
         AX.setFrame(plan.element, plan.bounds, sizing: true, repositionAfterSizing: true)
     }
 
-    /// Switches the display to the Desktop the window landed on.
-    private static func followTo(_ destination: Int) {
+    /// Switches the display to the Desktop the window landed on, by pressing its thumbnail.
+    ///
+    /// Pressed repeatedly until Mission Control actually goes away, rather than once and hopefully.
+    /// The press is accepted (`AXError` 0) well before it is *acted on*: coming straight off a drop
+    /// that has only just landed, the first press is reliably swallowed, and the old code's cover
+    /// for that was a fixed 400ms sleep before it — which every move paid whether it needed it or
+    /// not, and which this loop replaces with the signal itself. Mission Control leaving the Dock's
+    /// Accessibility tree is that signal.
+    ///
+    /// Repeating is safe: a press that was acted on takes the Spaces Bar with it, so the loop stops
+    /// before it can press anything twice. Returns false if it never closes, and the caller falls
+    /// back to shutting Mission Control the ordinary way.
+    @discardableResult
+    private static func followTo(_ destination: Int) -> Bool {
         // Pressing the thumbnail is the whole of the follow, and it is a better switch than
         // anything this app could issue itself.
         //
@@ -222,18 +285,29 @@ enum DesktopMover {
         // Re-read rather than reused from `awaitSpacesBar`: a window has just landed on that
         // thumbnail, which re-lays out the Spaces Bar, and an element captured before the drop can
         // be stale by the time we get here.
-        let buttons = desktopButtons()
-        guard buttons.indices.contains(destination) else {
-            Log.general.notice("desktop move: no thumbnail to follow to; staying put")
-            return
+        for attempt in 1...followAttempts {
+            // Re-read every time: the drop re-lays out the Spaces Bar, and a press already
+            // half-accepted can leave a stale element behind.
+            let buttons = desktopButtons()
+            guard buttons.indices.contains(destination) else {
+                Log.general.notice("desktop move: no thumbnail to follow to; staying put")
+                return false
+            }
+            let result = AXUIElementPerformAction(
+                buttons[destination].element, kAXPressAction as CFString)
+            for _ in 0..<Int(followPressTimeout / pollInterval) {
+                usleep(useconds_t(pollInterval * 1_000_000))
+                guard spacesBarFrame() == nil else { continue }
+                Log.general.notice(
+                    """
+                    desktop move: followed to desktop \(destination + 1, privacy: .public) \
+                    on press \(attempt, privacy: .public) (\(result.rawValue, privacy: .public))
+                    """)
+                return true
+            }
         }
-        let result = AXUIElementPerformAction(
-            buttons[destination].element, kAXPressAction as CFString)
-        Log.general.notice(
-            """
-            desktop move: following to desktop \(destination + 1, privacy: .public) \
-            (press \(result.rawValue, privacy: .public))
-            """)
+        Log.general.notice("desktop move: Mission Control ignored the follow press")
+        return false
     }
 
     /// Everything the gesture needs, resolved before a single event is posted.
@@ -250,6 +324,9 @@ enum DesktopMover {
         let grab: CGPoint
         /// 0-based index of the destination Desktop within its display's Spaces Bar.
         let destination: Int
+        /// The destination's Space id. The drop is confirmed against this rather than slept
+        /// through — see `awaitLanding`.
+        let destinationSpace: UInt64
     }
 
     /// Resolves the window, checks it can actually be dragged, and works out which Desktop to aim
@@ -312,7 +389,7 @@ enum DesktopMover {
         }
         return Plan(
             window: window, element: element, bounds: bounds, grab: grab,
-            destination: destination)
+            destination: destination, destinationSpace: spaces[destination])
     }
 
     /// Whether the drag actually took hold, judged by the window having moved.
@@ -499,6 +576,46 @@ enum DesktopMover {
     }
 
     // MARK: - Constants
+
+    // The gesture's pacing. Every one of these is a deliberate wait for something asynchronous —
+    // the window server registering a drag, Mission Control laying out, an app answering a frame
+    // write — and none of them has an event to wait on instead, which is why they are sleeps.
+    //
+    // They were first set generously, on the principle that a move that works slowly beats one that
+    // works sometimes, and that made the gesture 2.2 seconds. Profiling showed where that went:
+    // ~2130ms of it was these, and only ~70ms was actually waiting for macOS — Mission Control's
+    // Spaces Bar is laid out and readable barely a frame after it is asked for. So the numbers below
+    // are tuned against measurement rather than guessed, and the ones that remain are the ones that
+    // failed when cut further. Anything cut too far shows up as `did not follow the drag` or a drop
+    // that lands on no thumbnail, not as a subtle glitch.
+
+    /// After warping the pointer, before pressing. The warp is not instantaneous to the window
+    /// server, and pressing into a pointer that has not arrived clicks wherever it used to be.
+    private static let cursorSettle: useconds_t = 45_000
+    /// After the press, before dragging. An app gets to react to a mouse-down in its title bar.
+    private static let pressSettle: useconds_t = 70_000
+    /// The gap between synthetic drag events. Roughly a frame: fast enough not to dominate the
+    /// gesture, slow enough that the window server treats them as a continuous drag rather than a
+    /// teleport.
+    private static let stepInterval: useconds_t = 16_000
+    /// The most engage nudges to try before giving up on the drag taking hold. A ceiling, not a
+    /// count — the loop stops as soon as the window moves, which is usually well inside this.
+    private static let engageStepLimit = 10
+    /// Steps easing the window onto the destination thumbnail. The Spaces Bar wants to see the
+    /// pointer approach; a single jump does not light it up as a drop target.
+    private static let travelSteps = 12
+    /// Steps held on the thumbnail before letting go, so the drop registers on it.
+    private static let hoverSteps = 5
+    /// How often the two waits below look, and how long each gives up after. Both poll for the
+    /// thing itself rather than sleeping a fixed guess, so a fast machine pays only what it needs
+    /// and a slow one still gets its time.
+    private static let pollInterval: Double = 0.02
+    private static let landingTimeout: Double = 1.0
+    /// How long one follow press is given to take effect, and how many presses to try. The first is
+    /// routinely swallowed — see `followTo` — so this must be more than one.
+    private static let followPressTimeout: Double = 0.3
+    private static let followAttempts = 4
+    private static let closeTimeout: Double = 1.0
 
     /// How far down a window's top edge the title bar's middle sits. macOS's own title bar height,
     /// halved; nothing depends on it being exact, only on it landing in the bar rather than in the
