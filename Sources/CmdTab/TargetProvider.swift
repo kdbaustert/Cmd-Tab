@@ -69,6 +69,26 @@ final class TargetProvider {
     /// `didSet` above prunes it back to.
     private var appInfoCache: [String: (url: URL, name: String, icon: NSImage)] = [:]
 
+    /// Icons for the *running* apps, keyed by bundle id.
+    ///
+    /// `NSRunningApplication.icon` is not the property read it looks like. Sampled on the shipping
+    /// build it goes `NSWorkspace.iconForFile:` → IconServices → `NSURL.bookmarkDataWithOptions:`,
+    /// which opens the quarantine database — and it does it again on every pass, one app at a time,
+    /// on the thread that services the event tap. A day of the system log holds 1,662
+    /// `CFURLCreateBookmarkData` activities from this process and every one of them is on the main
+    /// thread. Half the cost of the enumeration was re-answering a question whose answer only
+    /// changes when an app is replaced on disk.
+    ///
+    /// Keyed by bundle id rather than pid: two instances of one app share an icon, and a bundle id
+    /// cannot be recycled onto a different app the way a pid can. An app updated in place while
+    /// running keeps the icon it had until it is next launched, which is the same bargain
+    /// `appInfoCache` above already makes.
+    ///
+    /// Pruned to what the pass actually saw rather than emptied from the terminate notification.
+    /// The enumeration *is* the list of what is running, so a prune against it cannot miss a quit,
+    /// and the cache can never outgrow the app list.
+    private var iconCache: [String: NSImage] = [:]
+
     /// Upper bound on both MRU lists.
     ///
     /// Nothing past the switcher's own list length affects ordering, so the tail is dead weight —
@@ -581,9 +601,9 @@ final class TargetProvider {
     }
 
     /// Marked for the main-loop monitor rather than at each of its three call sites: this is the
-    /// NSWorkspace walk plus an icon fault per running app, it is the most expensive thing this
-    /// class does on the main thread, and marking it here means a stall names it whichever entry
-    /// point asked.
+    /// NSWorkspace walk plus an icon fault per app it has not seen before, it is the most expensive
+    /// thing this class does on the main thread, and marking it here means a stall names it
+    /// whichever entry point asked.
     private func switchableApps() -> [AppInfo] {
         MainLoopMonitor.marking("app enumeration") { uncheckedSwitchableApps() }
     }
@@ -591,7 +611,11 @@ final class TargetProvider {
     private func uncheckedSwitchableApps() -> [AppInfo] {
         let mine = ProcessInfo.processInfo.processIdentifier
         let excluded = excludedBundleIDs
-        return NSWorkspace.shared.runningApplications.compactMap { app in
+        // Built alongside the list and swapped in at the end, rather than mutated in place: this is
+        // both the pass's answers and the prune, and doing it in one place is what keeps the cache
+        // exactly the set of apps this pass saw.
+        var seen: [String: NSImage] = [:]
+        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AppInfo? in
             guard app.activationPolicy == .regular,
                   app.processIdentifier != mine,
                   !app.isTerminated else { return nil }
@@ -604,13 +628,26 @@ final class TargetProvider {
             // app name as well as the title — sees the name the user chose and nothing has to
             // remember to ask twice.
             let renamed = app.bundleIdentifier.map { appRules[$0]?.label(or: name) ?? name } ?? name
+            // An app with no bundle id has nothing to key the cache on and pays the fault every
+            // pass. It is the same app that cannot be excluded or renamed either, and there is no
+            // second thing to do about it.
+            let icon: NSImage?
+            if let bundleID = app.bundleIdentifier {
+                let resolved = iconCache[bundleID] ?? app.icon
+                seen[bundleID] = resolved
+                icon = resolved
+            } else {
+                icon = app.icon
+            }
             return AppInfo(
                 pid: app.processIdentifier,
                 name: renamed,
                 bundleID: app.bundleIdentifier,
-                icon: app.icon,
+                icon: icon,
                 isHidden: app.isHidden)
         }
+        iconCache = seen
+        return apps
     }
 
     /// Launchable tiles for favourites that aren't currently running (and aren't excluded), in the
@@ -627,10 +664,22 @@ final class TargetProvider {
     private func uncheckedLaunchFavorites() -> [(String, SwitchTarget)] {
         guard !favoriteBundleIDs.isEmpty else { return [] }
         let excluded = excludedBundleIDs
-        let running = Set(
-            NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
         return favoriteBundleIDs.compactMap { id in
-            guard !running.contains(id), !excluded.contains(id) else { return nil }
+            // Asked of the favourite rather than answered by walking everything that is running.
+            // Building a set of every running app's bundle id read `bundleIdentifier` on all
+            // seventy-odd processes on the machine — every background daemon included — and each of
+            // those reads is `_LSCopyApplicationInformation`, a synchronous XPC round trip to `lsd`
+            // that the app-list change which triggered the refresh has just invalidated the cache
+            // for. Measured across seven refreshes at 78 running apps: 3.1–5.9ms for the walk
+            // against 0.1–0.2ms for one query per favourite, on the thread that services the event
+            // tap. Same answer either way — this asks about any activation policy, exactly as a set
+            // built from the full list did.
+            //
+            // Exclusion first, so an excluded favourite costs a set lookup and not a LaunchServices
+            // query.
+            guard !excluded.contains(id),
+                NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
+            else { return nil }
             if let cached = appInfoCache[id] {
                 return (id, Self.launchTarget(id: id, info: cached))
             }

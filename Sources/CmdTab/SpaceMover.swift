@@ -241,17 +241,28 @@ enum SpaceMover {
         // actually performs. Show before hide: the reverse order takes the outgoing Desktop down
         // first and flashes the empty desktop picture in between.
         //
+        // The write goes *between* them rather than after both, and that is the ordering the pairing
+        // above did not fix on its own. Hiding the origin while the window server still calls it the
+        // current Space asks it to take down the Desktop it believes it is displaying, and it does
+        // not always oblige: three days of log hold 108 travels, one decline, and that one decline
+        // is the only pick in the period whose `after activation` stack still listed a window from
+        // the Space just left — the stale composite this whole comment is about, surviving the
+        // show/hide pair. Making the destination current first leaves the hide with nothing to
+        // argue about. The three orderings measured before this one were show/hide/set,
+        // hide/show/set and set alone; none of them tried the write in the middle.
+        //
         // Kept optional rather than required. This is the fallback path — it runs when macOS has
         // already declined to travel on its own — and a future macOS that drops these two symbols is
         // better served by the old bookkeeping-only switch than by no switch at all.
         if let showSpaces, let hideSpaces {
             showSpaces(cid, [NSNumber(value: state.windowSpace)] as CFArray)
+            setCurrentSpace(cid, state.display as CFString, state.windowSpace)
             hideSpaces(cid, [NSNumber(value: origin)] as CFArray)
         } else {
             Log.general.notice(
                 "space reveal: no show/hide symbols; the switch may not re-composite the display")
+            setCurrentSpace(cid, state.display as CFString, state.windowSpace)
         }
-        setCurrentSpace(cid, state.display as CFString, state.windowSpace)
         return Reveal(state: fresh, switched: true)
     }
 
