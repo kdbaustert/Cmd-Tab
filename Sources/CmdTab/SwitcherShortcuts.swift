@@ -13,6 +13,7 @@ import SwiftUI
 enum SwitcherAction: String, CaseIterable, Identifiable {
     case quit, forceQuit, close, hide, hideOthers, minimize, zoom
     case moveDisplayPrev, moveDisplayNext
+    case tileLeftHalf, tileRightHalf, tileTopHalf, tileBottomHalf
 
     var id: String { rawValue }
 
@@ -27,6 +28,10 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .zoom: return "Zoom window"
         case .moveDisplayPrev: return "Move to previous display"
         case .moveDisplayNext: return "Move to next display"
+        case .tileLeftHalf: return "Tile to left half"
+        case .tileRightHalf: return "Tile to right half"
+        case .tileTopHalf: return "Tile to top half"
+        case .tileBottomHalf: return "Tile to bottom half"
         }
     }
 
@@ -43,6 +48,24 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .zoom: return "The green button: maximize, or restore a zoomed window."
         case .moveDisplayPrev, .moveDisplayNext:
             return "Sends the window to the next display along, keeping its relative position."
+        case .tileLeftHalf, .tileRightHalf, .tileTopHalf, .tileBottomHalf:
+            return "Snaps the highlighted window to that half of its display — the same tile the "
+                + "global ⌃⌘-arrow chord makes, gap and width cycle included."
+        }
+    }
+
+    /// The tiling arrangement this action applies, or nil when it does something else.
+    ///
+    /// The four halves and no more. A corner or a third is a reasonable thing to want here, but
+    /// neither has an obvious arrow, and every row added takes another chord away from
+    /// type-to-filter for the length of a session.
+    var arrangement: WindowArrangement? {
+        switch self {
+        case .tileLeftHalf: return .leftHalf
+        case .tileRightHalf: return .rightHalf
+        case .tileTopHalf: return .topHalf
+        case .tileBottomHalf: return .bottomHalf
+        default: return nil
         }
     }
 
@@ -52,9 +75,17 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
 
     /// Default binding. Display move is on ⌥←/→, which the arrow keys are free to take here: the
     /// navigation switch below them only sees an arrow that carried no extra modifier.
+    ///
+    /// The four tiles are the one family not built on ⌥, deliberately: ⌃ on top of the held
+    /// trigger reproduces ⌃⌘-arrow, which is what the *global* halves have always been bound to,
+    /// so the same fingers make the same tile whether or not the panel is up — and ⌥-arrow was
+    /// taken by the display moves in any case. The cost is that a ⌃-based trigger now shadows four
+    /// bindings where it used to shadow none; `actionsShadowed(by:)` reports it and Settings
+    /// offers the rebind.
     var defaultShortcut: ActionShortcut {
         let option = CGEventFlags.maskAlternate.rawValue
         let optionShift = (CGEventFlags.maskAlternate.union(.maskShift)).rawValue
+        let control = CGEventFlags.maskControl.rawValue
         switch self {
         case .quit: return ActionShortcut(keyCode: 12, modifierRaw: option)  // Q
         case .forceQuit: return ActionShortcut(keyCode: 12, modifierRaw: optionShift)
@@ -65,6 +96,10 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .zoom: return ActionShortcut(keyCode: 3, modifierRaw: option)  // F
         case .moveDisplayPrev: return ActionShortcut(keyCode: 123, modifierRaw: option)  // ←
         case .moveDisplayNext: return ActionShortcut(keyCode: 124, modifierRaw: option)  // →
+        case .tileLeftHalf: return ActionShortcut(keyCode: 123, modifierRaw: control)  // ←
+        case .tileRightHalf: return ActionShortcut(keyCode: 124, modifierRaw: control)  // →
+        case .tileTopHalf: return ActionShortcut(keyCode: 126, modifierRaw: control)  // ↑
+        case .tileBottomHalf: return ActionShortcut(keyCode: 125, modifierRaw: control)  // ↓
         }
     }
 }

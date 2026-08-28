@@ -44,6 +44,42 @@ final class SwitcherShortcutsTests: XCTestCase {
         XCTAssertNil(SwitcherShortcuts.defaults.action(code: 123, extra: []))
     }
 
+    /// ⌃-arrow tiles, ⌥-arrow moves display, and the two families share the same two keys — so an
+    /// exact modifier match is the only thing keeping them apart on ← and →.
+    func testControlArrowsTileWithoutTakingTheDisplayMoveKeys() {
+        let shortcuts = SwitcherShortcuts.defaults
+        XCTAssertEqual(shortcuts.action(code: 123, extra: control), .tileLeftHalf)
+        XCTAssertEqual(shortcuts.action(code: 124, extra: control), .tileRightHalf)
+        XCTAssertEqual(shortcuts.action(code: 126, extra: control), .tileTopHalf)
+        XCTAssertEqual(shortcuts.action(code: 125, extra: control), .tileBottomHalf)
+        XCTAssertEqual(shortcuts.action(code: 123, extra: option), .moveDisplayPrev)
+    }
+
+    /// The default tile chords are the in-panel spelling of the global halves: ⌃ on top of a held
+    /// ⌘ trigger is the same fingers as ⌃⌘-arrow, and a drift here would break that promise
+    /// silently — both sides would still work, just differently.
+    func testTileDefaultsMatchTheGlobalHalfChords() {
+        for action in SwitcherAction.allCases {
+            guard let arrangement = action.arrangement else { continue }
+            let global = arrangement.defaultHotkey
+            XCTAssertEqual(
+                action.defaultShortcut.keyCode, global.keyCode, "\(action.title) key differs")
+            XCTAssertEqual(
+                action.defaultShortcut.extras, .maskControl, "\(action.title) is not on ⌃")
+            XCTAssertEqual(
+                global.modifiers.intersection([.maskCommand, .maskControl]),
+                [.maskCommand, .maskControl], "\(arrangement.title) is no longer on ⌃⌘")
+        }
+    }
+
+    /// Exactly the four halves map to an arrangement; everything else must stay nil, or `execute`
+    /// would run a tile for an action that means something entirely different.
+    func testOnlyTheFourHalvesCarryAnArrangement() {
+        XCTAssertEqual(
+            SwitcherAction.allCases.compactMap(\.arrangement),
+            [.leftHalf, .rightHalf, .topHalf, .bottomHalf])
+    }
+
     // MARK: - Trigger conflicts
 
     /// The ordinary case: ⌘ is not an action modifier, so nothing is shadowed.
@@ -51,18 +87,22 @@ final class SwitcherShortcutsTests: XCTestCase {
         XCTAssertTrue(SwitcherShortcuts.defaults.actionsShadowed(by: .commandTab).isEmpty)
     }
 
-    /// Every default binding is built on ⌥, so a trigger holding ⌥ makes all of them unreachable.
-    func testOptionTriggerShadowsEveryDefaultAction() {
+    /// Every default binding but the four tiles is built on ⌥, so a trigger holding ⌥ makes all of
+    /// those unreachable — and leaves the tiles alone, since they are the one ⌃ family.
+    func testOptionTriggerShadowsEveryOptionAction() {
         let shadowed = SwitcherShortcuts.defaults.actionsShadowed(
             by: hotkey([.maskCommand, .maskAlternate]))
-        XCTAssertEqual(Set(shadowed), Set(SwitcherAction.allCases))
+        XCTAssertEqual(
+            Set(shadowed), Set(SwitcherAction.allCases.filter { $0.arrangement == nil }))
     }
 
-    /// No default binding uses ⌃, so a ⌃-based trigger is fine out of the box.
-    func testControlTriggerShadowsNothingByDefault() {
-        XCTAssertTrue(
-            SwitcherShortcuts.defaults
-                .actionsShadowed(by: hotkey([.maskCommand, .maskControl])).isEmpty)
+    /// The tiles are on ⌃, so a ⌃-based trigger shadows exactly those four and nothing else. This
+    /// used to be "a ⌃ trigger shadows nothing", which was true while every default was on ⌥.
+    func testControlTriggerShadowsTheTileActions() {
+        let shadowed = SwitcherShortcuts.defaults.actionsShadowed(
+            by: hotkey([.maskCommand, .maskControl]))
+        XCTAssertEqual(
+            Set(shadowed), Set(SwitcherAction.allCases.filter { $0.arrangement != nil }))
     }
 
     func testFreeModifierPrefersOptionThenControl() {

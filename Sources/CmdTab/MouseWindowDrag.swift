@@ -1097,12 +1097,22 @@ final class ModifierTargetHighlight {
     /// before the drag, so `WindowTiler.resolve` matched nothing, fell back to `AX.frontWindow`, and
     /// could snap a different window of the app entirely.
     ///
-    /// Called by `MouseWindowDrag` rather than detected here — see its `onClaimChord`, which
-    /// explains why there is no event left for this gesture to notice on its own. Re-arming needs a
+    /// Called rather than detected here — see `MouseWindowDrag.onClaimChord`, which explains why a
+    /// swallowed press leaves no event for this gesture to notice on its own. Re-arming needs a
     /// fresh `flagsChanged`, so the chord stays stood down for the rest of the hold.
-    func standDown() {
+    ///
+    /// There are two claimants, not one. A drag is the original; a *keyboard* binding on the same
+    /// modifiers is the other, and it failed the same way — see
+    /// `SwitcherController.handle(type:event:)`, which now says so at the point it decides a
+    /// keystroke is this app's.
+    ///
+    /// - Parameter claimant: what took the chord, named for the log. Which of the two it was is the
+    ///   first thing worth knowing when reading a session back, and one shared message threw it
+    ///   away.
+    func standDown(claimedBy claimant: String) {
         guard anchor != nil else { return }
-        Log.general.notice("point gesture: stood down, a drag has claimed the chord")
+        Log.general.notice(
+            "point gesture: stood down, \(claimant, privacy: .public) claimed the chord")
         cancel()
     }
 

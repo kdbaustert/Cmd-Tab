@@ -1680,6 +1680,32 @@ extension SwitchTarget {
         }
     }
 
+    /// Snaps the window to `arrangement`, through the same tiler the global chords use — so an
+    /// in-switcher tile and a ⌃⌘-arrow land in the same place, sharing the restore point, the width
+    /// cycle and the gap rather than keeping a second set of them.
+    ///
+    /// `frames` are resolved by the caller for the reason `moveWindow(acrossDisplays:)` documents:
+    /// `NSScreen` is main-thread-only and nothing below this hop is on the main thread. Window mode
+    /// names its element, since the app's *focused* window is not reliably the one the panel has
+    /// highlighted — the same trap `WindowTiler.Target` was written for. App mode names nothing and
+    /// lets the tiler resolve the front window on its own queue, which is what the chords do.
+    func tileWindow(
+        _ arrangement: WindowArrangement, visibleAreas frames: [CGRect], cycleWidths: Bool,
+        gap: CGFloat
+    ) {
+        let target: WindowTiler.Target?
+        switch kind {
+        case .window(_, let element): target = .element(element)
+        case .app: target = nil
+        // A favourite that isn't running has no window to tile. `SwitcherController.perform`
+        // already refuses these, and this keeps the refusal true of the method itself.
+        case .launch: return
+        }
+        WindowTiler.apply(
+            arrangement, pid: pid, areas: frames, cycleWidths: cycleWidths, gap: gap,
+            target: target)
+    }
+
     /// Moves the window to the next/previous display, keeping its position relative to the display it
     /// leaves. `visibleAreas` are the displays' usable areas — menu bar and Dock already excluded —
     /// in Quartz (top-left) coordinates, resolved on the main thread by the caller since `NSScreen`

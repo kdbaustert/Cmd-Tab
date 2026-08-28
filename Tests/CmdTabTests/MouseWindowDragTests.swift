@@ -211,6 +211,26 @@ final class MouseWindowDragTests: XCTestCase {
         XCTAssertNotEqual(settings.move, settings.resize)
     }
 
+    /// The shipped resize chord and the shipped chord for all four tiling halves are the *same*
+    /// modifiers, so holding ⌃⌘ to press an arrow arms the pointing gesture as a side effect of
+    /// firing the tile. That overlap is what makes standing the gesture down on a claimed keystroke
+    /// load-bearing rather than tidy: without it the chord coming up completed a gesture whose
+    /// cursor had never left its dot, and a zero offset is `.maximize` — so every half, third and
+    /// corner tiled correctly and was then replaced by a full-screen window.
+    ///
+    /// Two facts, pinned together because the bug needs both: moving either chord off the other
+    /// would end the collision, and this test should be the thing that notices.
+    func testTheTilingHalvesChordAlsoArmsAMouseGesture() {
+        let settings = MouseDragSettings(isEnabled: true)
+        for arrangement in [WindowArrangement.leftHalf, .rightHalf, .topHalf, .bottomHalf] {
+            let held = arrangement.defaultHotkey.modifiers.intersection(ModifierChord.allowed)
+            XCTAssertEqual(
+                settings.action(for: held), .resize,
+                "\(arrangement.title) no longer shares the resize chord")
+        }
+        XCTAssertEqual(PointDirection.zone(for: CGSize(width: 0, height: 0)), .maximize)
+    }
+
     // MARK: - Hold-and-point directions
 
     /// Staying put is the one "direction" with nowhere to point, and it takes the whole screen.

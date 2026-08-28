@@ -187,7 +187,7 @@ final class SwitcherController {
     /// returns early when it does not.
     init() {
         mouseWindowDrag.onClaimChord = { [weak self] in
-            Task { @MainActor in self?.targetHighlight.standDown() }
+            Task { @MainActor in self?.targetHighlight.standDown(claimedBy: "a drag") }
         }
     }
 
@@ -654,6 +654,24 @@ final class SwitcherController {
                 isAutorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0),
             bindings: routingBindings(),
             isAppActive: isAppActive)
+
+        // A keystroke this app claims is proof the held chord is being used as a *keyboard* gesture,
+        // so the hold-and-point gesture stands down exactly as it does when a drag claims it — see
+        // `ModifierTargetHighlight.standDown(claimedBy:)`.
+        //
+        // Both mouse chords double as tiling modifiers: ⌃⌘ is the shipped resize chord *and* the
+        // shipped chord for all four halves. Holding it armed the pointing gesture at the same
+        // moment the arrow fired the tile, and the chord coming up then completed that gesture from
+        // a cursor which had never left its dot — an offset `PointDirection.zone` reads as "nowhere
+        // to point" and answers with `.maximize`. So the window was tiled to a half and instantly
+        // replaced by a full-screen one, which reads as the shortcut being broken rather than as two
+        // gestures on one chord. It is the same failure `standDown` was written for, from the one
+        // claimant nobody had counted.
+        //
+        // Keyed on every claimed decision rather than on `.tile` alone: an activation or an
+        // all-windows action bound to a mouse chord ends exactly the same way, and `.consume` is the
+        // key-up edge of one of those.
+        if decision.swallows { targetHighlight.standDown(claimedBy: "a keyboard binding") }
 
         switch decision {
         case .pass:
@@ -1654,6 +1672,9 @@ final class SwitcherController {
         case .zoom: zoomSelected()
         case .moveDisplayPrev: moveSelectedWindow(acrossDisplays: -1)
         case .moveDisplayNext: moveSelectedWindow(acrossDisplays: 1)
+        case .tileLeftHalf, .tileRightHalf, .tileTopHalf, .tileBottomHalf:
+            guard let arrangement = action.arrangement else { return }
+            tileSelectedWindow(arrangement)
         }
     }
 
@@ -1717,6 +1738,29 @@ final class SwitcherController {
     private func moveSelectedWindow(acrossDisplays delta: Int) {
         model.selected?.moveWindow(
             acrossDisplays: delta, visibleAreas: WindowTiler.visibleAreas())
+    }
+
+    /// Tiles the highlighted window, through the same tiler as the global ⌃⌘-arrow chords: one
+    /// restore point, one width cycle, one gap, so the two routes cannot drift apart.
+    ///
+    /// Deliberately *not* gated on `tiling.isEnabled`. That switch exists so the sizing chords are
+    /// not claimed system-wide on an install that never asked for them; these keys are claimed from
+    /// nobody, being live only while the panel is up and only with window actions switched on. A row
+    /// under "Window actions" that did nothing because of a checkbox on the Windows tab is exactly
+    /// the failure `WindowTilingBindings.arrangement(code:flags:)` already refuses to ship.
+    ///
+    /// `neverTile` is honoured, as it is on every other snap path — see `MouseWindowDrag.appRules`,
+    /// which lists them. An app told never to be tiled is left alone from here too.
+    private func tileSelectedWindow(_ arrangement: WindowArrangement) {
+        guard let target = model.selected else { return }
+        if let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier,
+            appRules[id]?.neverTile == true {
+            Log.tap.notice("tiling: \(id, privacy: .public) is set to never tile")
+            return
+        }
+        target.tileWindow(
+            arrangement, visibleAreas: WindowTiler.visibleAreas(),
+            cycleWidths: tiling.cycleWidths, gap: tiling.gap)
     }
 
     /// Hides every other regular app, leaving the selected one (and Cmd-Tab) alone.
