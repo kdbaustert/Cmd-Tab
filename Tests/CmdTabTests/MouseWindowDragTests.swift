@@ -220,10 +220,11 @@ final class MouseWindowDragTests: XCTestCase {
     ///
     /// Two facts, pinned together because the bug needs both: moving either chord off the other
     /// would end the collision, and this test should be the thing that notices.
-    func testTheTilingHalvesChordAlsoArmsAMouseGesture() {
+    func testTheTilingHalvesChordAlsoArmsAMouseGesture() throws {
         let settings = MouseDragSettings(isEnabled: true)
         for arrangement in [WindowArrangement.leftHalf, .rightHalf, .topHalf, .bottomHalf] {
-            let held = arrangement.defaultHotkey.modifiers.intersection(ModifierChord.allowed)
+            let chord = try XCTUnwrap(arrangement.defaultHotkey)
+            let held = chord.modifiers.intersection(ModifierChord.allowed)
             XCTAssertEqual(
                 settings.action(for: held), .resize,
                 "\(arrangement.title) no longer shares the resize chord")

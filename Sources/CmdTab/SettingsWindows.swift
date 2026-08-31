@@ -15,18 +15,41 @@ struct WindowSettings: View {
     /// one, and the hex field is unusable squeezed into a recorder's width.
     private static let colorControlWidth: CGFloat = 250
 
-    /// The order the rows read in: the four halves, then the four corners, then the three that are
-    /// not a fraction of the screen at all.
+    /// The rest-delay slider's range, named because the two ends of it do not fit on one line at
+    /// the call site and a `...` split across two does not parse.
+    private static let restRange =
+        FocusFollowsMouseSettings.minimumDelay...FocusFollowsMouseSettings.maximumDelay
+
+    /// The order the rows read in: the four halves, then the thirds, then the four corners, then the
+    /// three that are not a fraction of the screen at all, then the two families that are relative
+    /// to wherever the window already is.
+    ///
+    /// Every group here is governed by the tiling switch. The ones that are not have cards of their
+    /// own below, because each needs a footer saying why.
     private static let groups: [(title: String, arrangements: [WindowArrangement])] = [
         ("Halves", [.leftHalf, .rightHalf, .topHalf, .bottomHalf]),
-        ("Thirds", [.leftThird, .centerThird, .rightThird]),
+        (
+            "Thirds",
+            [
+                .leftThird, .centerThird, .rightThird, .topThird, .bottomThird, .leftTwoThirds,
+                .rightTwoThirds,
+            ]
+        ),
         ("Corners", [.topLeft, .topRight, .bottomLeft, .bottomRight]),
         ("Whole window", [.maximize, .center, .restore]),
+        ("Size", [.larger, .smaller]),
+        ("Nudge", WindowArrangement.nudges),
+        ("Swap", WindowArrangement.swaps),
     ]
 
     /// The send-it-elsewhere group. Its own card rather than a fifth entry in `groups` because it
     /// is the one the tiling switch does not govern, and the footer has to say so.
     private static let moveGroup = ("Displays", [WindowArrangement.previousDisplay, .nextDisplay])
+
+    /// The focus chords. Outside `groups` on the same argument the display moves are: they are not
+    /// governed by the tiling switch, and a card whose rows quietly answered to a checkbox captioned
+    /// about resizing would be the confusion that split exists to prevent.
+    private static let focusGroup = ("Focus", WindowArrangement.focusMoves)
 
     /// The Desktop moves. Their own card again, because they are the one family with a switch of
     /// their own and the footer has to explain what that switch is protecting the user from.
@@ -60,6 +83,27 @@ struct WindowSettings: View {
 
     private var followsDesktopMove: Binding<Bool> {
         Binding(get: { store.followsDesktopMove }, set: { store.followsDesktopMove = $0 })
+    }
+
+    private var pointerFollowsDisplayMove: Binding<Bool> {
+        Binding(
+            get: { store.pointerFollowsDisplayMove },
+            set: { store.pointerFollowsDisplayMove = $0 })
+    }
+
+    private var restoresLayoutOnDisplayChange: Binding<Bool> {
+        Binding(
+            get: { store.restoresLayoutOnDisplayChange },
+            set: { store.restoresLayoutOnDisplayChange = $0 })
+    }
+
+    private var focusFollowsMouse: Binding<Bool> {
+        Binding(get: { store.focusFollowsMouse }, set: { store.focusFollowsMouse = $0 })
+    }
+
+    private var focusFollowsMouseDelay: Binding<Double> {
+        Binding(
+            get: { store.focusFollowsMouseDelay }, set: { store.focusFollowsMouseDelay = $0 })
     }
 
     var body: some View {
@@ -150,6 +194,31 @@ struct WindowSettings: View {
                 }
             }
 
+            SettingsSection(
+                title: "Focus follows the pointer", anchor: SettingsAnchor.focusFollows,
+                footer: "macOS raises a window as part of focusing it, so the window you rest over "
+                    + "comes to the front. Nothing happens while a mouse button or a modifier is "
+                    + "held, or while the switcher is open — each of those is a gesture that "
+                    + "belongs to the window it started in."
+            ) {
+                SettingsToggle(
+                    title: "Focus the window under the pointer",
+                    subtitle: "Rest the cursor over a window and the keyboard goes to it, with no "
+                        + "click. Off by default: it changes where every keystroke on the machine "
+                        + "lands, which is not a thing to switch on for someone.",
+                    isOn: focusFollowsMouse)
+                SettingsSlider(
+                    title: "Rest for",
+                    subtitle: "How long the pointer has to be still first. This is what separates "
+                        + "stopping at a window from crossing it on the way somewhere else — "
+                        + "shorter is more eager, and too short retargets your typing mid-sentence.",
+                    value: focusFollowsMouseDelay,
+                    range: Self.restRange,
+                    step: 50,
+                    format: { "\(Int($0)) ms" })
+                    .disabled(!store.focusFollows.isEnabled)
+            }
+
             // Deliberately *not* disabled while tiling is off. Setting the keys up before switching
             // the feature on is the natural order to do this in, and a pane of dead recorders is
             // exactly the shape of "you cannot define these".
@@ -175,6 +244,41 @@ struct WindowSettings: View {
                     + "above does not govern it, and a bound chord is claimed system-wide."
             ) {
                 ForEach(Self.moveGroup.1) { arrangement in
+                    SettingsRow(
+                        title: arrangement.title,
+                        subtitle: subtitle(for: arrangement),
+                        controlWidth: 168
+                    ) {
+                        TilingShortcutRecorder(arrangement: arrangement, store: store)
+                    }
+                }
+                SettingsToggle(
+                    title: "Take the pointer along",
+                    subtitle: "Warp the cursor onto the window after it lands on the other "
+                        + "display, so the next click and the next hover are where you are looking. "
+                        + "Off leaves the pointer on the display you threw the window from.",
+                    isOn: pointerFollowsDisplayMove)
+                SettingsToggle(
+                    title: "Restore the layout when displays change",
+                    subtitle: "Remembers where every window sat under each set of monitors and "
+                        + "puts them back when that set returns — the undo macOS has never had for "
+                        + "undocking. It has to have seen a desk before it can restore it, so the "
+                        + "first plug or unplug after switching this on only learns; the one after "
+                        + "that restores. Kept in memory for the session, never written to disk.",
+                    isOn: restoresLayoutOnDisplayChange)
+            }
+
+            // Unbound out of the box, and the footer says why rather than leaving someone to hunt
+            // for a chord that was never claimed.
+            SettingsSection(
+                title: Self.focusGroup.0, anchor: anchor(for: Self.focusGroup.0),
+                footer: "Moves the keyboard to the nearest window in that direction — the other "
+                    + "half of tiling, which places windows but never let you walk between them. "
+                    + "Live whether or not tiling is on, since focus resizes nothing. Unbound by "
+                    + "default: every arrow combination on ⌃⌘ is already spoken for, and the only "
+                    + "one left is ⌃⌥⇧⌘, which is not a chord to claim on your behalf."
+            ) {
+                ForEach(Self.focusGroup.1) { arrangement in
                     SettingsRow(
                         title: arrangement.title,
                         subtitle: subtitle(for: arrangement),
@@ -278,9 +382,25 @@ struct WindowSettings: View {
         switch arrangement {
         case .center: return "Keeps the window's size and centres it."
         case .restore: return "Back to where the window was before you first tiled it."
-        // The display moves say it once in their card footer instead, rather than twice over in
-        // two rows that mean the same thing in opposite directions.
-        default: return nil
+        case .larger, .smaller:
+            // Said on both rows rather than in the card footer, because the thing worth knowing is
+            // the anchor, and someone reading only one of the two rows still needs it.
+            return "A twentieth of the screen at a time, from the middle of the window outward, "
+                + "stopping at the edges."
+        case .leftTwoThirds, .rightTwoThirds, .topThird, .bottomThird:
+            return "Also reachable by pressing the matching half twice or three times — this is the "
+                + "same place in one press."
+        default:
+            if arrangement.nudgeStep != nil {
+                return "Moves the window without resizing it, a twentieth of the screen a press. "
+                    + "Stops at the screen edge rather than walking the window off it."
+            }
+            if arrangement.swapStep != nil {
+                return "The two windows change places, each taking the other's exact frame."
+            }
+            // The display and focus moves say it once in their card footers instead, rather than
+            // twice or four times over in rows that mean the same thing in different directions.
+            return nil
         }
     }
 

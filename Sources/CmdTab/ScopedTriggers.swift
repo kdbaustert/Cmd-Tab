@@ -13,6 +13,7 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
     case frontApp
     case allWindows
     case currentDisplay
+    case currentDesktop
     case minimized
 
     var id: String { rawValue }
@@ -22,6 +23,7 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
         case .frontApp: return "This app's windows"
         case .allWindows: return "All windows"
         case .currentDisplay: return "Windows on this display"
+        case .currentDesktop: return "Windows on this desktop"
         case .minimized: return "Minimized windows"
         }
     }
@@ -34,6 +36,9 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
             return "Every window of every app, whatever the switcher is normally set to list."
         case .currentDisplay:
             return "Only windows on the display you are working on."
+        case .currentDesktop:
+            return "Only windows on the Desktop (Space) in front. With more than one display, "
+                + "each has its own front Desktop and both count as here."
         case .minimized:
             return "Only windows currently in the Dock."
         }

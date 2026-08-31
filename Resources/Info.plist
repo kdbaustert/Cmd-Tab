@@ -32,6 +32,23 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- `cmdtab://` — every global action reachable without spending a hotkey, so Raycast, Alfred,
+	     Shortcuts, Keyboard Maestro and a shell script can drive the window manager. The verbs and
+	     what is deliberately left out of them are in `URLCommands.swift`. `LSUIElement` above does
+	     not conflict with this: an agent can register a scheme and is launched to handle it. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.cmdtab.CmdTab.command</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cmdtab</string>
+			</array>
+		</dict>
+	</array>
 	<!-- Sparkle. The appcast is served from GitHub Pages rather than raw.githubusercontent.com:
 	     the raw host is not a CDN, rate-limits, and sends a content type that some proxies mangle,
 	     and this URL is baked into every shipped bundle so it is not one to get wrong twice. -->

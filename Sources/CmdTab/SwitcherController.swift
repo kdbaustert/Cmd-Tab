@@ -68,7 +68,14 @@ final class SwitcherController {
     /// happened to complete before the panel drew, which on a cold list is nothing.
     private var thumbnailSubscription: AnyCancellable?
     private var tap: EventTap?
-    private var isVisible = false { didSet { publishTapState() } }
+    private var isVisible = false {
+        didSet {
+            publishTapState()
+            // Focus must not wander while a list built from the old frontmost app is on screen —
+            // see `FocusFollowsMouse.isSwitcherVisible`.
+            focusFollows.isSwitcherVisible = isVisible
+        }
+    }
     /// Second source of truth for "is the trigger still down". See `startWatchdog`.
     private var watchdog: Timer?
 
@@ -158,11 +165,14 @@ final class SwitcherController {
             mouseWindowDrag.gap = tiling.gap
             targetHighlight.gap = tiling.gap
             launchArrangements.gap = tiling.gap
+            displayLayouts.isEnabled = tiling.restoresLayoutOnDisplayChange
             guard tiling.dragSnap != oldValue.dragSnap else { return }
             dragSnap.isEnabled = tiling.dragSnap
         }
     }
     private let dragSnap = DragSnap()
+    /// Remembers the window layout per set of displays, and puts it back when one returns.
+    private let displayLayouts = DisplayLayouts()
 
     /// Hold-a-modifier-and-drag to move or resize. Pushed by `AppDelegate`, like the bindings.
     var mouseDrag: MouseDragSettings = .init() {
@@ -174,6 +184,12 @@ final class SwitcherController {
     private let mouseWindowDrag = MouseWindowDrag()
     /// Outlines the window the chord would grab, before anything is pressed.
     private let targetHighlight = ModifierTargetHighlight()
+
+    /// Focus follows the pointer. Pushed by `AppDelegate` on its own channel, like `mouseDrag`.
+    var focusFollowsMouse: FocusFollowsMouseSettings = .init() {
+        didSet { focusFollows.settings = focusFollowsMouse }
+    }
+    private let focusFollows = FocusFollowsMouse()
 
     /// Wires the one thing the two mouse gestures have to agree about.
     ///
@@ -231,6 +247,7 @@ final class SwitcherController {
             mouseWindowDrag.appRules = appRules
             targetHighlight.appRules = appRules
             launchArrangements.appRules = appRules
+            displayLayouts.appRules = appRules
             provider.refresh()
         }
     }
@@ -280,6 +297,7 @@ final class SwitcherController {
         setProvider(\.mode, settings.mode)
         setProvider(\.sortOrder, settings.sortOrder)
         setProvider(\.hideEmptyApps, settings.hideEmptyApps)
+        setProvider(\.groupWindowsByApp, settings.groupWindowsByApp)
         setProvider(\.pinFavoritesFirst, settings.pinFavoritesFirst)
         setProvider(\.notificationBadges, settings.notificationBadges)
 
@@ -322,6 +340,7 @@ final class SwitcherController {
 
         // --- session behaviour, held here ---
         showDelay = settings.showDelay
+        windowSpaceScope = settings.windowSpaceScope
         launchFromSearch = settings.launchFromSearch
         stickyMode = settings.stickyMode
         sameAppHotkey = settings.sameAppHotkey
@@ -335,6 +354,15 @@ final class SwitcherController {
     /// A tap that opens the switcher waits this long before drawing; released sooner, it switches
     /// straight to the previous target with no panel flash. 0 keeps the panel instant.
     var showDelay: TimeInterval = 0
+
+    /// Which Desktops the main list may draw window tiles from.
+    ///
+    /// Held here rather than pushed into `TargetProvider` with the rest of the list settings, and
+    /// that is the whole point of it: the provider builds its cache when an app activates, and the
+    /// Desktop in front changes without activating anything — switch to an empty Desktop and no
+    /// refresh happens at all. A filter baked into the cache would answer for the Desktop you left.
+    /// Applied in `open` instead, against a Space reading taken at that moment.
+    var windowSpaceScope: WindowSpaceScope = .allDesktops
 
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
@@ -749,6 +777,7 @@ final class SwitcherController {
         let cycleWidths = tiling.cycleWidths
         let gap = tiling.gap
         let follows = tiling.followsDesktopMove
+        let warpsPointer = tiling.pointerFollowsDisplayMove
         // Posted, not inline. `frontmostApplication` and the screen walk are both NSWorkspace/AppKit
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
@@ -764,10 +793,24 @@ final class SwitcherController {
                 Log.tap.notice("tiling: no frontmost app to act on")
                 return
             }
+            // Focus first, and *before* the `neverTile` guard below: that rule is about this app
+            // resizing someone's windows, and moving the keyboard to a window resizes nothing. An
+            // app excluded from tiling is still an app you need to be able to reach.
+            if let direction = arrangement.focusStep {
+                WindowNavigator.focus(direction, from: pid)
+                return
+            }
             // An app the user has told us never to tile. Checked here rather than in `WindowTiler`
             // so the tiler stays a pure geometry writer with no opinion about settings.
             if let id = front.bundleIdentifier, rules[id]?.neverTile == true {
                 Log.tap.notice("tiling: \(id, privacy: .public) is set to never tile")
+                return
+            }
+            // A swap needs the window *next to* this one, which no frame computed from one screen
+            // can express — so it never reaches the tiler either. It re-checks `neverTile` for both
+            // ends; see `WindowNavigator.swap`.
+            if let direction = arrangement.swapStep {
+                WindowNavigator.swap(direction, from: pid, rules: rules)
                 return
             }
             // A Desktop move is not geometry, so it does not go to the tiler. `WindowTiler.apply`
@@ -784,7 +827,35 @@ final class SwitcherController {
                 "tiling: applying to pid \(pid, privacy: .public), gap \(Int(gap), privacy: .public)")
             WindowTiler.apply(
                 arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
-                cycleWidths: cycleWidths, gap: gap)
+                cycleWidths: cycleWidths, gap: gap, warpsPointer: warpsPointer)
+        }
+    }
+
+    /// Runs a `cmdtab://` request.
+    ///
+    /// Routed through exactly the same functions the chords use, so a URL and a keypress cannot
+    /// drift apart in what they do — which is the whole reason this is three lines rather than a
+    /// second implementation of each action.
+    ///
+    /// The two master switches are treated differently on purpose. **Tiling's** switch is not
+    /// consulted: it exists to stop this app *claiming global chords* from other applications, and a
+    /// URL claims nothing from anybody — refusing to tile because a checkbox about hotkeys is off
+    /// would be a setting doing something it never described. The **Desktop moves'** switch is
+    /// consulted, because that one is not about chords at all: it guards a gesture that seizes the
+    /// pointer and flashes Mission Control for the better part of a second, and consent to that is
+    /// not something a URL should be able to route around.
+    func perform(_ command: URLCommand) {
+        switch command {
+        case .arrangement(let arrangement):
+            if arrangement.desktopStep != nil, !tiling.desktopMoves {
+                Log.general.notice("url: desktop moves are switched off; ignoring")
+                return
+            }
+            applyTiling(arrangement)
+        case .activate(let bundleID):
+            GlobalActions.activate(bundleID: bundleID)
+        case .allWindows(let action):
+            GlobalActions.perform(action)
         }
     }
 
@@ -1032,7 +1103,13 @@ final class SwitcherController {
     /// to swallow — only when there is nothing to show.
     @discardableResult
     private func open(backwards: Bool) -> Bool {
-        let targets = provider.snapshot()
+        // Filtered here rather than in the cache — see `windowSpaceScope`. Only the main trigger
+        // does this: the same-app cycle and the scoped triggers are each a deliberate request for a
+        // named subset, and narrowing one of those by a *global* setting would mean a chord bound to
+        // "all windows" quietly showing some of them.
+        let targets = windowSpaceScope == .currentDesktop
+            ? Self.onCurrentDesktop(provider.snapshot())
+            : provider.snapshot()
         // Decided before anything is assigned — see `SessionOpen.plan`, which exists so the order
         // cannot drift: session state set before the bail-out left `isSticky` latched true after a
         // press that opened nothing, so the *next* session, including one from a different hotkey,
@@ -1208,7 +1285,7 @@ final class SwitcherController {
     }
 
     /// Narrows a window list to a scope. `.frontApp` and `.allWindows` are already exactly what was
-    /// fetched, so only the two filtering scopes do anything here.
+    /// fetched, so only the three filtering scopes do anything here.
     private static func filter(_ targets: [SwitchTarget], to scope: SwitcherScope) -> [SwitchTarget] {
         switch scope {
         case .frontApp, .allWindows:
@@ -1223,6 +1300,29 @@ final class SwitcherController {
                 let index = NSScreen.screens.firstIndex(of: cursorScreen)
             else { return targets }
             return targets.filter { $0.displayIndex == index }
+        case .currentDesktop:
+            return onCurrentDesktop(targets)
+        }
+    }
+
+    /// The windows on whichever Desktop is in front — of each display, on a machine with several.
+    ///
+    /// The current Space is read *here*, not carried on the targets. A window's own Space does not
+    /// change when you switch Desktops, but which Space is in front does, and the target list is
+    /// built at refresh time — which is to say, at the last moment an app happened to activate.
+    /// Switching to an empty Desktop and pressing the trigger activates nothing, so a list filtered
+    /// against a remembered "current" would show the Desktop you just left.
+    ///
+    /// A window with no Space at all is **kept**, not dropped. That is a minimized window (which
+    /// occupies no Space and is in the Dock, which is everywhere) and it is also every window on a
+    /// machine where the private Space calls are unavailable — so the failure mode of this filter is
+    /// showing too much rather than a switcher that has silently gone empty.
+    private static func onCurrentDesktop(_ targets: [SwitchTarget]) -> [SwitchTarget] {
+        let current = SpaceMover.currentSpaceIDs()
+        guard !current.isEmpty else { return targets }
+        return targets.filter { target in
+            guard let space = target.spaceID else { return true }
+            return current.contains(space)
         }
     }
 

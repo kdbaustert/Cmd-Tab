@@ -16,6 +16,24 @@ enum SortOrder: String, CaseIterable {
     }
 }
 
+/// Which Desktops the switcher's window tiles may come from.
+///
+/// Only window tiles are affected either way: an application is not on a Desktop, so an app tile has
+/// no Space to be filtered by and is always shown. That also means the setting needs no mode gate —
+/// in application mode it does nothing at all, except to an app carrying the *expand windows* rule,
+/// whose tiles really are windows and are filtered like any other.
+enum WindowSpaceScope: String, CaseIterable {
+    case allDesktops
+    case currentDesktop
+
+    var title: String {
+        switch self {
+        case .allDesktops: return "All desktops"
+        case .currentDesktop: return "This desktop"
+        }
+    }
+}
+
 /// How the switcher arranges its targets.
 ///
 /// Grid is the ⌘-Tab shape: icons in a wrapping grid with the selected one's name in a caption
@@ -304,6 +322,7 @@ enum BehaviorDefault {
 // non-`Codable` `RawRepresentable`, which writes the bare `rawValue` — the same bytes the previous
 // hand-rolled `store(x.rawValue, …)` wrote.
 extension SortOrder: Defaults.Serializable {}
+extension WindowSpaceScope: Defaults.Serializable {}
 extension SwitcherLayout: Defaults.Serializable {}
 extension SwitcherMode: Defaults.Serializable {}
 extension PanelAppearance: Defaults.Serializable {}
@@ -361,6 +380,19 @@ extension Defaults.Keys {
     static let stickyMode = Key<Bool>("stickyMode", default: false)
     static let sameAppCycle = Key<Bool>("sameAppCycle", default: false)
     static let hideEmptyApps = Key<Bool>("hideEmptyApps", default: false)
+    /// Which Desktops window tiles may come from. `.allDesktops` is what the switcher has always
+    /// done, so an existing install sees no change until it picks the other.
+    static let windowSpaceScope = Key<WindowSpaceScope>(
+        "windowSpaceScope", default: .allDesktops)
+    /// Whether window mode keeps each app's windows together.
+    ///
+    /// On by default because it is what the list has always done — `windowTargets` walks the sorted
+    /// app list and emits each app's windows in a run, so the grouping was never a decision anyone
+    /// made, merely the shape the construction happened to have. This is the switch that makes it
+    /// one, and turning it off is the order that was not previously reachable at all: every window
+    /// on the machine in true recency order, which is what "the window I was in before this one"
+    /// means when the one before was in a different app.
+    static let groupWindowsByApp = Key<Bool>("groupWindowsByApp", default: true)
     /// On by default: with no favourites starred it changes nothing, and a user who has starred
     /// apps asked for those apps to be special — holding a fixed slot is what that finally means
     /// for one that happens to be running.
@@ -425,7 +457,8 @@ final class BehaviorStore: ObservableObject {
         .panelAppearance, .panelPosition, .panelScreens, .panelMaterial,
         .highlightColorHex,
         .hotkeyKeyCode, .hotkeyModifiers, .sameAppKeyCode, .sameAppModifiers,
-        .stickyMode, .sameAppCycle, .hideEmptyApps, .pinFavoritesFirst, .showDelay, .maxColumns,
+        .stickyMode, .sameAppCycle, .hideEmptyApps, .windowSpaceScope, .groupWindowsByApp,
+        .pinFavoritesFirst, .showDelay, .maxColumns,
         .blurOverride, .blurRadius,
         .showNumbers, .showDisplayBadges, .showSpaceBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
@@ -503,6 +536,14 @@ final class BehaviorStore: ObservableObject {
     }
     @Published var hideEmptyApps: Bool = Defaults[.hideEmptyApps] {
         didSet { persist(hideEmptyApps, oldValue, to: .hideEmptyApps) }
+    }
+    /// Which Desktops window tiles may come from.
+    @Published var windowSpaceScope: WindowSpaceScope = Defaults[.windowSpaceScope] {
+        didSet { persist(windowSpaceScope, oldValue, to: .windowSpaceScope) }
+    }
+    /// Keep each app's windows together in window mode, rather than interleaving by recency.
+    @Published var groupWindowsByApp: Bool = Defaults[.groupWindowsByApp] {
+        didSet { persist(groupWindowsByApp, oldValue, to: .groupWindowsByApp) }
     }
     /// Favourites hold fixed slots at the front of the app list instead of falling wherever the
     /// sort puts them.
@@ -614,6 +655,8 @@ final class BehaviorStore: ObservableObject {
         sameAppHotkey = Self.loadHotkey(
             code: .sameAppKeyCode, mods: .sameAppModifiers, default: .commandBacktick)
         hideEmptyApps = Defaults[.hideEmptyApps]
+        windowSpaceScope = Defaults[.windowSpaceScope]
+        groupWindowsByApp = Defaults[.groupWindowsByApp]
         pinFavoritesFirst = Defaults[.pinFavoritesFirst]
         showDelay = Defaults[.showDelay]
         maxColumns = Defaults[.maxColumns]

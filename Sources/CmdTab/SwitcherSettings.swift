@@ -25,8 +25,17 @@ struct SwitcherSettings: Equatable {
     var mode: SwitcherMode = .apps
     var sortOrder: SortOrder = .recentlyUsed
     var hideEmptyApps = false
+    /// Whether window mode keeps each app's windows together. Provider-backed: it changes the order
+    /// the list is built in, not merely how it is drawn.
+    var groupWindowsByApp = true
     var pinFavoritesFirst = true
     var notificationBadges = true
+
+    // Held by the controller and applied at the moment the panel opens rather than when the list is
+    // built. The Space in front changes without anything rebuilding the list — switching to an empty
+    // Desktop activates no app — so a filter baked into the cache would answer for the Desktop you
+    // just left. See `SwitcherController.onCurrentDesktop`.
+    var windowSpaceScope: WindowSpaceScope = .allDesktops
 
     // Panel-backed: geometry and chrome. A change needs a relayout, not a rebuild.
     var layout: SwitcherLayout = .grid

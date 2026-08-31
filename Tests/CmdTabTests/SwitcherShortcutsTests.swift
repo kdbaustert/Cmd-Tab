@@ -58,10 +58,13 @@ final class SwitcherShortcutsTests: XCTestCase {
     /// The default tile chords are the in-panel spelling of the global halves: ⌃ on top of a held
     /// ⌘ trigger is the same fingers as ⌃⌘-arrow, and a drift here would break that promise
     /// silently — both sides would still work, just differently.
-    func testTileDefaultsMatchTheGlobalHalfChords() {
+    func testTileDefaultsMatchTheGlobalHalfChords() throws {
         for action in SwitcherAction.allCases {
             guard let arrangement = action.arrangement else { continue }
-            let global = arrangement.defaultHotkey
+            // The four halves are among the arrangements that ship bound, and the unwrap is the
+            // assertion that keeps it that way: an in-switcher tile action whose global twin lost
+            // its default would have nothing left to agree with.
+            let global = try XCTUnwrap(arrangement.defaultHotkey)
             XCTAssertEqual(
                 action.defaultShortcut.keyCode, global.keyCode, "\(action.title) key differs")
             XCTAssertEqual(

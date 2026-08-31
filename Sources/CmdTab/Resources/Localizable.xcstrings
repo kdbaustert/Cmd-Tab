@@ -23,6 +23,17 @@
         }
       }
     },
+    "A twentieth of the screen at a time, from the middle of the window outward, stopping at the edges.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A twentieth of the screen at a time, from the middle of the window outward, stopping at the edges."
+          }
+        }
+      }
+    },
     "About": {
       "extractionState": "manual",
       "localizations": {
@@ -67,6 +78,17 @@
         }
       }
     },
+    "All desktops": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All desktops"
+          }
+        }
+      }
+    },
     "All windows": {
       "extractionState": "manual",
       "localizations": {
@@ -74,6 +96,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "All windows"
+          }
+        }
+      }
+    },
+    "Alphabetical order always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alphabetical order always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them."
+          }
+        }
+      }
+    },
+    "Also reachable by pressing the matching half twice or three times — this is the same place in one press.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Also reachable by pressing the matching half twice or three times — this is the same place in one press."
           }
         }
       }
@@ -173,6 +217,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bindings are matched in the order listed above, so the first one to claim a combination is the one that fires. Openers come first: nothing you bind can take the switcher's own trigger away from it."
+          }
+        }
+      }
+    },
+    "Bottom third": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom third"
           }
         }
       }
@@ -331,6 +386,17 @@
         }
       }
     },
+    "Desktops": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desktops"
+          }
+        }
+      }
+    },
     "Diagnostics": {
       "extractionState": "manual",
       "localizations": {
@@ -463,6 +529,72 @@
         }
       }
     },
+    "Focus follows the pointer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus follows the pointer"
+          }
+        }
+      }
+    },
+    "Focus the window under the pointer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus the window under the pointer"
+          }
+        }
+      }
+    },
+    "Focus window above": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus window above"
+          }
+        }
+      }
+    },
+    "Focus window below": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus window below"
+          }
+        }
+      }
+    },
+    "Focus window to the left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus window to the left"
+          }
+        }
+      }
+    },
+    "Focus window to the right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus window to the right"
+          }
+        }
+      }
+    },
     "For the handful of apps you reach for all day, the switcher is overhead. These jump straight there, launching the app if it isn't running.": {
       "extractionState": "manual",
       "localizations": {
@@ -514,6 +646,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "General"
+          }
+        }
+      }
+    },
+    "Group windows by app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Group windows by app"
           }
         }
       }
@@ -591,6 +734,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "How Cmd-Tab itself starts and presents itself."
+          }
+        }
+      }
+    },
+    "How long the pointer has to be still first. This is what separates stopping at a window from crossing it on the way somewhere else — shorter is more eager, and too short retargets your typing mid-sentence.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How long the pointer has to be still first. This is what separates stopping at a window from crossing it on the way somewhere else — shorter is more eager, and too short retargets your typing mid-sentence."
           }
         }
       }
@@ -716,6 +870,17 @@
         }
       }
     },
+    "Left two-thirds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left two-thirds"
+          }
+        }
+      }
+    },
     "Look for a new version in the background, about once a day, and say so when one turns up.": {
       "extractionState": "manual",
       "localizations": {
@@ -723,6 +888,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Look for a new version in the background, about once a day, and say so when one turns up."
+          }
+        }
+      }
+    },
+    "Make larger": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Make larger"
+          }
+        }
+      }
+    },
+    "Make smaller": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Make smaller"
           }
         }
       }
@@ -815,6 +1002,28 @@
         }
       }
     },
+    "Moves the keyboard to the nearest window in that direction — the other half of tiling, which places windows but never let you walk between them. Live whether or not tiling is on, since focus resizes nothing. Unbound by default: every arrow combination on ⌃⌘ is already spoken for, and the only one left is ⌃⌥⇧⌘, which is not a chord to claim on your behalf.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moves the keyboard to the nearest window in that direction — the other half of tiling, which places windows but never let you walk between them. Live whether or not tiling is on, since focus resizes nothing. Unbound by default: every arrow combination on ⌃⌘ is already spoken for, and the only one left is ⌃⌥⇧⌘, which is not a chord to claim on your behalf."
+          }
+        }
+      }
+    },
+    "Moves the window without resizing it, a twentieth of the screen a press. Stops at the screen edge rather than walking the window off it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moves the window without resizing it, a twentieth of the screen a press. Stops at the screen edge rather than walking the window off it."
+          }
+        }
+      }
+    },
     "No conflicts": {
       "extractionState": "manual",
       "localizations": {
@@ -833,6 +1042,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Notification badges"
+          }
+        }
+      }
+    },
+    "Nudge down": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nudge down"
+          }
+        }
+      }
+    },
+    "Nudge left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nudge left"
+          }
+        }
+      }
+    },
+    "Nudge right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nudge right"
+          }
+        }
+      }
+    },
+    "Nudge up": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nudge up"
           }
         }
       }
@@ -892,6 +1145,17 @@
         }
       }
     },
+    "On keeps each app's windows in a run. Off ranks every window against every other by when you last used it, so one tap of the trigger goes to the window you were in before this one whichever app it belongs to.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On keeps each app's windows in a run. Off ranks every window against every other by when you last used it, so one tap of the trigger goes to the window you were in before this one whichever app it belongs to."
+          }
+        }
+      }
+    },
     "Only apps with an override are listed. Everything else follows the global settings.": {
       "extractionState": "manual",
       "localizations": {
@@ -910,6 +1174,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Only for window previews on hover. Everything else works without it."
+          }
+        }
+      }
+    },
+    "Only windows on the Desktop (Space) in front. With more than one display, each has its own front Desktop and both count as here.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only windows on the Desktop (Space) in front. With more than one display, each has its own front Desktop and both count as here."
           }
         }
       }
@@ -1101,6 +1376,17 @@
         }
       }
     },
+    "Remembers where every window sat under each set of monitors and puts them back when that set returns — the undo macOS has never had for undocking. It has to have seen a desk before it can restore it, so the first plug or unplug after switching this on only learns; the one after that restores. Kept in memory for the session, never written to disk.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remembers where every window sat under each set of monitors and puts them back when that set returns — the undo macOS has never had for undocking. It has to have seen a desk before it can restore it, so the first plug or unplug after switching this on only learns; the one after that restores. Kept in memory for the session, never written to disk."
+          }
+        }
+      }
+    },
     "Required. Without it the event tap cannot see ⌘-Tab, and windows cannot be raised.": {
       "extractionState": "manual",
       "localizations": {
@@ -1123,6 +1409,28 @@
         }
       }
     },
+    "Rest for": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rest for"
+          }
+        }
+      }
+    },
+    "Rest the cursor over a window and the keyboard goes to it, with no click. Off by default: it changes where every keystroke on the machine lands, which is not a thing to switch on for someone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rest the cursor over a window and the keyboard goes to it, with no click. Off by default: it changes where every keystroke on the machine lands, which is not a thing to switch on for someone."
+          }
+        }
+      }
+    },
     "Restore macOS ⌘-Tab": {
       "extractionState": "manual",
       "localizations": {
@@ -1130,6 +1438,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Restore macOS ⌘-Tab"
+          }
+        }
+      }
+    },
+    "Restore the layout when displays change": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore the layout when displays change"
+          }
+        }
+      }
+    },
+    "Right two-thirds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right two-thirds"
           }
         }
       }
@@ -1387,6 +1717,50 @@
         }
       }
     },
+    "Swap with window above": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Swap with window above"
+          }
+        }
+      }
+    },
+    "Swap with window below": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Swap with window below"
+          }
+        }
+      }
+    },
+    "Swap with window to the left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Swap with window to the left"
+          }
+        }
+      }
+    },
+    "Swap with window to the right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Swap with window to the right"
+          }
+        }
+      }
+    },
     "Switch between": {
       "extractionState": "manual",
       "localizations": {
@@ -1416,6 +1790,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sync settings over iCloud"
+          }
+        }
+      }
+    },
+    "Take the pointer along": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Take the pointer along"
           }
         }
       }
@@ -1464,6 +1849,17 @@
         }
       }
     },
+    "The two windows change places, each taking the other's exact frame.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The two windows change places, each taking the other's exact frame."
+          }
+        }
+      }
+    },
     "The ⌘-number jump hint on the first ten targets.": {
       "extractionState": "manual",
       "localizations": {
@@ -1482,6 +1878,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Theme"
+          }
+        }
+      }
+    },
+    "This desktop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This desktop"
           }
         }
       }
@@ -1548,6 +1955,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Title spacing"
+          }
+        }
+      }
+    },
+    "Top third": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top third"
           }
         }
       }
@@ -1629,6 +2047,17 @@
         }
       }
     },
+    "Warp the cursor onto the window after it lands on the other display, so the next click and the next hover are where you are looking. Off leaves the pointer on the display you threw the window from.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Warp the cursor onto the window after it lands on the other display, so the next click and the next hover are where you are looking. Off leaves the pointer on the display you threw the window from."
+          }
+        }
+      }
+    },
     "What each tile stands for.": {
       "extractionState": "manual",
       "localizations": {
@@ -1669,6 +2098,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Which Desktop a window is on. Only ever appears when you have more than one."
+          }
+        }
+      }
+    },
+    "Which Desktops window tiles may come from. Application tiles are never affected — an app is not on a Desktop. Read fresh each time the switcher opens, so it follows you the moment you switch.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which Desktops window tiles may come from. Application tiles are never affected — an app is not on a Desktop. Read fresh each time the switcher opens, so it follows you the moment you switch."
           }
         }
       }
@@ -1739,6 +2179,17 @@
         }
       }
     },
+    "Window lists only — application tiles are one per app already.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window lists only — application tiles are one per app already."
+          }
+        }
+      }
+    },
     "Window tiling": {
       "extractionState": "manual",
       "localizations": {
@@ -1761,6 +2212,17 @@
         }
       }
     },
+    "Windows on this desktop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Windows on this desktop"
+          }
+        }
+      }
+    },
     "Written in place rather than replaced, so a symlink into a dotfiles repo survives every save. On launch the file wins over local settings — that is what makes a fresh checkout come up configured, and what makes a second Mac pick up the settings iCloud sent it rather than publish its own over them.": {
       "extractionState": "manual",
       "localizations": {
@@ -1768,6 +2230,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Written in place rather than replaced, so a symlink into a dotfiles repo survives every save. On launch the file wins over local settings — that is what makes a fresh checkout come up configured, and what makes a second Mac pick up the settings iCloud sent it rather than publish its own over them."
+          }
+        }
+      }
+    },
+    "macOS raises a window as part of focusing it, so the window you rest over comes to the front. Nothing happens while a mouse button or a modifier is held, or while the switcher is open — each of those is a gesture that belongs to the window it started in.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS raises a window as part of focusing it, so the window you rest over comes to the front. Nothing happens while a mouse button or a modifier is held, or while the switcher is open — each of those is a gesture that belongs to the window it started in."
           }
         }
       }

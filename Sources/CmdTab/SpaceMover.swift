@@ -113,8 +113,8 @@ enum SpaceMover {
 
     /// `windowSpaces` over a display list the caller has already read.
     ///
-    /// Split out for `spaceIndices`, which needs the Space *order* as well and would otherwise pay
-    /// for the display walk twice over — once here and once in `userSpaceIDs`.
+    /// Split out for `placement`, which needs the Space *order* as well and would otherwise pay for
+    /// the display walk twice over — once here and once in `userSpaceIDs`.
     private static func windowSpaces(in displays: [[String: Any]]) -> [CGWindowID: SpaceState] {
         guard let mainConnection, let copyWindowsForSpaces, !displays.isEmpty else { return [:] }
         let cid = mainConnection()
@@ -340,14 +340,20 @@ enum SpaceMover {
         }
     }
 
-    /// The 0-based user-Space index each window sits on, for the Space badge.
+    /// Where a set of windows sit: the Desktop number for the badge, and the raw Space id.
     ///
-    /// Returns empty when there is only one Space, which is both a cost saving and the right
-    /// display behaviour — a badge reading "1" on every tile is pure noise. Costs no Accessibility
-    /// round-trips, but is still meant for the background refresh rather than anything on the key
-    /// path.
+    /// Both come out of the same walk, which is the reason they are one call. The id is what the
+    /// "windows on this Desktop" filter compares against, and it is deliberately the *raw* id rather
+    /// than the index: an index is a position in today's Desktop ordering, so adding or removing a
+    /// Desktop renumbers every window that was placed under the old one, where the id names the same
+    /// Desktop for as long as it exists. The badge can afford to be renumbered — it is a label that
+    /// is rebuilt on the next refresh; a filter cannot, because being renumbered means showing the
+    /// wrong windows.
     ///
-    /// Placed from one `windowSpaces()` map rather than a query per window: the per-window call this
+    /// Costs no Accessibility round-trips, but is still meant for the background refresh rather than
+    /// anything on the key path.
+    ///
+    /// Placed from one `windowSpaces` map rather than a query per window: the per-window call this
     /// used to make reported nothing for any window that was not on the Desktop in front, so the
     /// badge went missing on precisely the windows it exists to label.
     ///
@@ -355,19 +361,55 @@ enum SpaceMover {
     /// the same layout, so every badge pass that got past the single-Space guard below read it
     /// twice — and the two readings could disagree, since a Desktop switch between them would order
     /// the Spaces against one layout and place the windows against another.
-    static func spaceIndices(of windows: [CGWindowID]) -> [CGWindowID: Int] {
-        guard !windows.isEmpty else { return [:] }
+    struct Placement {
+        /// Desktop number per window, 0-based, for the badge. Empty when there is only one Desktop,
+        /// which is what keeps the badge off the tiles on a machine that has never made a second.
+        var indices: [CGWindowID: Int] = [:]
+        /// The Space each window is on. Empty on a single-Desktop machine, along with `indices` —
+        /// see the guard in `placement`.
+        var spaces: [CGWindowID: UInt64] = [:]
+    }
+
+    static func placement(of windows: [CGWindowID]) -> Placement {
+        guard !windows.isEmpty else { return Placement() }
         let displays = managedDisplays()
         let ordered = userSpaceIDs(in: displays)
-        guard ordered.count > 1 else { return [:] }
+        // One Desktop, one answer, and it is worth taking *before* the walk below rather than after:
+        // `windowSpaces` is a window-server round trip per Space and this runs on every refresh, so
+        // the machine with a single Desktop — which is most of them — must not pay for a question it
+        // cannot have. Empty is the right answer for both halves there. No badge, because there is
+        // no number worth showing; and no Space ids, because "windows on this Desktop" on a machine
+        // with one Desktop is every window, which is what a nil id already means to the filter.
+        guard ordered.count > 1 else { return Placement() }
 
         let placed = windowSpaces(in: displays)
-        var out: [CGWindowID: Int] = [:]
+        var out = Placement()
         for window in windows {
-            guard let space = placed[window]?.windowSpace,
-                let index = ordered.firstIndex(of: space)
+            guard let space = placed[window]?.windowSpace else { continue }
+            out.spaces[window] = space
+            guard let index = ordered.firstIndex(of: space) else { continue }
+            out.indices[window] = index
+        }
+        return out
+    }
+
+    /// The Space in front on each display, as raw ids.
+    ///
+    /// A *set*, and one entry per display rather than one answer overall, because "the current
+    /// Desktop" is not a single thing on a machine with more than one monitor: each display has its
+    /// own Space list and its own current Space, and a window on the second monitor's front Space is
+    /// every bit as much "here" as one on the first monitor's.
+    ///
+    /// One window-server round trip, which is what makes it cheap enough to read at the moment the
+    /// switcher opens rather than at the moment its list was built. That distinction is the whole
+    /// point: a window's own Space does not change when you switch Desktops, but *which* Space is in
+    /// front does — so the fresh half of the comparison has to be this one.
+    static func currentSpaceIDs() -> Set<UInt64> {
+        var out: Set<UInt64> = []
+        for display in managedDisplays() {
+            guard let current = (display["Current Space"] as? [String: Any]).flatMap(spaceID(from:))
             else { continue }
-            out[window] = index
+            out.insert(current)
         }
         return out
     }

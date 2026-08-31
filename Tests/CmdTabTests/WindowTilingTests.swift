@@ -16,6 +16,16 @@ final class WindowTilingTests: XCTestCase {
         arrangement.frame(in: area, current: window, fraction: fraction)
     }
 
+    /// The arrangements that ship with a chord.
+    ///
+    /// Three families deliberately ship unbound — focus, swap and the nudges — because there is no
+    /// arrow combination left to give them; see `WindowArrangement.defaultHotkey`. Every test below
+    /// that asks a question about "the default chords" means these, and asking it of an arrangement
+    /// that has none would be asserting against a `nil` nobody promised anything about.
+    private var bound: [(WindowArrangement, Hotkey)] {
+        WindowArrangement.allCases.compactMap { a in a.defaultHotkey.map { (a, $0) } }
+    }
+
     // MARK: - Halves
 
     func testLeftHalfTakesTheLeadingEdgeAndFullHeight() {
@@ -209,6 +219,17 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertFalse(WindowArrangement.nextDisplay.takesGap)
         XCTAssertFalse(WindowArrangement.previousDesktop.takesGap)
         XCTAssertFalse(WindowArrangement.nextDesktop.takesGap)
+        // The families that keep the size the user pressed their way to. Insetting one of these
+        // would make every "make larger" grow the window and then take some of it back.
+        for arrangement in [WindowArrangement.larger, .smaller] + WindowArrangement.nudges
+            + WindowArrangement.focusMoves + WindowArrangement.swaps
+        {
+            XCTAssertFalse(arrangement.takesGap, "\(arrangement.rawValue) should take no gap")
+        }
+        // The new fractions-of-the-screen tiles do take one, like every other tile.
+        for arrangement in [WindowArrangement.topThird, .bottomThird, .leftTwoThirds, .rightTwoThirds] {
+            XCTAssertTrue(arrangement.takesGap, "\(arrangement.rawValue) should take a gap")
+        }
         for arrangement in [WindowArrangement.leftHalf, .topRight, .centerThird, .maximize] {
             XCTAssertTrue(arrangement.takesGap, "\(arrangement.rawValue) should take a gap")
         }
@@ -220,7 +241,7 @@ final class WindowTilingTests: XCTestCase {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = false
         for arrangement in WindowArrangement.tilingArrangements {
-            let chord = arrangement.defaultHotkey
+            guard let chord = arrangement.defaultHotkey else { continue }
             XCTAssertNil(
                 tiling.arrangement(code: chord.keyCode, flags: chord.modifiers),
                 "\(arrangement.rawValue) should be inert while tiling is off")
@@ -229,12 +250,12 @@ final class WindowTilingTests: XCTestCase {
 
     /// The switch is about resizing. A move changes no layout, so it fires either way — the whole
     /// point of splitting the two families in `arrangement(code:flags:)`.
-    func testDisabledTilingStillMatchesTheMoves() {
+    func testDisabledTilingStillMatchesTheMoves() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = false
         tiling.desktopMoves = true
         for arrangement in WindowArrangement.moves {
-            let chord = arrangement.defaultHotkey
+            let chord = try XCTUnwrap(arrangement.defaultHotkey)
             XCTAssertEqual(
                 tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), arrangement,
                 "\(arrangement.rawValue) should fire with tiling off")
@@ -243,22 +264,22 @@ final class WindowTilingTests: XCTestCase {
 
     /// A cleared move is still cleared: ungating them is not a licence to revive a binding the user
     /// has handed back.
-    func testAClearedMoveDoesNotFireWithTilingOff() {
+    func testAClearedMoveDoesNotFireWithTilingOff() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = false
-        let chord = WindowArrangement.nextDisplay.defaultHotkey
+        let chord = try XCTUnwrap(WindowArrangement.nextDisplay.defaultHotkey)
         tiling.bindings[.nextDisplay] = nil
         XCTAssertNil(tiling.arrangement(code: chord.keyCode, flags: chord.modifiers))
     }
 
     /// The Desktop moves answer to a switch of their own on top of the tiling one, because the
     /// gesture behind them takes the pointer and opens Mission Control — see `DesktopMover`.
-    func testDesktopMovesAreInertUntilSwitchedOn() {
+    func testDesktopMovesAreInertUntilSwitchedOn() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = true
         tiling.desktopMoves = false
         for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
-            let chord = arrangement.defaultHotkey
+            let chord = try XCTUnwrap(arrangement.defaultHotkey)
             XCTAssertNil(
                 tiling.arrangement(code: chord.keyCode, flags: chord.modifiers),
                 "\(arrangement.rawValue) should not fire with the Desktop switch off")
@@ -267,23 +288,23 @@ final class WindowTilingTests: XCTestCase {
 
     /// The switch is specific to its own family: turning it off must not take the display moves —
     /// or anything else — down with it.
-    func testTheDesktopSwitchLeavesTheOtherArrangementsAlone() {
+    func testTheDesktopSwitchLeavesTheOtherArrangementsAlone() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = true
         tiling.desktopMoves = false
-        let next = WindowArrangement.nextDisplay.defaultHotkey
+        let next = try XCTUnwrap(WindowArrangement.nextDisplay.defaultHotkey)
         XCTAssertEqual(
             tiling.arrangement(code: next.keyCode, flags: next.modifiers), .nextDisplay)
-        let left = WindowArrangement.leftHalf.defaultHotkey
+        let left = try XCTUnwrap(WindowArrangement.leftHalf.defaultHotkey)
         XCTAssertEqual(tiling.arrangement(code: left.keyCode, flags: left.modifiers), .leftHalf)
     }
 
-    func testDesktopMovesFireWithTilingOffOnceSwitchedOn() {
+    func testDesktopMovesFireWithTilingOffOnceSwitchedOn() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = false
         tiling.desktopMoves = true
         for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
-            let chord = arrangement.defaultHotkey
+            let chord = try XCTUnwrap(arrangement.defaultHotkey)
             XCTAssertEqual(
                 tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), arrangement,
                 "\(arrangement.rawValue) should fire with tiling off but its own switch on")
@@ -300,12 +321,12 @@ final class WindowTilingTests: XCTestCase {
 
     /// The follow switch is about what happens *after* a move; it must not decide whether the move
     /// happens at all. Turning it off still leaves the chords firing.
-    func testTurningFollowingOffStillFiresTheMove() {
+    func testTurningFollowingOffStillFiresTheMove() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.desktopMoves = true
         tiling.followsDesktopMove = false
         for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
-            let chord = arrangement.defaultHotkey
+            let chord = try XCTUnwrap(arrangement.defaultHotkey)
             XCTAssertEqual(
                 tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), arrangement,
                 "\(arrangement.rawValue) should still fire with following off")
@@ -315,7 +336,7 @@ final class WindowTilingTests: XCTestCase {
     /// The Desktop chords are ordinary bindings: whatever the user records replaces the default,
     /// and the default stops firing. Nothing about the family is special-cased in the recorder — it
     /// is `TilingShortcutRecorder` over `WindowArrangement`, like every other row on the pane.
-    func testACustomDesktopChordReplacesTheDefault() {
+    func testACustomDesktopChordReplacesTheDefault() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.desktopMoves = true
         let custom = Hotkey(
@@ -324,17 +345,17 @@ final class WindowTilingTests: XCTestCase {
         tiling.bindings[.nextDesktop] = custom
         XCTAssertEqual(
             tiling.arrangement(code: custom.keyCode, flags: custom.modifiers), .nextDesktop)
-        let old = WindowArrangement.nextDesktop.defaultHotkey
+        let old = try XCTUnwrap(WindowArrangement.nextDesktop.defaultHotkey)
         XCTAssertNil(
             tiling.arrangement(code: old.keyCode, flags: old.modifiers),
             "the replaced default must stop firing")
     }
 
     /// Cleared means handed back to whatever app wants the chord, not "fall back to the default".
-    func testAClearedDesktopChordFiresNothing() {
+    func testAClearedDesktopChordFiresNothing() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.desktopMoves = true
-        let chord = WindowArrangement.previousDesktop.defaultHotkey
+        let chord = try XCTUnwrap(WindowArrangement.previousDesktop.defaultHotkey)
         tiling.bindings[.previousDesktop] = nil
         XCTAssertNil(tiling.arrangement(code: chord.keyCode, flags: chord.modifiers))
     }
@@ -353,7 +374,7 @@ final class WindowTilingTests: XCTestCase {
 
     /// The four move chords have to be four distinct combinations, or one of them silently shadows
     /// another — the arrows are shared and only the modifiers tell them apart.
-    func testTheMoveChordsDoNotCollide() {
+    func testTheMoveChordsDoNotCollide() throws {
         let moves = WindowArrangement.moves
         for (index, arrangement) in moves.enumerated() {
             for other in moves[moves.index(after: index)...] {
@@ -364,35 +385,50 @@ final class WindowTilingTests: XCTestCase {
         }
         for arrangement in WindowArrangement.moves {
             XCTAssertTrue(
-                arrangement.defaultHotkey.isUsableGlobally,
+                try XCTUnwrap(arrangement.defaultHotkey).isUsableGlobally,
                 "\(arrangement.rawValue) needs a globally usable default")
         }
     }
 
-    func testTheTwoFamiliesPartitionTheArrangements() {
+    /// The gated and ungated sets partition the arrangements, and the ungated one is exactly the
+    /// moves plus the focus chords.
+    ///
+    /// A **swap** is on the gated side and that is the assertion worth having here: it is the one
+    /// new family that could plausibly have gone either way, since it does not resize a window —
+    /// but it does move two of them into each other's frames, which is a layout change, so it waits
+    /// on the switch captioned about layout.
+    func testTheGatedAndUngatedSetsPartitionTheArrangements() {
         XCTAssertEqual(
-            Set(WindowArrangement.moves).union(WindowArrangement.tilingArrangements),
+            Set(WindowArrangement.ungated).union(WindowArrangement.tilingArrangements),
             Set(WindowArrangement.allCases))
         XCTAssertTrue(
-            Set(WindowArrangement.moves).isDisjoint(with: WindowArrangement.tilingArrangements))
+            Set(WindowArrangement.ungated).isDisjoint(with: WindowArrangement.tilingArrangements))
         XCTAssertEqual(
             Set(WindowArrangement.moves),
             Set([.previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop]))
+        XCTAssertEqual(
+            Set(WindowArrangement.ungated),
+            Set(WindowArrangement.moves).union(WindowArrangement.focusMoves))
+        for swap in WindowArrangement.swaps {
+            XCTAssertTrue(
+                WindowArrangement.tilingArrangements.contains(swap),
+                "a swap rearranges windows, so it waits on the tiling switch")
+        }
     }
 
-    func testEnabledTilingMatchesItsOwnChord() {
+    func testEnabledTilingMatchesItsOwnChord() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = true
-        let left = WindowArrangement.leftHalf.defaultHotkey
+        let left = try XCTUnwrap(WindowArrangement.leftHalf.defaultHotkey)
         XCTAssertEqual(tiling.arrangement(code: left.keyCode, flags: left.modifiers), .leftHalf)
     }
 
     /// Exact match: an extra modifier on top of the binding is a different chord, and must fall
     /// through to whatever app is in front rather than tiling.
-    func testAnExtraModifierDoesNotMatch() {
+    func testAnExtraModifierDoesNotMatch() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = true
-        let left = WindowArrangement.leftHalf.defaultHotkey
+        let left = try XCTUnwrap(WindowArrangement.leftHalf.defaultHotkey)
         XCTAssertNil(
             tiling.arrangement(
                 code: left.keyCode, flags: left.modifiers.union(.maskAlternate)))
@@ -400,19 +436,19 @@ final class WindowTilingTests: XCTestCase {
 
     /// A cleared binding hands its chord back: nothing matches it, and the arrangement is not
     /// silently revived from its default.
-    func testAClearedBindingMatchesNothing() {
+    func testAClearedBindingMatchesNothing() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = true
-        let left = WindowArrangement.leftHalf.defaultHotkey
+        let left = try XCTUnwrap(WindowArrangement.leftHalf.defaultHotkey)
         tiling.bindings[.leftHalf] = nil
         XCTAssertNil(tiling.arrangement(code: left.keyCode, flags: left.modifiers))
     }
 
-    func testClearingOneBindingLeavesTheRestAlone() {
+    func testClearingOneBindingLeavesTheRestAlone() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = true
         tiling.bindings[.leftHalf] = nil
-        let right = WindowArrangement.rightHalf.defaultHotkey
+        let right = try XCTUnwrap(WindowArrangement.rightHalf.defaultHotkey)
         XCTAssertEqual(tiling.arrangement(code: right.keyCode, flags: right.modifiers), .rightHalf)
     }
 
@@ -423,9 +459,9 @@ final class WindowTilingTests: XCTestCase {
         }
     }
 
-    func testTwoArrangementsOnOneChordReportEachOther() {
+    func testTwoArrangementsOnOneChordReportEachOther() throws {
         var tiling = WindowTilingBindings.defaults
-        tiling.bindings[.center] = WindowArrangement.leftHalf.defaultHotkey
+        tiling.bindings[.center] = try XCTUnwrap(WindowArrangement.leftHalf.defaultHotkey)
         XCTAssertEqual(tiling.conflicts(with: .leftHalf), [.center])
         XCTAssertEqual(tiling.conflicts(with: .center), [.leftHalf])
     }
@@ -465,18 +501,42 @@ final class WindowTilingTests: XCTestCase {
     @MainActor
     func testDefaultTilingChordsAreClearOfTheTrigger() {
         let behavior = BehaviorStore.shared
-        for arrangement in WindowArrangement.allCases {
+        for (arrangement, chord) in bound {
             XCTAssertNil(
-                WindowTilingBindings.triggerClaiming(arrangement.defaultHotkey, in: behavior),
+                WindowTilingBindings.triggerClaiming(chord, in: behavior),
                 "\(arrangement.rawValue) collides with a switcher trigger")
         }
     }
 
-    func testEveryArrangementHasADistinctDefaultChord() {
-        let chords = WindowArrangement.allCases.map {
-            "\($0.defaultHotkey.keyCode):\($0.defaultHotkey.modifierRaw)"
+    /// Every arrangement that ships bound holds a chord no other bound one holds.
+    ///
+    /// Restricted to the bound ones, and that is not a weakening of the invariant — it is the whole
+    /// of it. Three families ship with no chord at all, and "they all share the absence of one" is
+    /// not a collision: nothing fires, so nothing can shadow anything.
+    func testEveryBoundArrangementHasADistinctDefaultChord() {
+        let chords = bound.map { "\($0.1.keyCode):\($0.1.modifierRaw)" }
+        XCTAssertEqual(Set(chords).count, bound.count)
+        // A guard on the guard: if every arrangement somehow lost its default, the assertion above
+        // would pass over an empty list.
+        XCTAssertGreaterThan(bound.count, 10)
+    }
+
+    /// The three unbound families are unbound *on purpose* — see `defaultHotkey`. Asserted rather
+    /// than left implicit, because the failure it prevents is silent in both directions: a chord
+    /// added here claims a system-wide combination on every install that has tiling on, and one
+    /// removed from a bound family leaves a documented default that does not exist.
+    func testFocusSwapAndNudgeShipUnbound() {
+        for arrangement in WindowArrangement.focusMoves + WindowArrangement.swaps
+            + WindowArrangement.nudges
+        {
+            XCTAssertNil(
+                arrangement.defaultHotkey, "\(arrangement.rawValue) should ship unbound")
         }
-        XCTAssertEqual(Set(chords).count, WindowArrangement.allCases.count)
+        for arrangement in [WindowArrangement.topThird, .bottomThird, .leftTwoThirds, .rightTwoThirds] {
+            XCTAssertNil(arrangement.defaultHotkey, "\(arrangement.rawValue) should ship unbound")
+        }
+        XCTAssertNotNil(WindowArrangement.larger.defaultHotkey)
+        XCTAssertNotNil(WindowArrangement.smaller.defaultHotkey)
     }
 
     /// Every default is anchored on ⌃⌘, the combination macOS leaves almost entirely free.
@@ -490,9 +550,9 @@ final class WindowTilingTests: XCTestCase {
     /// company here. The invariant that matters is the anchor, not the absence of qualifiers.
     func testDefaultChordsAllHoldControlCommand() {
         let anchor = CGEventFlags.maskControl.union(.maskCommand)
-        for arrangement in WindowArrangement.allCases {
+        for (arrangement, chord) in bound {
             XCTAssertTrue(
-                arrangement.defaultHotkey.heldModifiers.isSuperset(of: anchor),
+                chord.heldModifiers.isSuperset(of: anchor),
                 "\(arrangement.rawValue) should be anchored on ⌃⌘")
         }
     }
@@ -500,22 +560,24 @@ final class WindowTilingTests: XCTestCase {
     /// The qualifier stacking above, asserted directly: bare ⌃⌘ tiles, ⌥ on top moves a Desktop.
     /// Without this the containment test would pass just as happily if every Desktop default
     /// quietly became a bare ⌃⌘ chord and started shadowing a half.
-    func testDesktopMovesQualifyTheAnchorWithOption() {
+    func testDesktopMovesQualifyTheAnchorWithOption() throws {
         for arrangement in [WindowArrangement.previousDesktop, .nextDesktop] {
             XCTAssertTrue(
-                arrangement.defaultHotkey.heldModifiers.contains(.maskAlternate),
+                try XCTUnwrap(arrangement.defaultHotkey).heldModifiers.contains(.maskAlternate),
                 "\(arrangement.rawValue) should add ⌥ to the anchor")
         }
-        XCTAssertFalse(WindowArrangement.leftHalf.defaultHotkey.heldModifiers.contains(.maskAlternate))
+        XCTAssertFalse(
+            try XCTUnwrap(WindowArrangement.leftHalf.defaultHotkey).heldModifiers
+                .contains(.maskAlternate))
     }
 
     /// The shifted display moves must stay distinct from the unshifted halves they share a key with,
     /// or throwing a window to the next display would just tile it right.
-    func testDisplayMovesAreDistinctFromTheHalvesTheyShareAKeyWith() {
+    func testDisplayMovesAreDistinctFromTheHalvesTheyShareAKeyWith() throws {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = true
-        let half = WindowArrangement.leftHalf.defaultHotkey
-        let move = WindowArrangement.previousDisplay.defaultHotkey
+        let half = try XCTUnwrap(WindowArrangement.leftHalf.defaultHotkey)
+        let move = try XCTUnwrap(WindowArrangement.previousDisplay.defaultHotkey)
         XCTAssertEqual(half.keyCode, move.keyCode)
         XCTAssertEqual(tiling.arrangement(code: half.keyCode, flags: half.modifiers), .leftHalf)
         XCTAssertEqual(
@@ -563,6 +625,156 @@ final class WindowTilingTests: XCTestCase {
         where arrangement != .previousDisplay && arrangement != .nextDisplay {
             XCTAssertNil(arrangement.displayStep, "\(arrangement.rawValue) is not a display move")
         }
+    }
+
+    // MARK: - Rows, and two-thirds
+
+    /// The thirds turned on their side: full width, a third of the height, and the bottom one flush
+    /// with the bottom edge rather than two heights down from the top.
+    func testRowThirdsSpanTheWidthAndSitFlush() throws {
+        let top = try XCTUnwrap(frame(.topThird))
+        XCTAssertEqual(top.origin, CGPoint(x: 0, y: 25))
+        XCTAssertEqual(top.width, area.width)
+        XCTAssertEqual(top.height, area.height / 3, accuracy: 0.001)
+        let bottom = try XCTUnwrap(frame(.bottomThird))
+        XCTAssertEqual(bottom.maxY, area.maxY)
+        XCTAssertEqual(bottom.width, area.width)
+        XCTAssertEqual(bottom.height, area.height / 3, accuracy: 0.001)
+    }
+
+    func testTwoThirdsTakeTwoThirdsOfTheWidthOnTheRightSide() throws {
+        let left = try XCTUnwrap(frame(.leftTwoThirds))
+        XCTAssertEqual(left.origin, CGPoint(x: 0, y: 25))
+        XCTAssertEqual(left.height, area.height)
+        XCTAssertEqual(left.width, area.width * 2 / 3, accuracy: 0.001)
+        let right = try XCTUnwrap(frame(.rightTwoThirds))
+        XCTAssertEqual(right.maxX, area.maxX)
+        XCTAssertEqual(right.width, area.width * 2 / 3, accuracy: 0.001)
+    }
+
+    /// A two-thirds tile and the matching third have to add up to the screen, or the pair they exist
+    /// to make leaves a stripe of desktop between them.
+    func testTwoThirdsAndTheOppositeThirdMeet() throws {
+        let left = try XCTUnwrap(frame(.leftTwoThirds))
+        let right = try XCTUnwrap(frame(.rightThird))
+        XCTAssertEqual(left.maxX, right.minX, accuracy: 0.001)
+    }
+
+    // MARK: - Larger and smaller
+
+    /// Growing and shrinking are anchored on the window's own centre, so a press of each returns it
+    /// to where it started. Anchored on the origin instead, the window walks across the screen.
+    func testGrowingThenShrinkingReturnsTheWindowToItsCentre() throws {
+        let grown = try XCTUnwrap(frame(.larger))
+        XCTAssertEqual(grown.midX, window.midX, accuracy: 0.001)
+        XCTAssertEqual(grown.midY, window.midY, accuracy: 0.001)
+        XCTAssertEqual(
+            grown.width, window.width + area.width * WindowArrangement.sizeStepFraction,
+            accuracy: 0.001)
+        let shrunk = WindowArrangement.smaller.frame(in: area, current: grown, fraction: 0.5)
+        XCTAssertEqual(shrunk?.width ?? 0, window.width, accuracy: 0.001)
+        XCTAssertEqual(shrunk?.height ?? 0, window.height, accuracy: 0.001)
+    }
+
+    /// The step is a fraction of the *screen*, not of the window, so it is the same distance however
+    /// small the window is — five per cent of a 200pt palette would be ten points, and a chord that
+    /// visibly does nothing reads as broken.
+    func testTheSizeStepIsMeasuredAgainstTheScreen() throws {
+        let small = CGRect(x: 100, y: 100, width: 200, height: 150)
+        let grown = try XCTUnwrap(
+            WindowArrangement.larger.frame(in: area, current: small, fraction: 0.5))
+        XCTAssertEqual(
+            grown.width - small.width, area.width * WindowArrangement.sizeStepFraction,
+            accuracy: 0.001)
+    }
+
+    func testGrowingStopsAtTheScreenAndStaysOnIt() throws {
+        let huge = CGRect(x: 0, y: 25, width: 1590, height: 995)
+        let grown = try XCTUnwrap(
+            WindowArrangement.larger.frame(in: area, current: huge, fraction: 0.5))
+        XCTAssertLessThanOrEqual(grown.width, area.width)
+        XCTAssertLessThanOrEqual(grown.height, area.height)
+        XCTAssertGreaterThanOrEqual(grown.minX, area.minX)
+        XCTAssertLessThanOrEqual(grown.maxY, area.maxY)
+    }
+
+    /// Shrinking has a floor, so holding the key cannot end at a window too small to grab.
+    func testShrinkingRefusesToGoBelowTheFloor() {
+        let tiny = CGRect(x: 700, y: 500, width: 130, height: 130)
+        XCTAssertNil(
+            WindowArrangement.smaller.frame(in: area, current: tiny, fraction: 0.5),
+            "a press that would take the window under the floor should do nothing")
+    }
+
+    // MARK: - Nudges
+
+    func testEachNudgeMovesItsOwnWayAndKeepsTheSize() throws {
+        for arrangement in WindowArrangement.nudges {
+            let moved = try XCTUnwrap(frame(arrangement))
+            XCTAssertEqual(moved.size, window.size, "\(arrangement.rawValue) resized the window")
+        }
+        let dx = area.width * WindowArrangement.sizeStepFraction
+        let dy = area.height * WindowArrangement.sizeStepFraction
+        XCTAssertEqual(frame(.nudgeRight)?.minX ?? 0, window.minX + dx, accuracy: 0.001)
+        XCTAssertEqual(frame(.nudgeLeft)?.minX ?? 0, window.minX - dx, accuracy: 0.001)
+        // Top-left origin: up is the smaller y.
+        XCTAssertEqual(frame(.nudgeUp)?.minY ?? 0, window.minY - dy, accuracy: 0.001)
+        XCTAssertEqual(frame(.nudgeDown)?.minY ?? 0, window.minY + dy, accuracy: 0.001)
+    }
+
+    /// A nudge stops at the edge rather than walking the window off the display — a chord pressed
+    /// repeatedly and without looking must not be able to lose a window.
+    func testANudgeStopsAtTheScreenEdge() throws {
+        let atEdge = CGRect(x: 0, y: 25, width: 400, height: 300)
+        let pushed = try XCTUnwrap(
+            WindowArrangement.nudgeLeft.frame(in: area, current: atEdge, fraction: 0.5))
+        XCTAssertEqual(pushed, atEdge)
+        let up = try XCTUnwrap(
+            WindowArrangement.nudgeUp.frame(in: area, current: atEdge, fraction: 0.5))
+        XCTAssertEqual(up, atEdge)
+    }
+
+    // MARK: - Focus and swap carry no frame
+
+    /// Both are dispatched before the tiler is reached, and neither has a frame computable from one
+    /// screen — focus moves no window, and a swap needs a second window this function never sees.
+    func testFocusAndSwapHaveNoComputedFrame() {
+        for arrangement in WindowArrangement.focusMoves + WindowArrangement.swaps {
+            XCTAssertNil(frame(arrangement), "\(arrangement.rawValue) should compute no frame")
+        }
+    }
+
+    func testEachDirectionalFamilyStepsAllFourWays() {
+        XCTAssertEqual(WindowArrangement.focusLeft.focusStep, .left)
+        XCTAssertEqual(WindowArrangement.focusDown.focusStep, .down)
+        XCTAssertEqual(WindowArrangement.swapRight.swapStep, .right)
+        XCTAssertEqual(WindowArrangement.nudgeUp.nudgeStep, .up)
+        // Disjoint: nothing is two of these at once, or the controller's branch order would decide
+        // what a chord means.
+        for arrangement in WindowArrangement.allCases {
+            let kinds = [
+                arrangement.focusStep != nil, arrangement.swapStep != nil,
+                arrangement.nudgeStep != nil, arrangement.sizeStep != nil,
+                arrangement.displayStep != nil, arrangement.desktopStep != nil,
+            ].filter { $0 }
+            XCTAssertLessThanOrEqual(
+                kinds.count, 1, "\(arrangement.rawValue) belongs to two families")
+        }
+    }
+
+    /// The relative families cannot be a launch arrangement: every one of them is defined against
+    /// where the window already is, and a window that has only just appeared is wherever its app put
+    /// it — so "a little bigger than that" is not a placement anyone can have meant.
+    func testTheRelativeFamiliesAreNotLaunchable() {
+        for arrangement in WindowArrangement.nudges + WindowArrangement.swaps
+            + [WindowArrangement.larger, .smaller]
+        {
+            XCTAssertFalse(
+                WindowArrangement.launchable.contains(arrangement),
+                "\(arrangement.rawValue) should not be offered as a launch arrangement")
+        }
+        XCTAssertTrue(WindowArrangement.launchable.contains(.leftHalf))
+        XCTAssertTrue(WindowArrangement.launchable.contains(.topThird))
     }
 }
 

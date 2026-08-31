@@ -39,10 +39,16 @@ final class ShortcutAuditTests: XCTestCase {
     }
 
     /// The shipping defaults, through the real binding table: nothing to warn about.
+    ///
+    /// `compactMap`, because the table no longer holds an entry for every arrangement: three
+    /// families ship unbound and are absent from it entirely, which is how `defaults` expresses
+    /// "no chord" — see `WindowArrangement.defaultHotkey`. An unbound arrangement contributes no
+    /// entry here for the same reason `ShortcutAudit.entries` gives it a nil chord: it cannot
+    /// collide with anything, because it never fires.
     func testDefaultTilingBindingsAreConflictFree() {
         let defaults = WindowTilingBindings.defaults
-        let entries = WindowArrangement.allCases.map { arrangement -> ShortcutEntry in
-            let hotkey = defaults.bindings[arrangement]!
+        let entries = WindowArrangement.allCases.compactMap { arrangement -> ShortcutEntry? in
+            guard let hotkey = defaults.bindings[arrangement] else { return nil }
             return entry(
                 .tiling, "tiling.\(arrangement.rawValue)", key: hotkey.keyCode,
                 hotkey.modifiers)

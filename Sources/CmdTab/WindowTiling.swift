@@ -9,14 +9,28 @@ import CoreGraphics
 // Ordinary global chords, matched when nothing is open: they act on whatever window the user is
 // looking at, not on anything the switcher has selected.
 
-/// One arrangement the focused window can be snapped to.
+/// One thing a global window chord can do.
+///
+/// It began as "an arrangement the focused window can be snapped to", and the name still says so,
+/// but three families have since joined that do not resize anything: the display and Desktop moves,
+/// the four nudges, and — since focus and swap arrived — two that do not even act on geometry alone.
+/// They live here rather than in a store of their own because everything *around* a binding is the
+/// same work whatever the binding does: persistence that can tell "cleared" from "never set", a
+/// recorder, cross-store conflict detection, the per-app `neverTile` guard and the Overview. A
+/// parallel enum would have duplicated all of it to express one extra verb.
 enum WindowArrangement: String, CaseIterable, Identifiable {
     case leftHalf, rightHalf, topHalf, bottomHalf
     case leftThird, centerThird, rightThird
+    case topThird, bottomThird
+    case leftTwoThirds, rightTwoThirds
     case topLeft, topRight, bottomLeft, bottomRight
     case maximize, center, restore
+    case larger, smaller
+    case nudgeLeft, nudgeRight, nudgeUp, nudgeDown
     case previousDisplay, nextDisplay
     case previousDesktop, nextDesktop
+    case focusLeft, focusRight, focusUp, focusDown
+    case swapLeft, swapRight, swapUp, swapDown
 
     var id: String { rawValue }
 
@@ -33,20 +47,56 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .leftThird: return "Left third"
         case .centerThird: return "Middle third"
         case .rightThird: return "Right third"
+        case .topThird: return "Top third"
+        case .bottomThird: return "Bottom third"
+        case .leftTwoThirds: return "Left two-thirds"
+        case .rightTwoThirds: return "Right two-thirds"
         case .maximize: return "Maximize"
         case .center: return "Center"
         case .restore: return "Restore previous size"
+        case .larger: return "Make larger"
+        case .smaller: return "Make smaller"
+        case .nudgeLeft: return "Nudge left"
+        case .nudgeRight: return "Nudge right"
+        case .nudgeUp: return "Nudge up"
+        case .nudgeDown: return "Nudge down"
         case .previousDisplay: return "Move to previous display"
         case .nextDisplay: return "Move to next display"
         case .previousDesktop: return "Move to previous desktop"
         case .nextDesktop: return "Move to next desktop"
+        case .focusLeft: return "Focus window to the left"
+        case .focusRight: return "Focus window to the right"
+        case .focusUp: return "Focus window above"
+        case .focusDown: return "Focus window below"
+        case .swapLeft: return "Swap with window to the left"
+        case .swapRight: return "Swap with window to the right"
+        case .swapUp: return "Swap with window above"
+        case .swapDown: return "Swap with window below"
         }
     }
 
     /// Defaults sit on ⌃⌘, which macOS itself leaves almost entirely free. Pre-filled but inert —
     /// nothing is claimed until tiling is switched on, so an install that never wants this never
     /// has a global chord taken from it.
-    var defaultHotkey: Hotkey {
+    ///
+    /// **nil means shipped unbound**, which is a different statement from every other absence in
+    /// this file: `WindowTilingBindings.load` reads a *missing stored key* as "this install predates
+    /// the binding" and takes the default, so an arrangement with no default is one that stays
+    /// unbound until someone records a chord for it. Three families are in that state and each for
+    /// the same reason — there is no key left that means them.
+    ///
+    /// The arrow space is exhausted. ⌃⌘-arrow is the halves, ⌃⇧⌘-arrow the display moves and
+    /// ⌃⌥⌘-arrow the Desktop moves, which leaves the four-modifier ⌃⌥⇧⌘ as the only free arrow
+    /// combination on the machine — and claiming *that* on someone's behalf, for a feature they have
+    /// not asked for, is the guess `GlobalActions` declines to make for exactly the same reason. So
+    /// focus, swap and the nudges arrive as rows with a recorder and no chord, one click from being
+    /// bound, and nobody who does not want them pays a keystroke for them.
+    ///
+    /// The two thirds pairs are unbound on a second argument as well: the width cycle already
+    /// reaches them. Pressing ⌃⌘← twice gives the left two-thirds and three times the left third, so
+    /// a direct binding is a convenience for anyone who wants one press and a known destination
+    /// rather than a position in a cycle — worth offering, not worth a chord by default.
+    var defaultHotkey: Hotkey? {
         let mods = CGEventFlags.maskControl.union(.maskCommand).rawValue
         switch self {
         case .leftHalf: return Hotkey(keyCode: 123, modifierRaw: mods)  // ←
@@ -65,6 +115,16 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .maximize: return Hotkey(keyCode: 36, modifierRaw: mods)  // ↩
         case .center: return Hotkey(keyCode: 8, modifierRaw: mods)  // C
         case .restore: return Hotkey(keyCode: 6, modifierRaw: mods)  // Z
+        // The one pair with a key everyone already knows: = grows and - shrinks, the convention
+        // every application that has a zoom level uses, and both are free on ⌃⌘.
+        case .larger: return Hotkey(keyCode: 24, modifierRaw: mods)  // =
+        case .smaller: return Hotkey(keyCode: 27, modifierRaw: mods)  // -
+        // Unbound — see the note above. Stated case by case rather than swept up in a `default`, so
+        // adding an arrangement forces a decision about its chord instead of silently taking none.
+        case .topThird, .bottomThird, .leftTwoThirds, .rightTwoThirds: return nil
+        case .nudgeLeft, .nudgeRight, .nudgeUp, .nudgeDown: return nil
+        case .focusLeft, .focusRight, .focusUp, .focusDown: return nil
+        case .swapLeft, .swapRight, .swapUp, .swapDown: return nil
         // ⇧ on top of the halves' arrows: same key, "throw it further".
         case .previousDisplay:
             return Hotkey(
@@ -103,6 +163,58 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Which way this moves *focus*, or nil if it does not move focus.
+    var focusStep: WindowDirection? {
+        switch self {
+        case .focusLeft: return .left
+        case .focusRight: return .right
+        case .focusUp: return .up
+        case .focusDown: return .down
+        default: return nil
+        }
+    }
+
+    /// Which way this exchanges the focused window with its neighbour, or nil if it does not.
+    var swapStep: WindowDirection? {
+        switch self {
+        case .swapLeft: return .left
+        case .swapRight: return .right
+        case .swapUp: return .up
+        case .swapDown: return .down
+        default: return nil
+        }
+    }
+
+    /// Which way this nudges the window, or nil if it does not nudge.
+    var nudgeStep: WindowDirection? {
+        switch self {
+        case .nudgeLeft: return .left
+        case .nudgeRight: return .right
+        case .nudgeUp: return .up
+        case .nudgeDown: return .down
+        default: return nil
+        }
+    }
+
+    /// How this changes the window's size, as a multiple of `sizeStepFraction`, or nil.
+    var sizeStep: CGFloat? {
+        switch self {
+        case .larger: return 1
+        case .smaller: return -1
+        default: return nil
+        }
+    }
+
+    /// How far one `larger`, `smaller` or nudge press moves things, as a fraction of the display.
+    ///
+    /// Measured against the screen rather than the window, which is what makes a press feel the same
+    /// size whatever it is aimed at: five per cent of a 200pt palette is two points, and a chord that
+    /// visibly does nothing on small windows reads as broken. It also means the step is the same
+    /// distance in both directions, where a percentage of the window shrinks by less than it grew.
+    ///
+    /// A twentieth: twenty presses cross the screen, four take a window from half to nearly full.
+    static let sizeStepFraction: CGFloat = 0.05
+
     /// Whether this sends the window somewhere else rather than resizing it where it is.
     ///
     /// Two families now, and the note that used to sit here said the Desktop half could not be
@@ -118,11 +230,36 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// Desktop moves carry a second switch of their own on top — see `desktopMoves` there.
     var isMove: Bool { displayStep != nil || desktopStep != nil }
 
+    /// Whether this only moves the keyboard focus, changing no window's geometry at all.
+    var isFocus: Bool { focusStep != nil }
+
     /// The moves, in the order the Windows tab lists them.
     static let moves: [WindowArrangement] = allCases.filter(\.isMove)
 
+    /// The focus chords, in the order the Windows tab lists them.
+    static let focusMoves: [WindowArrangement] = allCases.filter(\.isFocus)
+
+    /// The swaps, likewise.
+    static let swaps: [WindowArrangement] = allCases.filter { $0.swapStep != nil }
+
+    /// The nudges, likewise.
+    static let nudges: [WindowArrangement] = allCases.filter { $0.nudgeStep != nil }
+
+    /// Everything the tiling switch does **not** govern.
+    ///
+    /// Two families, on one argument: neither resizes anything. A move carries a window to another
+    /// display or Desktop at exactly the size it already had, and a focus chord touches no window's
+    /// frame whatsoever — so "I don't want Cmd-Tab resizing my windows" is not a reason to lose
+    /// either, and a chord that silently did nothing because of a checkbox captioned about tiling is
+    /// the failure this split exists to avoid.
+    ///
+    /// A **swap** is deliberately on the other side of the line. It moves two windows into each
+    /// other's frames, which is a layout change however you describe it, so it waits on the switch
+    /// with the rest of the tiler.
+    static let ungated: [WindowArrangement] = allCases.filter { $0.isMove || $0.isFocus }
+
     /// Everything gated on the tiling switch.
-    static let tilingArrangements: [WindowArrangement] = allCases.filter { !$0.isMove }
+    static let tilingArrangements: [WindowArrangement] = allCases.filter { !ungated.contains($0) }
 
     /// The arrangements a window can be given the moment it opens (`AppRule.launchArrangement`).
     ///
@@ -130,18 +267,33 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// is" is not a placement for a window that has only just appeared. `.restore` goes too: its
     /// whole definition is the frame the window had before it was first tiled, and a window on its
     /// first frame has no such history, so it would silently do nothing.
-    static let launchable: [WindowArrangement] = tilingArrangements.filter { $0 != .restore }
+    ///
+    /// The nudges, the two size steps and the swaps go for the first of those reasons: every one of
+    /// them is defined against where the window already is, and a window that has only just appeared
+    /// is wherever its app put it — so "a little bigger than that" is not a placement anyone can
+    /// have meant. A swap has a second disqualification on top, which is that it needs a neighbour
+    /// to swap with and a launching window has no established place among its neighbours yet.
+    static let launchable: [WindowArrangement] = tilingArrangements.filter {
+        $0 != .restore && $0.sizeStep == nil && $0.nudgeStep == nil && $0.swapStep == nil
+    }
 
     /// Whether a gap applies. Only the arrangements that *tile* — the ones whose frame is a
     /// fraction of the screen — take one. `.center` keeps the window's own size and `.restore` puts
     /// back a frame the user chose themselves, so insetting either would be Cmd-Tab second-guessing
     /// a size it did not pick; the moves change no geometry at all.
+    ///
+    /// The nudges and the two size steps join `.center` on the same reasoning, and it is worth
+    /// spelling out because the opposite looks plausible: they *do* resize and reposition, so a gap
+    /// could be applied — but the size they produce is the one the user arrived at by pressing the
+    /// key, not a fraction of the screen this app chose. Insetting it would mean every press of
+    /// "make larger" grew the window and then quietly took some of it back, and holding the key
+    /// would walk the window off its own anchor a gap at a time.
     var takesGap: Bool {
         switch self {
         case .center, .restore, .previousDisplay, .nextDisplay, .previousDesktop,
             .nextDesktop:
             return false
-        default: return true
+        default: return sizeStep == nil && nudgeStep == nil && focusStep == nil && swapStep == nil
         }
     }
 
@@ -197,6 +349,26 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
             return CGRect(
                 x: area.maxX - area.width / 3, y: area.minY,
                 width: area.width / 3, height: area.height)
+        // The thirds turned on their side: full width, a third of the height. Written as
+        // `maxY - height` rather than `minY + 2 * height` for the trailing one, exactly as the right
+        // third is, so it lands flush against the bottom edge whatever the division rounds to.
+        case .topThird:
+            return CGRect(x: area.minX, y: area.minY, width: area.width, height: area.height / 3)
+        case .bottomThird:
+            return CGRect(
+                x: area.minX, y: area.maxY - area.height / 3,
+                width: area.width, height: area.height / 3)
+        case .leftTwoThirds:
+            return CGRect(
+                x: area.minX, y: area.minY, width: area.width * 2 / 3, height: area.height)
+        case .rightTwoThirds:
+            return CGRect(
+                x: area.maxX - area.width * 2 / 3, y: area.minY,
+                width: area.width * 2 / 3, height: area.height)
+        case .larger, .smaller:
+            return resized(current, in: area)
+        case .nudgeLeft, .nudgeRight, .nudgeUp, .nudgeDown:
+            return nudged(current, in: area)
         case .maximize:
             return area
         case .center:
@@ -210,8 +382,65 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
                 width: size.width, height: size.height)
         case .restore, .previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop:
             return nil
+        // Focus moves no window, and a swap needs a second window this function has never been told
+        // about. Both are dispatched before the tiler is ever reached — see
+        // `SwitcherController.applyTiling` — and answer nil here for the same reason `.restore` does:
+        // there is no frame computable from this screen alone.
+        case .focusLeft, .focusRight, .focusUp, .focusDown,
+            .swapLeft, .swapRight, .swapUp, .swapDown:
+            return nil
         }
     }
+
+    /// `current` grown or shrunk by one step, anchored on its own centre and held inside `area`.
+    ///
+    /// Anchored on the centre rather than the top-left, because the alternative is a window that
+    /// walks: growing from a fixed origin pushes the far edge out and shrinking pulls it back, so a
+    /// press of each does not return you to where you started. From the centre it does.
+    ///
+    /// Then clamped, which does two things at once — a window grown past the screen stops at the
+    /// screen, and one grown near an edge is pushed back on rather than left hanging off it. The
+    /// floor is what stops repeated shrinking from ending at a window nobody can grab: at the point
+    /// where a further press would take it under `minimumSize`, the press does nothing instead.
+    private func resized(_ current: CGRect, in area: CGRect) -> CGRect? {
+        guard let step = sizeStep else { return nil }
+        let dx = area.width * Self.sizeStepFraction * step
+        let dy = area.height * Self.sizeStepFraction * step
+        let size = CGSize(
+            width: min(current.width + dx, area.width),
+            height: min(current.height + dy, area.height))
+        guard size.width >= Self.minimumSize, size.height >= Self.minimumSize else { return nil }
+        let grown = CGRect(
+            x: current.midX - size.width / 2, y: current.midY - size.height / 2,
+            width: size.width, height: size.height)
+        return WindowTiler.clamp(grown, into: area)
+    }
+
+    /// `current` moved one step in the nudge's direction, keeping its size, held inside `area`.
+    ///
+    /// Clamped rather than allowed off the edge, which is the one debatable call here: someone may
+    /// genuinely want a window half off screen, and a plain drag lets them have it. A *chord* is a
+    /// different thing — it is pressed repeatedly and without looking, so an unclamped nudge held
+    /// down walks a window off the display and leaves no titlebar to drag it back with. The gesture
+    /// that can lose a window should be the one where you can see it going.
+    private func nudged(_ current: CGRect, in area: CGRect) -> CGRect? {
+        guard let direction = nudgeStep else { return nil }
+        let dx = area.width * Self.sizeStepFraction
+        let dy = area.height * Self.sizeStepFraction
+        let moved: CGRect
+        switch direction {
+        case .left: moved = current.offsetBy(dx: -dx, dy: 0)
+        case .right: moved = current.offsetBy(dx: dx, dy: 0)
+        // Top-left origin: "up" is toward the smaller y. See `WindowDirection.isAhead`.
+        case .up: moved = current.offsetBy(dx: 0, dy: -dy)
+        case .down: moved = current.offsetBy(dx: 0, dy: dy)
+        }
+        return WindowTiler.clamp(moved, into: area)
+    }
+
+    /// The smallest a window may be shrunk to. Roughly a titlebar's worth in each direction — enough
+    /// to still carry the traffic lights and be grabbed with a cursor.
+    private static let minimumSize: CGFloat = 120
 }
 
 /// Insets a tiled frame so windows do not touch the screen edges or each other.
@@ -289,14 +518,37 @@ struct WindowTilingBindings: Equatable {
     /// something out of the way — a build log, a chat window — is a *throw*, and following it would
     /// undo the point of the gesture. Only meaningful while `desktopMoves` is on.
     var followsDesktopMove: Bool = true
+    /// Whether a *display* move warps the pointer onto the window it just carried across.
+    ///
+    /// The Desktop equivalent above is on by default and this one is off, which looks inconsistent
+    /// until you notice they are answering different questions. Following a Desktop move is about
+    /// *what you can see*: without it you are left looking at the space the window has just left, so
+    /// the default has to be the one where the gesture has a visible result. Every display is on
+    /// screen at once, so a display move is already visible wherever the pointer is — this setting
+    /// only decides whether the cursor is moved for you, and moving someone's pointer is a liberty
+    /// worth asking for. Off by default for the same reason `DesktopMover` is: this app takes the
+    /// pointer only when told to.
+    var pointerFollowsDisplayMove: Bool = false
+    /// Put the windows back where they were the last time this set of displays was attached.
+    ///
+    /// Off by default, on the plainest possible argument: it moves windows the user did not ask it
+    /// to move, at a moment they are not looking at the screen — a laptop being docked is usually a
+    /// laptop being carried. Everything else in this app that rearranges something waits to be
+    /// asked, and this one rearranges the most at once. See `DisplayLayouts`.
+    var restoresLayoutOnDisplayChange: Bool = false
     /// Pixels of space left around a tiled window: the whole gap against a screen edge, half of it
     /// where two tiles meet. 0 keeps windows flush, which is what tiling has always done.
     var gap: CGFloat = 0
     var bindings: [WindowArrangement: Hotkey]
 
+    /// `compactMap` rather than `map`: an arrangement with no `defaultHotkey` is one that ships
+    /// unbound, and leaving it out of this table is what expresses that — `load()` then finds no
+    /// stored chord and no default, and the row appears with a recorder and nothing in it.
     static let defaults = WindowTilingBindings(
         bindings: Dictionary(
-            uniqueKeysWithValues: WindowArrangement.allCases.map { ($0, $0.defaultHotkey) }))
+            uniqueKeysWithValues: WindowArrangement.allCases.compactMap { arrangement in
+                arrangement.defaultHotkey.map { (arrangement, $0) }
+            }))
 
     /// Whether `hotkey` can never fire because a switcher trigger claims it first.
     ///
@@ -337,14 +589,15 @@ struct WindowTilingBindings: Equatable {
     /// the same way rather than depending on dictionary ordering. Exact modifier match, so ⌃⌘←
     /// stays distinct from ⌃⌥⌘←.
     ///
-    /// With tiling switched off the geometry arrangements are skipped but the **moves** still
-    /// match. The switch is about Cmd-Tab resizing windows; sending one to the next display or
-    /// Desktop changes no layout, and gating it behind a checkbox captioned about tiling made a
-    /// bound chord do nothing with no visible cause. The cost is that these four chords are claimed
-    /// system-wide as soon as they are bound, tiling on or off — which is what the pane says.
+    /// With tiling switched off the geometry arrangements are skipped but the **moves** and the
+    /// **focus** chords still match. The switch is about Cmd-Tab resizing windows; sending one to
+    /// the next display or Desktop changes no layout, moving focus changes no window at all, and
+    /// gating either behind a checkbox captioned about tiling made a bound chord do nothing with no
+    /// visible cause. The cost is that those chords are claimed system-wide as soon as they are
+    /// bound, tiling on or off — which is what the pane says. See `WindowArrangement.ungated`.
     func arrangement(code: Int, flags: CGEventFlags) -> WindowArrangement? {
         let held = flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-        let candidates = (isEnabled ? WindowArrangement.allCases : WindowArrangement.moves)
+        let candidates = (isEnabled ? WindowArrangement.allCases : WindowArrangement.ungated)
             // The Desktop moves answer to their own switch as well, so with it off their chords go
             // back to whatever app wants them rather than being claimed and doing nothing.
             .filter { desktopMoves || $0.desktopStep == nil }
@@ -373,6 +626,7 @@ final class WindowTilingStore: ObservableObject {
         static let dragSnap = "windowTilingDragSnap"
         static let desktopMoves = "windowTilingDesktopMoves"
         static let followsDesktopMove = "windowTilingFollowsDesktopMove"
+        static let pointerFollowsDisplay = "windowTilingPointerFollowsDisplay"
         static let gap = "windowTilingGap"
         /// The four per-edge gaps, from the version that split this setting in four. Read once to
         /// migrate back to a single value, never written. See `load`.
@@ -386,15 +640,19 @@ final class WindowTilingStore: ObservableObject {
         static let mouseDrag = "windowMouseDragEnabled"
         static let mouseMove = "windowMouseDragMoveModifiers"
         static let mouseResize = "windowMouseDragResizeModifiers"
+        static let focusFollows = "focusFollowsMouseEnabled"
+        static let focusFollowsDelay = "focusFollowsMouseDelay"
+        static let restoreOnDisplayChange = "restoreLayoutOnDisplayChange"
     }
 
     /// Every key this store owns, for export/import/reset.
     static let defaultsKeys = [
         Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap, Key.desktopMoves,
-        Key.followsDesktopMove,
+        Key.followsDesktopMove, Key.pointerFollowsDisplay,
         Key.gap, Key.gapTop, Key.gapBottom, Key.gapLeft, Key.gapRight,
         Key.dotHex, Key.outlineHex, Key.landingHex,
         Key.mouseDrag, Key.mouseMove, Key.mouseResize,
+        Key.focusFollows, Key.focusFollowsDelay, Key.restoreOnDisplayChange,
     ]
 
     @Published private(set) var tiling: WindowTilingBindings = .defaults
@@ -416,11 +674,41 @@ final class WindowTilingStore: ObservableObject {
     /// bindings, the mouse tap takes these — and pushing one through the other's channel would
     /// rebuild a tap on every unrelated edit.
     var onMouseDragChange: ((MouseDragSettings) -> Void)?
+    /// Same arrangement again, and a third channel rather than a second field on `MouseDragSettings`:
+    /// that value is read by a live `CGEventTap` which is torn down and rebuilt when it changes, and
+    /// this one is read by an `NSEvent` monitor that is not.
+    var onFocusFollowsChange: ((FocusFollowsMouseSettings) -> Void)?
 
     /// Modifier-drag to move or resize. Its own value rather than a field on
     /// `WindowTilingBindings`: the bindings struct is the snapshot the *key* tap reads on every
     /// keystroke, and this is only ever read by the mouse tap.
     @Published private(set) var mouseDrag = MouseDragSettings()
+
+    /// Focus follows the pointer. Its own value and its own channel for the same reason `mouseDrag`
+    /// is separate from the bindings: it is read by an object the key tap never touches, and pushing
+    /// it through the bindings' callback would rebuild the keyboard tap on every unrelated edit.
+    @Published private(set) var focusFollows = FocusFollowsMouseSettings()
+
+    var focusFollowsMouse: Bool {
+        get { focusFollows.isEnabled }
+        set {
+            guard newValue != focusFollows.isEnabled else { return }
+            focusFollows.isEnabled = newValue
+            persist()
+        }
+    }
+
+    var focusFollowsMouseDelay: Double {
+        get { focusFollows.delay }
+        set {
+            let clamped = min(
+                max(newValue, FocusFollowsMouseSettings.minimumDelay),
+                FocusFollowsMouseSettings.maximumDelay)
+            guard clamped != focusFollows.delay else { return }
+            focusFollows.delay = clamped
+            persist()
+        }
+    }
 
     var mouseDragEnabled: Bool {
         get { mouseDrag.isEnabled }
@@ -547,9 +835,28 @@ final class WindowTilingStore: ObservableObject {
         }
     }
 
+    var pointerFollowsDisplayMove: Bool {
+        get { tiling.pointerFollowsDisplayMove }
+        set {
+            guard newValue != tiling.pointerFollowsDisplayMove else { return }
+            tiling.pointerFollowsDisplayMove = newValue
+            persist()
+        }
+    }
+
+    var restoresLayoutOnDisplayChange: Bool {
+        get { tiling.restoresLayoutOnDisplayChange }
+        set {
+            guard newValue != tiling.restoresLayoutOnDisplayChange else { return }
+            tiling.restoresLayoutOnDisplayChange = newValue
+            persist()
+        }
+    }
+
     private init() {
         tiling = Self.load()
         mouseDrag = Self.loadMouseDrag()
+        focusFollows = Self.loadFocusFollows()
         loadSnapColors()
     }
 
@@ -669,9 +976,28 @@ final class WindowTilingStore: ObservableObject {
     func reload() {
         tiling = Self.load()
         mouseDrag = Self.loadMouseDrag()
+        focusFollows = Self.loadFocusFollows()
         loadSnapColors()
         onChange?(tiling)
         onMouseDragChange?(mouseDrag)
+        onFocusFollowsChange?(focusFollows)
+    }
+
+    /// The two focus-follows keys. An absent delay takes the built-in default rather than zero, and
+    /// a stored one is clamped on read — a hand-edited config asking for no delay at all would make
+    /// every sweep of the pointer across the desk a focus change, which is the one setting of this
+    /// value that is never what anyone wanted.
+    private static func loadFocusFollows() -> FocusFollowsMouseSettings {
+        let defaults = UserDefaults.standard
+        var result = FocusFollowsMouseSettings()
+        result.isEnabled = defaults.bool(forKey: Key.focusFollows)
+        if defaults.object(forKey: Key.focusFollowsDelay) != nil {
+            result.delay = min(
+                max(defaults.double(forKey: Key.focusFollowsDelay),
+                    FocusFollowsMouseSettings.minimumDelay),
+                FocusFollowsMouseSettings.maximumDelay)
+        }
+        return result
     }
 
     /// Stored as the two chords' raw modifier bits plus a switch.
@@ -716,6 +1042,10 @@ final class WindowTilingStore: ObservableObject {
         result.followsDesktopMove =
             defaults.object(forKey: Key.followsDesktopMove) != nil
             ? defaults.bool(forKey: Key.followsDesktopMove) : true
+        // Defaults to false, so absent and false mean the same thing and `bool(forKey:)` answers
+        // both correctly — no telling apart needed, unlike the two above it.
+        result.pointerFollowsDisplayMove = defaults.bool(forKey: Key.pointerFollowsDisplay)
+        result.restoresLayoutOnDisplayChange = defaults.bool(forKey: Key.restoreOnDisplayChange)
         // Absent means never set, which is 0 — `double(forKey:)` already reports 0 for a missing
         // key, so the two cases need no telling apart here.
         //
@@ -750,11 +1080,16 @@ final class WindowTilingStore: ObservableObject {
         defaults.set(Int(bitPattern: UInt(mouseDrag.move.rawValue)), forKey: Key.mouseMove)
         defaults.set(Int(bitPattern: UInt(mouseDrag.resize.rawValue)), forKey: Key.mouseResize)
         onMouseDragChange?(mouseDrag)
+        defaults.set(focusFollows.isEnabled, forKey: Key.focusFollows)
+        defaults.set(focusFollows.delay, forKey: Key.focusFollowsDelay)
+        onFocusFollowsChange?(focusFollows)
         defaults.set(tiling.isEnabled, forKey: Key.enabled)
         defaults.set(tiling.cycleWidths, forKey: Key.cycleWidths)
         defaults.set(tiling.dragSnap, forKey: Key.dragSnap)
         defaults.set(tiling.desktopMoves, forKey: Key.desktopMoves)
         defaults.set(tiling.followsDesktopMove, forKey: Key.followsDesktopMove)
+        defaults.set(tiling.pointerFollowsDisplayMove, forKey: Key.pointerFollowsDisplay)
+        defaults.set(tiling.restoresLayoutOnDisplayChange, forKey: Key.restoreOnDisplayChange)
         defaults.set(Double(tiling.gap), forKey: Key.gap)
         // The four per-edge keys are deliberately not written back. They are a migration source
         // only — see `load()` — and left where they are, so a downgrade finds what it wrote.
@@ -891,7 +1226,8 @@ enum WindowTiler {
     /// they have no cursor to consult.
     static func apply(
         _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
-        gap: CGFloat = 0, target: Target? = nil, destination: CGRect? = nil
+        gap: CGFloat = 0, target: Target? = nil, destination: CGRect? = nil,
+        warpsPointer: Bool = false
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
@@ -968,6 +1304,23 @@ enum WindowTiler {
             // One call rather than three, so tiling this app's own settings window takes a single
             // hop onto the main thread instead of three — see `AX.onOwningThread`.
             AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
+
+            // Only the display moves offer this, and only when asked. Warped *after* the frame is
+            // written rather than alongside it: the cursor is being sent to where the window now is,
+            // and on the two hosts whose Accessibility writes land late it would otherwise be sent
+            // to where the window was about to be.
+            //
+            // `CGWarpMouseCursorPosition` takes the global display space, which shares its origin
+            // and its downward y with the Accessibility coordinates `target` is already in — so the
+            // centre needs no flip. The same call, in the same space, that `DesktopMover` uses to
+            // put the pointer on a window before it drags one.
+            if warpsPointer, arrangement.displayStep != nil {
+                CGWarpMouseCursorPosition(CGPoint(x: target.midX, y: target.midY))
+                // Without this the pointer is *drawn* at the new place while the window server keeps
+                // feeding mouse deltas relative to the old one, so the next flick of the trackpad
+                // snaps it back across the desk. Re-associating is what makes a warp stick.
+                CGAssociateMouseAndMouseCursorPosition(1)
+            }
         }
     }
 

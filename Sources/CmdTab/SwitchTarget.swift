@@ -85,6 +85,15 @@ struct SwitchTarget: Identifiable {
     /// Which Space (0-based) a window is on, set only in window mode with more than one Space.
     /// nil the rest of the time, which is what suppresses the Space badge.
     var spaceIndex: Int? = nil
+    /// The raw id of the Space this window is on, set whenever the window server could place it.
+    ///
+    /// Distinct from `spaceIndex`, which is a *position* in today's Desktop ordering and is
+    /// deliberately left nil on a single-Desktop machine so no badge is drawn. This is the identity,
+    /// and the "windows on this Desktop" filter compares it against `SpaceMover.currentSpaceIDs()`
+    /// read at the moment the panel opens — the window's Space does not change when you switch
+    /// Desktops, but which Space is in front does, so only one half of that comparison can be
+    /// allowed to age with the target list.
+    var spaceID: UInt64? = nil
     /// The app's Dock notification badge ("3", "•"), when it has one.
     var badge: String? = nil
 

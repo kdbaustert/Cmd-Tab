@@ -279,7 +279,7 @@ running the XML through Jekyll and mangling it.
 | --- | --- | --- |
 | Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
 | Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
-| Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, or minimized windows. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. | None |
+| Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, windows on the current **Desktop**, or minimized windows. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. | None |
 | Overview | Every binding in the app in one list, with cross-store conflicts flagged. Each pane warns about clashes inside its own store; nothing could see *across* them, and the kinds of binding are spread over several stores — a tiling chord and a direct activation on the same keys produced no warning anywhere. Shows which of a clashing pair actually fires. | — |
 | In-switcher keys | The keys the panel handles while it is open, listed for reference: Tab/⇧Tab and ←/→ move the selection, Return switches, 1–9/0 jump, typing filters, ⌫ deletes a filter character, ⎋ closes. Not rebindable. | — |
 
@@ -296,7 +296,16 @@ you are looking at, which is why they are not on the Shortcuts tab with the swit
 | Halves | Left, right, top, bottom. | ⌃⌘ ← → ↑ ↓ |
 | Thirds | Left, middle, right — a third of the width, full height. | ⌃⌘ 1 2 3 |
 | Corners | Top-left, top-right, bottom-left, bottom-right — each a quarter of the usable area. | ⌃⌘ U I J K |
+| Thirds (rows) | Top and bottom — full width, a third of the height. Unbound: pressing ⌃⌘↑ three times already lands there, so these are for anyone who wants one press and a fixed destination rather than a position in the width cycle. | Unbound |
+| Two-thirds | Left and right — the ⅔ half of a ⅔/⅓ pair. Unbound for the same reason: ⌃⌘← twice is the same tile. | Unbound |
+| Make larger / smaller | Grows or shrinks the window by a twentieth of the *screen* a press, anchored on the window's own centre so a press of each returns it to where it started. Measured against the screen rather than the window, so the step is the same size whatever it is aimed at; clamped to the display, and with a floor so repeated shrinking cannot end at a window too small to grab. | ⌃⌘ = − |
+| Nudge | Moves the window without resizing it, a twentieth of the screen a press. Stops at the screen edge rather than walking the window off it — a chord pressed repeatedly and without looking must not be able to lose one. | Unbound |
+| Swap | Exchanges the focused window's frame with the window in that direction. The two take each other's exact frames — no gap, no fraction — so the inverse is the same chord the other way. Gated on the tiling switch, unlike Focus below: a swap moves two windows, which is a layout change however you describe it. | Unbound |
 | Move to previous / next display | Keeps the window's size and its relative position on the new display. ⇧ on the halves' own arrows: same key, "throw it further". Fires whether or not tiling is on. | ⌃⇧⌘ ← → |
+| Take the pointer along | Warp the cursor onto the window after a display move, so the next click and the next hover are where you are looking. Off by default — every display is on screen at once, so the move is already visible wherever the pointer is, and moving someone's pointer is a liberty worth asking for. (Following a *Desktop* move defaults to **on**, and the difference is not inconsistency: without it you are left looking at the space the window has just left.) | Off |
+| Restore the layout when displays change | Remembers where every window sat under each set of monitors and puts them back when that set returns — the undo macOS has never had for undocking. See [Restoring a layout across a display change](#restoring-a-layout-across-a-display-change). | Off |
+| Focus left / right / up / down | Moves the **keyboard** to the nearest window in that direction. The other half of tiling, which could always place windows and never let you walk between them. Live whether or not tiling is on, since focus resizes nothing. Unbound by default: ⌃⌘, ⌃⇧⌘ and ⌃⌥⌘ arrows are all spoken for, and the only combination left is the four-modifier ⌃⌥⇧⌘. | Unbound |
+| Focus follows the pointer | Rest the cursor over a window and the keyboard goes to it, with no click. Off by default, with a rest delay you set. See [Focus follows the pointer](#focus-follows-the-pointer). | Off, 250 ms |
 | Move to previous / next desktop | Sends the focused window to the next **desktop** (Space) along, stopping at the first and last rather than wrapping. ⌥ on the halves' own arrows, one row along from the display moves' ⇧ — same key again, "further still". **Off by default**, and the only move with a switch of its own: macOS offers no way to move another app's window between desktops, so this performs the gesture instead — it picks the window up, opens Mission Control for a moment and drops it on the destination's thumbnail. That takes over the pointer for roughly six-tenths of a second, or about 1.3s with **Follow the window** on, which is still not something to claim on your behalf. It acts on the frontmost app's focused window, and because it has to *grab* that window it declines — with a line in the log rather than a half-move — if the title bar is covered at the moment it presses, or if the window is full screen or minimized. The synthetic drag is posted with the modifier flags explicitly cleared: a `leftMouseDown` inherits the live modifier state, and since the chord that triggered it is still under your fingers, a ⌃ riding along would make the press a Control-click — a right click — and nothing would move. Two settings sit with it. **Follow the window** (on) switches you to the desktop it landed on, by pressing that desktop's own thumbnail — a real transition performed by macOS, not the bookkeeping-only private Space switch. And the window is put back on the frame it started with: the drag genuinely carries it up to the Spaces Bar, so macOS drops it wherever the gesture ended, which read as the move shoving windows to the left. The synthetic drag is also stamped as ours (`SyntheticEvent`) so *Snap by dragging* and the modifier-drag ignore it — without that, the route across the top of the screen is the maximize snap zone, and a moved window arrived maximized or inset by the gap. Persisted as `windowTilingDesktopMoves` and `windowTilingFollowsDesktopMove`. | Off / On, ⌃⌥⌘ ← → |
 | Snap by dragging | Drag a window to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, **the centre of the screen gives full screen**, with a translucent preview of where it will land. Grab the window **anywhere**, not just its titlebar: what tells a window drag from a text selection is not where the press landed but whether the window actually *moved* — origin changed, size unchanged — which is also how Rectangle's `SnappingManager` decides. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
 | Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block are fixed at light grey on black — Rectangle's own footprint styling (`FootprintWindow`: `borderColor = .lightGray`, `fillColor = .black`, `borderWidth = 2`, alpha `0.3`) — and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
@@ -346,6 +355,8 @@ window through every width.
 | Show delay | How long to wait before drawing the panel, so a quick tap switches with no flash. | 0 ms |
 | Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
+| Group windows by app | Window mode only. On keeps each app's windows in a run, which is what the list has always done — not by decision, but because it is built by walking the sorted *app* list. Off ranks every window against every other by when you last used it, so one tap of the trigger reaches the window you were in before this one whichever app it belongs to. That order was not previously reachable at all. Alphabetical always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them. Persists as `groupWindowsByApp`. | On |
+| Desktops | Which Desktops window tiles may come from — all of them, or only the one in front. Application tiles are never affected, since an app is not on a Desktop. Read **fresh each time the switcher opens** rather than when the list was built: a window's own Space does not change when you switch Desktops but which Space is in front does, and switching to an empty Desktop activates no app and so rebuilds nothing. Persists as `windowSpaceScope`. | All desktops |
 | Hide apps with no windows | An app whose windows are all minimized counts as empty. | Off |
 | Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
 | Show on | Which displays get a panel. | Automatic |
@@ -395,6 +406,115 @@ Below the sliders are three more controls:
 | Highlight colour | The tint of the selected tile. Persists as a hex string (`highlightColorHex`). | System accent |
 | Appearance | Forces the panel Light or Dark, or matches the system. | Match system |
 | Material | The frosted glass behind the tiles. Defaults to Under-window — the most see-through of them — with the custom blur on at 40, since heavy frost is what keeps a see-through panel legible over busy content. The old near-solid look is the **Classic** theme. | Under-window |
+
+### Restoring a layout across a display change
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Restore the layout when displays change | Remembers where every window sat under each set of monitors and puts them back when that set returns. Persists as `restoreLayoutOnDisplayChange`. | Off |
+
+Docking and undocking is the one thing that scrambles a carefully arranged screen with no way to
+undo it: macOS evacuates the windows off a display that has gone and does not remember where they
+were when it comes back. This watches the desk, keeps the layout under each *arrangement of
+displays*, and puts it back when that arrangement returns.
+
+**It has to have seen a desk before it can restore it.** The first plug or unplug after switching
+this on only learns; the one after that restores. That is inherent rather than a limitation to fix —
+there is no layout to put back until there has been one.
+
+A desk is identified by its displays' hardware UUIDs, **sorted**, so the same monitors rearranged
+left-to-right in Displays settings are the same desk: reordering two monitors does not mean you want
+a different window layout, it means you want the same one on the monitors it was on. Resolution is
+not part of the identity either, because frames are stored as a fraction of the display they were on
+rather than as absolute coordinates — the right half of a 2560-wide monitor comes back as the right
+half of whatever is there now, where absolute coordinates would put it off the edge of a smaller
+screen while looking perfectly plausible.
+
+This is **not** the saved-layouts feature that was removed in `19deabc`, and the difference is the
+point. That one was named layouts — "Work", "Writing" — restorable by chord and persisted to disk,
+and its two hard problems were both about a layout outliving the moment it was captured: which live
+window a saved record refers to after a restart, and what a stored frame means once the monitor it
+was measured on is gone. This has neither, by construction. Nothing is written to disk and nothing
+spans longer than a cable being pulled out, so a window is identified by its `CGWindowID` — exact,
+free, and stable for as long as the window exists — and a window closed in the meantime is simply
+not in the list. What it keeps of the older design is the half that was right: fractional frames
+keyed by display UUID, which is `WindowLayouts.swift`'s own reasoning and the reason `DisplayArea`
+still carries a `id`.
+
+The one cost is a timer. The interesting moment has no notification in front of it —
+`didChangeScreenParametersNotification` arrives *after* macOS has moved the windows off the display
+that just went, so by the time anything is told, the positions worth remembering are gone. Something
+has to have been watching, and that is one `CGWindowListCopyWindowInfo` every five seconds, only
+while the setting is on. It is the same call that already runs on every left click of the machine
+when the drag gesture is enabled.
+
+Restoring waits 1.2s after the desk settles, because macOS does its own tidying over that window and
+a restore that raced it would be overwritten. A window already where it belongs is not written at
+all — most of the list, usually — and an app carrying the *never tile* rule is left alone, since
+that rule says "do not rearrange my windows" and a rescue is a rearrangement however well meant.
+
+### Focus follows the pointer
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Focus the window under the pointer | Rest the cursor over a window and the keyboard goes to it, with no click. Persists as `focusFollowsMouseEnabled`. | Off |
+| Rest for | How long the pointer must be still first. 100–1000 ms. Persists as `focusFollowsMouseDelay`. | 250 ms |
+
+The X11 behaviour, which macOS has never offered. Off by default because it changes where every
+keystroke on the machine lands, which is not a thing to switch on for someone.
+
+**The delay is the whole feature.** With none, every sweep of the pointer across the screen on the
+way somewhere else re-focuses each window it crosses — which steals keystrokes mid-sentence and does
+it invisibly. The delay is what turns "the cursor passed over this" into "the cursor stopped here",
+and the slider bottoms out at 100 ms rather than zero: that is a floor on a footgun, not a
+limitation.
+
+Nothing happens while a mouse **button** is held (a drag, a text selection or a menu held open all
+belong to the window they started in), while any **modifier** is held (a chord in progress — the
+switcher's trigger, the hold-and-point gesture, or a shortcut part-way through), or while the
+**switcher is open** (the panel is non-activating and the frontmost app behind it is what a commit
+measures itself against, so re-focusing something underneath would change what "the previous app"
+means while you are looking at a list built from the old answer). Cmd-Tab's own windows are excluded
+outright: this app is an accessory without a Dock tile, and hovering over Settings on the way past
+should not make it frontmost.
+
+macOS raises a window as part of focusing it, so the window you rest over comes to the front. There
+is no "focus without raise" to offer — it is not something the public APIs can express for another
+app's window — so it is not offered as a setting that would not work.
+
+### Moving focus between windows
+
+Four chords — focus left, right, up, down — that move the **keyboard** to the nearest window in that
+direction. The tiler could always place windows and never let you walk between them; four windows in
+the four quarters and the only route to the one on the right was the switcher, which is a list
+ordered by recency with no notion that "the one on the right" is something a person can mean.
+
+Unbound out of the box. Every arrow combination is already spoken for — ⌃⌘ is the halves, ⌃⇧⌘ the
+display moves, ⌃⌥⌘ the Desktop moves — which leaves only the four-modifier ⌃⌥⇧⌘, and claiming that
+on someone's behalf is the guess the app declines to make everywhere else. The rows are one click
+from bound, or reach them by URL (below) and spend no chord at all.
+
+Built on `CGWindowListCopyWindowInfo` rather than Accessibility: the whole question is "where is
+every window", and that is one cheap call to the window server against `2n` rounds of IPC to every
+app on the machine. It also excludes the right things for free — minimized windows and windows on
+other Desktops are not on screen, and "the window to the left" can only mean one you can see.
+
+Picking the neighbour is three rules, and each is there because the one above it is not enough:
+
+1. **Overlap beats distance.** A candidate whose perpendicular span overlaps the origin's always
+   wins over one that does not, however much nearer. Without it a directional chord wanders
+   diagonally.
+2. **Then the smallest gap between the two windows' facing edges** — not between their centres. A
+   full-height window on the left, a half-screen window filling the right, and a small palette
+   floating just inside the right window's leading edge: the palette's *centre* is far nearer, so a
+   nearest-centre measure sends the keyboard to the palette every time. Measured from the edges,
+   "next to" means what it looks like. This one took a test to find.
+3. **Then nearest across the axis of travel**, which separates two windows stacked in the next
+   column.
+
+Ties resolve to whichever is nearer the front, since the window list arrives in z-order.
+
+**Swap** uses the same neighbour rule and exchanges the two frames verbatim.
 
 ### Window preview on hover
 
@@ -540,6 +660,43 @@ when something is wrong.
 
 Both permission rows are re-read every time the tab appears rather than cached at launch, since the
 usual reason to be looking at them is that you have just granted something in System Settings.
+
+## Driving it from a script
+
+Every global action has a URL, so Raycast, Alfred, Shortcuts, Keyboard Maestro, a Stream Deck key
+and a line of `open` can reach the whole feature set **without spending a hotkey**:
+
+```sh
+open 'cmdtab://tile/leftHalf'          # any WindowArrangement, by its stored name
+open 'cmdtab://tile/focusRight'        # including the families that ship unbound
+open 'cmdtab://tile/nudgeUp'
+open 'cmdtab://activate/com.apple.Safari'
+open 'cmdtab://windows/hideAll'        # or showAll
+```
+
+Chords are the scarce resource here — almost every row in the Windows tab apologises for taking a
+combination away from whatever app is in front, three families ship unbound because there is no
+arrow left to give them, and the Overview exists because it is genuinely hard to keep track of what
+is claimed. This is the way out of that, and it cost one `CFBundleURLTypes` entry plus a parser,
+because the work was already done: every action is an enum case with a stable raw value, and **those
+raw values are the grammar**. The name for an action is discoverable by reading your own
+`config.json`, and adding an arrangement adds its URL for free.
+
+Two things are deliberately not reachable.
+
+**Nothing that ends a process or closes a window.** No quit, no force-quit, no close. A URL scheme
+can be invoked by any web page you visit, with no prompt and no visible trace, and the difference
+between "a page rearranged my windows" and "a page closed my unsaved document" is the difference
+between a curiosity and a bug report. Rearranging is recoverable and visible; the in-switcher
+actions that are not stay behind the keyboard, where a person is present. `URLCommandTests` asserts
+that boundary rather than leaving it to a comment.
+
+**The Desktop-move switch is still obeyed**, where the tiling switch is not. That is not
+inconsistency: the tiling switch exists to stop this app *claiming global chords* from other
+applications, and a URL claims nothing from anybody — refusing to tile because a checkbox about
+hotkeys is off would be a setting doing something it never described. The Desktop switch is not
+about chords at all. It guards a gesture that seizes the pointer and flashes Mission Control for the
+better part of a second, and consent to that is not something a URL should route around.
 
 ## Switching to an app whose windows are all minimized
 
@@ -693,6 +850,19 @@ after that. Remove the identity in Keychain Access to undo it.
   obvious containment test may reject every candidate, and this was developed on one display. Moving to another **display** is
   a different thing entirely: ⌃⇧⌘-←/→, plain Accessibility geometry, instant, and on whether or not
   tiling is.
+- **Moving focus by direction only reaches windows that are on screen.** It is built on the window
+  server's own list, which is what makes it one cheap call instead of Accessibility IPC to every app
+  — and that list excludes minimized windows and windows on other Desktops. That is the right answer
+  for the question being asked ("the window to the left" can only mean one you can see), but it does
+  mean a directional chord will not travel to another Desktop the way picking a tile does.
+- **Restoring a layout across a display change has to have seen the desk before.** There is no
+  notification ahead of a display arriving or leaving — the system's own comes *after* it has already
+  moved the windows — so the layout is sampled on a five-second timer while the setting is on, and a
+  desk is only restorable once it has been sampled under that arrangement. The first plug or unplug
+  after switching the setting on learns; the one after that restores.
+- **Focus follows the pointer raises the window it focuses.** macOS treats the two as one action for
+  another app's window, so the X11 "focus without raise" is not on offer here rather than being an
+  omission. The rest delay is what keeps it from firing on windows the pointer merely crosses.
 - Live window thumbnails are optional in both modes and off by default: the hover preview in app
   mode, and **Thumbnail tiles** in window mode. Without either, tiles are app icons and Screen
   Recording is never touched.
@@ -730,6 +900,10 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SettingsAbout.swift` | The About tab — version, permission status, source link |
 | `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
 | `WindowTiling.swift` | Tiling geometry, the binding store, and the Accessibility frame writer |
+| `WindowNavigation.swift` | Which window lies in a direction from another — pure, and tested — and the focus and swap chords built on it |
+| `DisplayLayouts.swift` | The window layout under each set of displays, and putting it back when one returns |
+| `FocusFollowsMouse.swift` | Focus the window the pointer comes to rest over |
+| `URLCommands.swift` | The `cmdtab://` grammar, and what is deliberately outside it |
 | `DragSnap.swift` | Drag-to-edge snapping: gesture inference, zone geometry, preview overlay |
 | `MouseWindowDrag.swift` | Modifier-drag to move or resize: mouse event tap, frame maths, recorded chords |
 | `ShortcutAudit.swift` | Every binding in one list, and cross-store conflict detection |

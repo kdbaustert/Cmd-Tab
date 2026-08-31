@@ -40,6 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tiling.onMouseDragChange = { [weak self] settings in
             self?.controller.mouseDrag = settings
         }
+        controller.focusFollowsMouse = tiling.focusFollows
+        tiling.onFocusFollowsChange = { [weak self] settings in
+            self?.controller.focusFollowsMouse = settings
+        }
 
         let globals = GlobalActionsStore.shared
         applyGlobalActions(globals)
@@ -131,6 +135,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// `cmdtab://` requests. See `URLCommands.swift` for the grammar and for what is left out of it.
+    ///
+    /// AppKit delivers these on the main thread, which is where every action they reach expects to
+    /// be called from. A URL that names nothing is logged rather than ignored silently: the whole
+    /// point of the scheme is to be driven from scripts, and a typo in one produces no visible
+    /// effect at all unless something says so.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let command = URLCommand.parse(url) else {
+                Log.general.error("url: nothing named by \(url.absoluteString, privacy: .public)")
+                continue
+            }
+            Log.general.notice("url: \(url.absoluteString, privacy: .public)")
+            controller.perform(command)
+        }
+    }
+
     /// Pushes every tunable in `BehaviorStore` onto the running switcher. Cheap enough to run
     /// wholesale on any change rather than tracking which field moved.
     private func applyBehavior(_ behavior: BehaviorStore) {
@@ -143,8 +164,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 mode: behavior.mode,
                 sortOrder: behavior.sortOrder,
                 hideEmptyApps: behavior.hideEmptyApps,
+                groupWindowsByApp: behavior.groupWindowsByApp,
                 pinFavoritesFirst: behavior.pinFavoritesFirst,
                 notificationBadges: behavior.notificationBadges,
+                windowSpaceScope: behavior.windowSpaceScope,
                 layout: behavior.layout,
                 panelAppearance: behavior.panelAppearance,
                 panelPosition: behavior.panelPosition,

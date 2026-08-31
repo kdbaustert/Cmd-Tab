@@ -84,6 +84,7 @@ enum SettingsAnchor {
 
     static let tiling = "windows.tiling"
     static let mouseDrag = "windows.mouseDrag"
+    static let focusFollows = "windows.focusFollows"
     static let allWindows = "windows.allWindows"
 
     static let session = "behavior.session"
@@ -163,8 +164,8 @@ enum SettingsIndex {
               "bindings", "what is bound", "duplicate"]),
         item("scoped", .shortcuts, SettingsAnchor.scoped, "Scoped shortcuts",
              "Scoped shortcuts",
-             ["scope", "scoped", "this app", "this display", "minimized", "all windows",
-              "filtered", "subset", "extra trigger"]),
+             ["scope", "scoped", "this app", "this display", "this desktop", "desktop", "space",
+              "minimized", "all windows", "filtered", "subset", "extra trigger"]),
         item("windowActions", .shortcuts, SettingsAnchor.windowActions, "Window actions",
              "Window actions",
              ["quit", "force quit", "close", "hide", "hide others", "minimize", "zoom",
@@ -177,8 +178,25 @@ enum SettingsIndex {
         item("tiling", .windows, SettingsAnchor.tiling, "Window tiling", "Window tiling",
              ["tile", "tiling", "snap", "halves", "half", "corner", "quarter", "maximize",
               "fullscreen", "center", "centre", "arrange", "window management", "restore",
-              "left half", "right half", "cycle widths", "thirds", "display", "monitor",
+              "left half", "right half", "cycle widths", "thirds", "two thirds", "top third",
+              "bottom third", "larger", "smaller", "bigger", "grow", "shrink", "resize", "nudge",
+              "move window", "increment", "swap", "exchange", "display", "monitor",
               "screen", "gap", "gaps", "padding", "margin", "spacing", "inset", "border"]),
+        item("focusDirection", .windows, anchorFocus, "Focus",
+             "Focus window by direction",
+             ["focus", "focus left", "focus right", "directional", "navigate", "move focus",
+              "keyboard", "between windows", "next window", "vim", "yabai", "amethyst"]),
+        item("pointerFollows", .windows, SettingsAnchor.tiling, "Displays",
+             "Take the pointer along",
+             ["pointer", "cursor", "warp", "mouse", "follow", "display", "monitor", "move"]),
+        item("restoreLayout", .windows, SettingsAnchor.tiling, "Displays",
+             "Restore the layout when displays change",
+             ["restore", "layout", "dock", "undock", "unplug", "plug", "monitor", "display",
+              "external", "arrangement", "remember", "positions", "scrambled", "moved"]),
+        item("focusFollowsMouse", .windows, SettingsAnchor.focusFollows,
+             "Focus follows the pointer", "Focus the window under the pointer",
+             ["focus follows mouse", "ffm", "hover", "pointer", "cursor", "autoraise", "x11",
+              "sloppy focus", "rest", "delay"]),
         item("mouseDrag", .windows, SettingsAnchor.mouseDrag, "Mouse",
              "Move and resize with the mouse",
              ["mouse", "drag", "modifier", "move window", "resize", "rectangle", "alt drag",
@@ -210,6 +228,13 @@ enum SettingsIndex {
         item("hideEmpty", .behavior, SettingsAnchor.contents, "Contents",
              "Hide apps with no windows",
              ["empty", "windowless", "no windows", "hide"]),
+        item("groupWindows", .behavior, SettingsAnchor.contents, "Contents",
+             "Group windows by app",
+             ["group", "grouped", "by app", "together", "interleave", "flat", "mru", "recency",
+              "window order", "scattered"]),
+        item("windowSpaceScope", .behavior, SettingsAnchor.contents, "Contents", "Desktops",
+             ["desktop", "desktops", "space", "spaces", "mission control", "this desktop",
+              "current desktop", "other desktop", "filter", "hide"]),
         item("position", .behavior, SettingsAnchor.placement, "Placement", "Position",
              ["position", "centre", "center", "cursor", "active screen"]),
         item("screens", .behavior, SettingsAnchor.placement, "Placement", "Show on",
@@ -299,6 +324,11 @@ enum SettingsIndex {
         item("source", .about, SettingsAnchor.build, "Build", "Source",
              ["source", "github", "repository", "code", "issues"]),
     ]
+
+    /// The Focus card's anchor, which the groups build from the tiling one — see
+    /// `WindowSettings.anchor(for:)`, whose spelling this has to match exactly or the search result
+    /// scrolls to nothing.
+    private static let anchorFocus = "\(SettingsAnchor.tiling).focus"
 
     private static func item(
         _ id: String, _ tab: SettingsTab, _ anchor: String, _ section: String, _ title: String,
@@ -948,6 +978,28 @@ struct BehaviorSettings: View {
                     selection: $behavior.sortOrder, width: 160
                 ) {
                     ForEach(SortOrder.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                SettingsToggle(
+                    title: "Group windows by app",
+                    subtitle: behavior.mode == .apps
+                        ? "Window lists only — application tiles are one per app already."
+                        : behavior.sortOrder == .alphabetical
+                            ? "Alphabetical order always groups: sorted by name, an ungrouped list "
+                                + "would scatter one app's windows wherever the alphabet put them."
+                            : "On keeps each app's windows in a run. Off ranks every window against "
+                                + "every other by when you last used it, so one tap of the trigger "
+                                + "goes to the window you were in before this one whichever app it "
+                                + "belongs to.",
+                    isOn: $behavior.groupWindowsByApp)
+                    .disabled(behavior.mode == .apps || behavior.sortOrder == .alphabetical)
+                SettingsPicker(
+                    title: "Desktops",
+                    subtitle: "Which Desktops window tiles may come from. Application tiles are "
+                        + "never affected — an app is not on a Desktop. Read fresh each time the "
+                        + "switcher opens, so it follows you the moment you switch.",
+                    selection: $behavior.windowSpaceScope, width: 160
+                ) {
+                    ForEach(WindowSpaceScope.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 SettingsToggle(
                     title: "Hide apps with no windows",

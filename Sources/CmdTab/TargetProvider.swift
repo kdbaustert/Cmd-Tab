@@ -44,6 +44,15 @@ final class TargetProvider {
     /// Whether a refresh builds one target per app or one per window.
     var mode: SwitcherMode = .apps
 
+    /// Whether a window list keeps each app's windows together.
+    ///
+    /// On is what `windowTargets` has always done, because it walks the sorted *app* list and emits
+    /// each app's windows in a run. Off flattens that: every window is ranked against every other by
+    /// the per-window recency list, so the tile after the current one is the window you were last in
+    /// even when it belongs to another app. Only that ranking changes — nothing is added to or
+    /// removed from the list either way.
+    var groupWindowsByApp: Bool = true
+
     /// Per-app overrides. Only apps the user has given a rule appear here.
     var appRules: [String: AppRule] = [:]
 
@@ -348,6 +357,7 @@ final class TargetProvider {
         // Both read on the main thread, like everything else in this prelude: the window builder
         // needs them and they are only used when the mode asks for windows.
         let windowMRU = self.windowMRU.entries
+        let grouped = self.groupWindowsByApp
         let rules = self.appRules
         // Apps the user has asked to always see window-by-window, even in app mode.
         let expanding = mode == .apps
@@ -416,7 +426,8 @@ final class TargetProvider {
                 targets = Self.withSpaceBadges(
                     Self.windowTargets(
                         apps, order: order, sortOrder: sortOrder,
-                        windowMRU: windowMRU, screenFrames: screenFrames, badges: badges))
+                        windowMRU: windowMRU, screenFrames: screenFrames, badges: badges,
+                        grouped: grouped))
             }
             if pinning {
                 // The favourites take the front of the list, each running one bringing its own
@@ -484,6 +495,7 @@ final class TargetProvider {
                 let sortOrder = self.sortOrder
                 let order = self.mru.entries
                 let windowMRU = self.windowMRU.entries
+                let grouped = self.groupWindowsByApp
                 // Guarded on the screen count like the other two builders: `displayIndex` is only
                 // meant to be set with more than one display, and that nil is what suppresses the
                 // badge. Unguarded, one display returned a one-element array and every window
@@ -494,7 +506,7 @@ final class TargetProvider {
                 self.axQueue.async {
                     let targets = Self.windowTargets(
                         apps, order: order, sortOrder: sortOrder,
-                        windowMRU: windowMRU, screenFrames: screenFrames)
+                        windowMRU: windowMRU, screenFrames: screenFrames, grouped: grouped)
                     let badged = Self.withSpaceBadges(targets)
                     DispatchQueue.main.async { handler(badged) }
                 }
@@ -515,7 +527,7 @@ final class TargetProvider {
             let targets = Self.windowTargets(
                 [app], order: [pid], sortOrder: sortOrder,
                 windowMRU: windowMRU, screenFrames: screenFrames)
-            // Badged here, not in the hop below: `spaceIndices` is a CGS round-trip per window, and
+            // Badged here, not in the hop below: `SpaceMover.placement` is a CGS round trip, and
             // evaluating it inside the `main.async` body put that IPC on the thread that services
             // the event tap.
             let badged = Self.withSpaceBadges(targets)
@@ -818,18 +830,41 @@ final class TargetProvider {
         }
     }
 
+    /// One tile per window.
+    ///
+    /// `grouped` decides whether the result keeps each app's windows in a run. It has always done so
+    /// — not by decision, but because this walks the sorted *app* list and emits each app's windows
+    /// together — and that is the right default: five Chrome windows in a row read as one app with
+    /// five windows, where five Chrome windows scattered through the list read as five apps.
+    ///
+    /// Ungrouped is the order that was previously unreachable, and it is not merely a re-sort of the
+    /// same idea. Grouped, the per-window recency list only ever orders windows *within* one app,
+    /// and the apps themselves are ordered by the app-level MRU; flat, every window is ranked
+    /// against every other, so the tile next to the current one is the window you were actually in
+    /// before this one even when it belongs to somewhere else. That is what a tap of the trigger
+    /// means to some people and it could not be had at all.
+    ///
+    /// Alphabetical is left grouped either way, and deliberately: sorted by name, an ungrouped list
+    /// would interleave the windows of different apps by title, so the same app's windows would land
+    /// wherever the alphabet put them. There is no reading of "alphabetical" that anyone wants that
+    /// from, and the flat order exists for recency.
     private nonisolated static func windowTargets(
         _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder,
-        windowMRU: [CGWindowID], screenFrames: [CGRect], badges: [String: String] = [:]
+        windowMRU: [CGWindowID], screenFrames: [CGRect], badges: [String: String] = [:],
+        grouped: Bool = true
     ) -> [SwitchTarget] {
         let mruRank = RecencyList<CGWindowID>.ranks(of: windowMRU)
-        return sorted(apps, by: order, sortOrder: sortOrder).flatMap { app -> [SwitchTarget] in
+        // The rank is carried out of the per-app walk rather than dropped at its end, which is the
+        // one structural change the flat order needed: grouped, a rank only has to order windows
+        // within one app and can be discarded as each app finishes.
+        typealias Row = (target: SwitchTarget, axIndex: Int, rank: Int)
+        let built: [Row] = sorted(apps, by: order, sortOrder: sortOrder).flatMap { app -> [Row] in
             // `AX.application` applies the messaging timeout: a wedged app must not wedge the
             // switcher with it.
             let windows = AX.windows(of: AX.application(app.pid))
 
             // Keep the AX index as a stable tiebreak, and the MRU rank to reorder within the app.
-            var built: [(target: SwitchTarget, axIndex: Int, rank: Int)] = []
+            var rows: [Row] = []
             for (index, window) in windows.enumerated() {
                 guard AX.isSwitchableWindow(window) else { continue }
 
@@ -849,28 +884,42 @@ final class TargetProvider {
                     isHidden: app.isHidden,
                     displayIndex: display,
                     badge: app.bundleID.flatMap { badges[$0] })
-                built.append((target, index, wid.flatMap { mruRank[$0] } ?? Int.max))
+                rows.append((target, index, wid.flatMap { mruRank[$0] } ?? Int.max))
             }
             // Recently-used mode orders an app's windows by our tracked focus recency, falling back
             // to AX z-order; alphabetical leaves them in AX order.
             if sortOrder == .recentlyUsed {
-                built.sort { $0.rank == $1.rank ? $0.axIndex < $1.axIndex : $0.rank < $1.rank }
+                rows.sort { $0.rank == $1.rank ? $0.axIndex < $1.axIndex : $0.rank < $1.rank }
             }
-            return built.map(\.target)
+            return rows
         }
+        guard !grouped, sortOrder == .recentlyUsed else { return built.map { $0.target } }
+        // One sort over the whole list rather than one per app. The grouped position rides along as
+        // the tiebreak, so windows the recency list has never seen — anything not focused since
+        // launch, which all share `Int.max` — keep the order they already had instead of being
+        // shuffled into an arbitrary one by an unstable sort.
+        var flat: [(row: Row, position: Int)] = []
+        for (position, row) in built.enumerated() { flat.append((row, position)) }
+        flat.sort { a, b in
+            a.row.rank == b.row.rank ? a.position < b.position : a.row.rank < b.row.rank
+        }
+        return flat.map { $0.row.target }
     }
 
     /// Tags each window with the Space it lives on. A no-op with a single Space, which is what keeps
     /// the badge off the tiles for everyone who doesn't use them.
     private nonisolated static func withSpaceBadges(_ targets: [SwitchTarget]) -> [SwitchTarget] {
-        let indices = SpaceMover.spaceIndices(of: targets.compactMap { windowID(fromTargetID: $0.id) })
-        guard !indices.isEmpty else { return targets }
+        let placement = SpaceMover.placement(
+            of: targets.compactMap { windowID(fromTargetID: $0.id) })
+        // Empty is the single-Desktop machine and the failed-lookup case alike, and neither has
+        // anything to tag. Both halves are filled together — see `SpaceMover.placement` — so one
+        // test covers them.
+        guard !placement.spaces.isEmpty else { return targets }
         return targets.map { target in
-            guard let id = windowID(fromTargetID: target.id), let index = indices[id] else {
-                return target
-            }
+            guard let id = windowID(fromTargetID: target.id) else { return target }
             var tagged = target
-            tagged.spaceIndex = index
+            tagged.spaceIndex = placement.indices[id]
+            tagged.spaceID = placement.spaces[id]
             return tagged
         }
     }
