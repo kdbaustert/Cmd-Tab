@@ -233,6 +233,12 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// Whether this only moves the keyboard focus, changing no window's geometry at all.
     var isFocus: Bool { focusStep != nil }
 
+    /// Whether the tiling switch governs this arrangement. See `ungated` for the argument.
+    ///
+    /// A computed property rather than a lookup in `ungated`, because it is asked on the event-tap
+    /// callback for every keystroke on the machine — see `WindowTilingBindings.fires`.
+    var isUngated: Bool { isMove || isFocus }
+
     /// The moves, in the order the Windows tab lists them.
     static let moves: [WindowArrangement] = allCases.filter(\.isMove)
 
@@ -256,10 +262,10 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// A **swap** is deliberately on the other side of the line. It moves two windows into each
     /// other's frames, which is a layout change however you describe it, so it waits on the switch
     /// with the rest of the tiler.
-    static let ungated: [WindowArrangement] = allCases.filter { $0.isMove || $0.isFocus }
+    static let ungated: [WindowArrangement] = allCases.filter(\.isUngated)
 
     /// Everything gated on the tiling switch.
-    static let tilingArrangements: [WindowArrangement] = allCases.filter { !ungated.contains($0) }
+    static let tilingArrangements: [WindowArrangement] = allCases.filter { !$0.isUngated }
 
     /// The arrangements a window can be given the moment it opens (`AppRule.launchArrangement`).
     ///
@@ -583,26 +589,44 @@ struct WindowTilingBindings: Equatable {
         }
     }
 
+    /// Whether `arrangement` can fire at all under the current switches, before any chord is
+    /// considered.
+    ///
+    /// **The one definition of that question.** It used to be spelled out twice — once as the
+    /// candidate list in `arrangement(code:flags:)` and once as the `active:` argument in
+    /// `ShortcutAudit.entries` — and the two disagreed the moment the focus chords arrived: the
+    /// matcher fires them with tiling switched off, and the audit reported them inert, so the
+    /// Overview stopped seeing collisions involving a focus chord on any install that had tiling
+    /// off. That is precisely the failure the Overview exists to catch, so the rule now lives in one
+    /// place and both callers read it.
+    ///
+    /// With tiling switched off the geometry arrangements are skipped but the **moves** and the
+    /// **focus** chords still match. The switch is about Cmd-Tab resizing windows; sending a window
+    /// to the next display or Desktop changes no layout, moving focus changes no window at all, and
+    /// gating either behind a checkbox captioned about tiling made a bound chord do nothing with no
+    /// visible cause. The cost is that those chords are claimed system-wide as soon as they are
+    /// bound, tiling on or off — which is what the pane says.
+    ///
+    /// The Desktop moves answer to their own switch on top, so with it off their chords go back to
+    /// whatever app wants them rather than being claimed and doing nothing.
+    func fires(_ arrangement: WindowArrangement) -> Bool {
+        if arrangement.desktopStep != nil { return desktopMoves }
+        return isEnabled || arrangement.isUngated
+    }
+
     /// The arrangement a keypress fires, if any.
     ///
     /// Iterates in declared case order so two arrangements bound to the same chord always resolve
     /// the same way rather than depending on dictionary ordering. Exact modifier match, so ⌃⌘←
     /// stays distinct from ⌃⌥⌘←.
     ///
-    /// With tiling switched off the geometry arrangements are skipped but the **moves** and the
-    /// **focus** chords still match. The switch is about Cmd-Tab resizing windows; sending one to
-    /// the next display or Desktop changes no layout, moving focus changes no window at all, and
-    /// gating either behind a checkbox captioned about tiling made a bound chord do nothing with no
-    /// visible cause. The cost is that those chords are claimed system-wide as soon as they are
-    /// bound, tiling on or off — which is what the pane says. See `WindowArrangement.ungated`.
+    /// One pass, allocating nothing. This runs inside the event-tap callback for **every keystroke
+    /// on the machine**, and the `filter` it used to build first allocated an array of arrangements
+    /// each time — cheap, but it grew with the enum, and the enum has just doubled.
     func arrangement(code: Int, flags: CGEventFlags) -> WindowArrangement? {
         let held = flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-        let candidates = (isEnabled ? WindowArrangement.allCases : WindowArrangement.ungated)
-            // The Desktop moves answer to their own switch as well, so with it off their chords go
-            // back to whatever app wants them rather than being claimed and doing nothing.
-            .filter { desktopMoves || $0.desktopStep == nil }
-        return candidates.first {
-            guard let hotkey = bindings[$0], hotkey.isUsableGlobally else { return false }
+        return WindowArrangement.allCases.first {
+            guard fires($0), let hotkey = bindings[$0], hotkey.isUsableGlobally else { return false }
             let want = hotkey.modifiers.intersection(
                 [.maskCommand, .maskAlternate, .maskControl, .maskShift])
             return hotkey.keyCode == code && want == held

@@ -63,9 +63,15 @@ final class FocusFollowsMouse {
         // while it is frontmost this app receives the moves as local events the monitor never sees,
         // so hovering over Settings quietly does nothing rather than needing a case of its own.
         //
-        // Needs Accessibility, which the app has by the time any of this is reachable — the settings
-        // that switch it on cannot be edited before the grant, since the settings window is opened
-        // from a menu bar item that only exists once the app is running.
+        // Apple's rule for global monitors is that *key* events need the Accessibility grant and
+        // mouse events do not, so nothing here waits on it — but the raise this ends in goes through
+        // `SwitchTarget`, which does. It never comes up in practice: the settings that switch this
+        // on cannot be reached before the grant, since the settings window is opened from a menu-bar
+        // item that only exists once the app is running.
+        //
+        // That the monitor receives `.mouseMoved` at all was measured rather than assumed — several
+        // tools in this space reach for a `CGEventTap` here, which would be a second session-wide
+        // tap alongside the two this app already runs.
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             MainActor.assumeIsolated { self?.pointerMoved() }
         }

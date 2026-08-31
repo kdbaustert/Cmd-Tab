@@ -51,7 +51,10 @@ final class DisplayLayouts {
     /// well past any real number of desks; this is a backstop against a leak, not a policy.
     private var layouts: [String: [CGWindowID: StoredFrame]] = [:]
     private static let deskLimit = 16
-    /// Signatures in the order they were last written, so the oldest desk is the one dropped.
+    /// Signatures in the order they were first stored, so the least recently *met* desk is the one
+    /// dropped. Insertion order rather than use order: re-storing a known desk does not move it, and
+    /// at a cap of sixteen against the handful of desks a real machine visits, the difference cannot
+    /// be reached — this is a backstop against unbounded growth, not a cache policy.
     private var deskOrder: [String] = []
 
     /// The most recent capture, and the desk it was taken under. This is what is filed away when the
@@ -215,9 +218,14 @@ final class DisplayLayouts {
         Log.general.notice(
             "display layouts: restoring \(moves.count, privacy: .public) window(s)")
         Self.write(moves)
-        // The desk is now what it was; re-read so the live snapshot reflects the restore rather than
-        // the state macOS left behind, which the next desk change would otherwise file away.
-        capture()
+        // Deliberately no capture here. `write` hands the frames to a background queue and returns,
+        // and each `AX.setFrame` is itself a request to another process rather than a move that has
+        // happened — so a snapshot taken now records the scrambled positions macOS left behind, not
+        // the restored ones. It once did exactly that, with a comment claiming the opposite, which
+        // would have filed the scrambled layout as this desk's the moment a second display change
+        // arrived inside the capture interval — corrupting the layout that had just been restored
+        // correctly. The timer owns the refresh; until it ticks, `latest` stays empty and `remember`
+        // files nothing, which is the safe way to be wrong.
     }
 
     /// Where a queued restore actually happens.

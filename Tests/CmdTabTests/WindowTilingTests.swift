@@ -248,6 +248,54 @@ final class WindowTilingTests: XCTestCase {
         }
     }
 
+    /// The audit and the matcher have to agree about what can fire, or the Overview stops seeing
+    /// collisions it exists to report.
+    ///
+    /// The regression this pins: `fires` was written out twice, once as the matcher's candidate list
+    /// and once as the `active:` argument in `ShortcutAudit.entries`, and the second copy read
+    /// `isEnabled || isMove`. A focus chord is neither a move nor gated, so with tiling switched off
+    /// the matcher fired it and the audit called it inert — and an inert entry is dropped before
+    /// collisions are computed, so binding a focus chord over a direct activation produced no
+    /// warning anywhere.
+    func testFiresAgreesWithTheMatcherForEveryArrangement() {
+        for enabled in [true, false] {
+            for desktop in [true, false] {
+                var tiling = WindowTilingBindings.defaults
+                tiling.isEnabled = enabled
+                tiling.desktopMoves = desktop
+                // A chord nothing else claims, given to one arrangement at a time, so the matcher's
+                // answer isolates that arrangement's gating from every other rule in the function.
+                let chord = Hotkey(
+                    keyCode: 45,  // N
+                    modifierRaw: CGEventFlags.maskControl.union(.maskAlternate)
+                        .union(.maskCommand).rawValue)
+                for arrangement in WindowArrangement.allCases {
+                    var probe = tiling
+                    for other in WindowArrangement.allCases { probe.bindings[other] = nil }
+                    probe.bindings[arrangement] = chord
+                    let matched = probe.arrangement(code: chord.keyCode, flags: chord.modifiers)
+                    XCTAssertEqual(
+                        probe.fires(arrangement), matched == arrangement,
+                        "\(arrangement.rawValue) with tiling \(enabled), desktop moves \(desktop)")
+                }
+            }
+        }
+    }
+
+    /// The specific case the regression hid: focus fires with tiling off, so the audit must call it
+    /// active or a collision on that chord goes unreported.
+    func testFocusChordsFireAndCountAsActiveWithTilingOff() {
+        var tiling = WindowTilingBindings.defaults
+        tiling.isEnabled = false
+        for arrangement in WindowArrangement.focusMoves {
+            XCTAssertTrue(tiling.fires(arrangement), "\(arrangement.rawValue) should fire")
+        }
+        // A swap is the other side of that line, and must stay inert with the switch off.
+        for arrangement in WindowArrangement.swaps {
+            XCTAssertFalse(tiling.fires(arrangement), "\(arrangement.rawValue) should be inert")
+        }
+    }
+
     /// The switch is about resizing. A move changes no layout, so it fires either way — the whole
     /// point of splitting the two families in `arrangement(code:flags:)`.
     func testDisabledTilingStillMatchesTheMoves() throws {

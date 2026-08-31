@@ -186,10 +186,10 @@ enum SettingsIndex {
              "Focus window by direction",
              ["focus", "focus left", "focus right", "directional", "navigate", "move focus",
               "keyboard", "between windows", "next window", "vim", "yabai", "amethyst"]),
-        item("pointerFollows", .windows, SettingsAnchor.tiling, "Displays",
+        item("pointerFollows", .windows, anchorDisplays, "Displays",
              "Take the pointer along",
              ["pointer", "cursor", "warp", "mouse", "follow", "display", "monitor", "move"]),
-        item("restoreLayout", .windows, SettingsAnchor.tiling, "Displays",
+        item("restoreLayout", .windows, anchorDisplays, "Displays",
              "Restore the layout when displays change",
              ["restore", "layout", "dock", "undock", "unplug", "plug", "monitor", "display",
               "external", "arrangement", "remember", "positions", "scrambled", "moved"]),
@@ -325,10 +325,11 @@ enum SettingsIndex {
              ["source", "github", "repository", "code", "issues"]),
     ]
 
-    /// The Focus card's anchor, which the groups build from the tiling one — see
-    /// `WindowSettings.anchor(for:)`, whose spelling this has to match exactly or the search result
-    /// scrolls to nothing.
+    // The two Windows-tab cards whose anchors are built from a group title rather than declared in
+    // `SettingsAnchor` — see `WindowSettings.anchor(for:)`, whose spelling these have to match
+    // exactly or the search result scrolls to nothing.
     private static let anchorFocus = "\(SettingsAnchor.tiling).focus"
+    private static let anchorDisplays = "\(SettingsAnchor.tiling).displays"
 
     private static func item(
         _ id: String, _ tab: SettingsTab, _ anchor: String, _ section: String, _ title: String,

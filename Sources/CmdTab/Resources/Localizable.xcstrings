@@ -1101,13 +1101,13 @@
         }
       }
     },
-    "Off by default. Each binding is a real global hotkey — while tiling is on, Cmd-Tab takes those combinations from whatever app is in front, so nothing is claimed until you ask for it. Displays at the bottom is the exception: moving a window is not resizing it, so it stays live either way.": {
+    "Off by default. Each binding is a real global hotkey — while tiling is on, Cmd-Tab takes those combinations from whatever app is in front, so nothing is claimed until you ask for it. Displays and Focus are the exceptions: moving a window is not resizing it and moving the keyboard is not either, so both stay live whatever this switch says.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Off by default. Each binding is a real global hotkey — while tiling is on, Cmd-Tab takes those combinations from whatever app is in front, so nothing is claimed until you ask for it. Displays at the bottom is the exception: moving a window is not resizing it, so it stays live either way."
+            "value": "Off by default. Each binding is a real global hotkey — while tiling is on, Cmd-Tab takes those combinations from whatever app is in front, so nothing is claimed until you ask for it. Displays and Focus are the exceptions: moving a window is not resizing it and moving the keyboard is not either, so both stay live whatever this switch says."
           }
         }
       }
@@ -1596,13 +1596,13 @@
         }
       }
     },
-    "Sizes and positions only — the Displays moves do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free.": {
+    "Sizes and positions only — the Displays moves and the Focus chords do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sizes and positions only — the Displays moves do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free."
+            "value": "Sizes and positions only — the Displays moves and the Focus chords do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free."
           }
         }
       }

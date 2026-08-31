@@ -1318,6 +1318,12 @@ final class SwitcherController {
     /// machine where the private Space calls are unavailable — so the failure mode of this filter is
     /// showing too much rather than a switcher that has silently gone empty.
     private static func onCurrentDesktop(_ targets: [SwitchTarget]) -> [SwitchTarget] {
+        // Nothing to filter, so nothing to ask. This matters because the main trigger's call to this
+        // happens inside the event-tap callback, and `currentSpaceIDs` is a window-server round trip
+        // — small, but paid on every press. A machine with one Desktop tags no target with a Space
+        // at all (see `SpaceMover.placement`), and an application list never carries one either, so
+        // the scan below settles it for both without leaving the process.
+        guard targets.contains(where: { $0.spaceID != nil }) else { return targets }
         let current = SpaceMover.currentSpaceIDs()
         guard !current.isEmpty else { return targets }
         return targets.filter { target in

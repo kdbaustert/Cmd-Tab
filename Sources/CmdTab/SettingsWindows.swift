@@ -116,13 +116,15 @@ struct WindowSettings: View {
                 title: "Window tiling", anchor: SettingsAnchor.tiling,
                 footer: "Off by default. Each binding is a real global hotkey — while tiling is on, "
                     + "Cmd-Tab takes those combinations from whatever app is in front, so nothing "
-                    + "is claimed until you ask for it. Displays at the bottom is the exception: "
-                    + "moving a window is not resizing it, so it stays live either way."
+                    + "is claimed until you ask for it. Displays and Focus are the exceptions: "
+                    + "moving a window is not resizing it and moving the keyboard is not either, so "
+                    + "both stay live whatever this switch says."
             ) {
                 SettingsToggle(
                     title: "Enable window tiling",
-                    subtitle: "Sizes and positions only — the Displays moves do not wait on this. "
-                        + "Defaults sit on ⌃⌘, which macOS leaves almost entirely free.",
+                    subtitle: "Sizes and positions only — the Displays moves and the Focus chords "
+                        + "do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost "
+                        + "entirely free.",
                     isOn: isEnabled)
                 SettingsToggle(
                     title: "Snap by dragging",
@@ -239,9 +241,11 @@ struct WindowSettings: View {
             // The one card that does not answer to the switch above.
             SettingsSection(
                 title: Self.moveGroup.0, anchor: anchor(for: Self.moveGroup.0),
-                footer: "Keeps the window's size and its relative position on the new display. "
-                    + "Live whether or not tiling is on: a move changes no layout, so the switch "
-                    + "above does not govern it, and a bound chord is claimed system-wide."
+                footer: "The two moves keep the window's size and its relative position on the new "
+                    + "display, and are live whether or not tiling is on: a move changes no layout, "
+                    + "so the switch above does not govern it, and a bound chord is claimed "
+                    + "system-wide. The two switches below them are about what happens around a "
+                    + "display change rather than about the chords."
             ) {
                 ForEach(Self.moveGroup.1) { arrangement in
                     SettingsRow(

@@ -172,13 +172,14 @@ enum ShortcutAudit {
                 entry(
                     .tiling, "tiling.\(arrangement.rawValue)", arrangement.title,
                     tiling.hotkey(for: arrangement),
-                    // The moves do not answer to the tiling switch, so a bound one can collide with
-                    // something while the rest of the family is inert. The Desktop moves have a
-                    // second switch of their own on top, and a chord that switch is holding shut is
-                    // not claimed from anyone — reporting it as active would invent a collision.
-                    active: arrangement.desktopStep != nil
-                        ? tiling.desktopMoves
-                        : tiling.isEnabled || arrangement.isMove))
+                    // Asked of the matcher's own rule rather than restated here. The moves and the
+                    // focus chords do not answer to the tiling switch, so a bound one can collide
+                    // with something while the rest of the family is inert; the Desktop moves have a
+                    // second switch on top, and a chord that switch is holding shut is not claimed
+                    // from anyone, so reporting it active would invent a collision. This was written
+                    // out a second time here once, and it fell behind the matcher — see
+                    // `WindowTilingBindings.fires`.
+                    active: tiling.tiling.fires(arrangement)))
         }
 
         let actions = SwitcherShortcutsStore.shared
