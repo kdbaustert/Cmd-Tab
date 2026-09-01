@@ -189,4 +189,66 @@ final class ShortcutAuditTests: XCTestCase {
         ]
         XCTAssertEqual(ShortcutAudit.collisions(in: entries).first?.winner?.id, "leftHalf")
     }
+
+    // MARK: - Mouse gestures
+
+    private func mouse(_ id: String, _ modifiers: CGEventFlags, active: Bool = true)
+        -> ShortcutEntry
+    {
+        entry(.mouseGesture, id, key: ShortcutEntry.Chord.noKey, modifiers, active: active)
+    }
+
+    /// The shipping arrangement, and the one that must **not** be reported. ⌃⌘ is the resize
+    /// gesture's chord and ⌃⌘← is Left half, and both work: holding the chord arms the pointing
+    /// gesture, pressing the arrow tiles, and the keystroke stands the gesture down. Two things on
+    /// one set of modifiers is only a conflict when one of them can never fire, and here neither is
+    /// prevented from firing by the other.
+    func testAMouseChordDoesNotCollideWithAKeyboardChordOnTheSameModifiers() {
+        let entries = [
+            mouse("mouse.resize", ctrlCmd),
+            entry(.tiling, "leftHalf", key: leftArrow, ctrlCmd),
+        ]
+        XCTAssertTrue(ShortcutAudit.collisions(in: entries).isEmpty)
+    }
+
+    /// What the mouse entries are actually in the list to catch. `MouseDragSettings.action(for:)`
+    /// tests move first, so pointing both gestures at one combination leaves resize permanently
+    /// dead — and until these entries existed the Overview, which is supposed to hold every claim
+    /// in one place, could not see it.
+    func testTwoMouseChordsOnOneCombinationCollideWithMoveWinning() {
+        let entries = [
+            mouse("mouse.move", ctrlCmd),
+            mouse("mouse.resize", ctrlCmd),
+        ]
+        let collisions = ShortcutAudit.collisions(in: entries)
+        XCTAssertEqual(collisions.count, 1)
+        XCTAssertEqual(collisions.first?.winner?.id, "mouse.move")
+        XCTAssertEqual(collisions.first?.losers.map(\.id), ["mouse.resize"])
+    }
+
+    /// Shift separates them, exactly as it does for every other exact matcher: `ModifierChord`
+    /// keeps all four bindable modifiers and `action(for:)` compares them whole.
+    func testMouseChordsDifferingOnlyByShiftDoNotCollide() {
+        let entries = [
+            mouse("mouse.move", ctrlCmd),
+            mouse("mouse.resize", ctrlCmdShift),
+        ]
+        XCTAssertTrue(ShortcutAudit.collisions(in: entries).isEmpty)
+    }
+
+    /// With the gesture switched off the chords are claimed from nobody, so they are listed and
+    /// inert — the same treatment tiling gets when its master switch is off.
+    func testMouseChordsWithTheGestureOffCannotCollide() {
+        let entries = [
+            mouse("mouse.move", ctrlCmd, active: false),
+            mouse("mouse.resize", ctrlCmd, active: false),
+        ]
+        XCTAssertTrue(ShortcutAudit.collisions(in: entries).isEmpty)
+    }
+
+    /// The sentinel has to stay outside the window server's range, or a mouse chord would pool with
+    /// a real key and start inventing collisions.
+    func testTheNoKeySentinelIsNotAValidKeyCode() {
+        XCTAssertLessThan(ShortcutEntry.Chord.noKey, 0)
+    }
 }

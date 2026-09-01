@@ -143,7 +143,22 @@ final class SwitcherController {
     /// bound at all: every keystroke resets it, and while the panel is up every keystroke on the
     /// machine is swallowed — so someone typing at a panel they cannot see (on another display, say)
     /// held their own keyboard captive indefinitely, which is the failure that started all of this.
-    private let stickyMaxDuration: TimeInterval = 60
+    ///
+    /// Five minutes rather than the one it began as, and the number moved because the two timers
+    /// are not doing the same job. The idle timeout above is the guard that actually fires in
+    /// ordinary use: a panel nobody is touching is gone in twenty seconds, which covers walking
+    /// away and opening it by accident. This one can only be reached by *continuous* interaction,
+    /// and a minute of that is a person using Stay open exactly as advertised — browsing, typing a
+    /// filter, changing their mind. Cutting them off there produced a panel that vanished
+    /// mid-sentence with nothing on screen to say why, which is the one failure a mode built to
+    /// stay open must not have.
+    ///
+    /// It stays a hard cap and stays un-extendable, because the state it bounds is machine-wide
+    /// keyboard capture and there is no keystroke-level way to tell deliberate use from someone
+    /// typing at a panel they cannot see — both look like activity. Widening the window it can be
+    /// wrong in from one minute to five is the whole of the trade: the keyboard is still returned
+    /// on its own, and now only in the case the bound was written for.
+    private let stickyMaxDuration: TimeInterval = 300
 
     /// Relayouts immediately when the panel is already up, so dragging a slider in settings
     /// resizes a visible switcher live.
@@ -649,6 +664,39 @@ final class SwitcherController {
             return false
         }
 
+        // A key going down while a mouse chord is held is proof that chord is being used as a
+        // *keyboard* gesture, so the hold-and-point gesture stands down exactly as it does when a
+        // drag claims it — see `ModifierTargetHighlight.standDown(claimedBy:)`.
+        //
+        // Both mouse chords double as tiling modifiers: ⌃⌘ is the shipped resize chord *and* the
+        // shipped chord for all four halves. Holding it arms the pointing gesture at the same
+        // moment the arrow fires the tile, and the chord coming up then completes that gesture from
+        // a cursor which has never left its dot — an offset `PointDirection.zone` reads as "nowhere
+        // to point" and answers with `.maximize`. So the window is tiled to a half and instantly
+        // replaced by a full-screen one, which reads as the shortcut being broken rather than as
+        // two gestures on one chord.
+        //
+        // **Every key-down, not only the ones this app claims**, and that widening is the whole
+        // point of the line being here rather than beside the routing decision it used to sit
+        // under. `decision.swallows` answers "is this keystroke ours", which is a narrower question
+        // than "is the chord in use", and the gap between them is where the bug lived:
+        //
+        // * macOS binds ⌃⌘ combinations of its own — ⌃⌘Space is Emoji & Symbols, ⌃⌘F is Enter Full
+        //   Screen, ⌃⌘Q is Lock Screen — and this app claims none of them. Pressing one with the
+        //   chord held left the gesture armed, so releasing the chord maximized whatever the cursor
+        //   happened to be resting on. Nothing on screen explained it.
+        // * A tiling chord pressed while our own settings window is frontmost routes to
+        //   `.tilingInert`, which deliberately swallows nothing so the shortcut recorder can see
+        //   the keystroke — so recording a ⌃⌘ combination maximized the Settings window the moment
+        //   the chord came up, which is the single easiest way to meet this.
+        //
+        // Placed above the three branches below rather than inside any of them, because it holds
+        // for all of them: a keystroke taken by an open panel is no more a pointing gesture than
+        // one claimed by a tiling chord. Key-down only, since a key-up is the tail of a press this
+        // has already answered for, and `standDown` returns at its first guard when no gesture is
+        // armed — which is every keystroke on a machine where the chord is not held.
+        if type == .keyDown { targetHighlight.standDown(claimedBy: "a keystroke") }
+
         let code = Int(event.getIntegerValueField(.keyboardEventKeycode))
 
         // While the panel is up it owns the keyboard, like the system switcher.
@@ -691,24 +739,6 @@ final class SwitcherController {
                 isAutorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0),
             bindings: routingBindings(),
             isAppActive: isAppActive)
-
-        // A keystroke this app claims is proof the held chord is being used as a *keyboard* gesture,
-        // so the hold-and-point gesture stands down exactly as it does when a drag claims it — see
-        // `ModifierTargetHighlight.standDown(claimedBy:)`.
-        //
-        // Both mouse chords double as tiling modifiers: ⌃⌘ is the shipped resize chord *and* the
-        // shipped chord for all four halves. Holding it armed the pointing gesture at the same
-        // moment the arrow fired the tile, and the chord coming up then completed that gesture from
-        // a cursor which had never left its dot — an offset `PointDirection.zone` reads as "nowhere
-        // to point" and answers with `.maximize`. So the window was tiled to a half and instantly
-        // replaced by a full-screen one, which reads as the shortcut being broken rather than as two
-        // gestures on one chord. It is the same failure `standDown` was written for, from the one
-        // claimant nobody had counted.
-        //
-        // Keyed on every claimed decision rather than on `.tile` alone: an activation or an
-        // all-windows action bound to a mouse chord ends exactly the same way, and `.consume` is the
-        // key-up edge of one of those.
-        if decision.swallows { targetHighlight.standDown(claimedBy: "a keyboard binding") }
 
         switch decision {
         case .pass:
@@ -1832,8 +1862,25 @@ final class SwitcherController {
             : "Every window \(name) has open will close. Unsaved changes may be lost."
         alert.addButton(withTitle: action == .forceQuit ? "Force Quit" : "Quit")
         alert.addButton(withTitle: "Cancel")
+        // Activation is taken to put the alert in front and handed straight back, which is the only
+        // place in this app that borrows it for a chord rather than for the settings window.
+        //
+        // Cmd-Tab is `.accessory` and normally never becomes frontmost — the switcher panel is
+        // non-activating precisely so that it does not, since being frontmost is what makes *us*
+        // the app a ⌘-Tab measures itself from and shifts every target along by one. That is the
+        // effect the README already documents for the settings window being open, arriving here by
+        // a different route: an alert cannot be shown without activating, and nothing gave the
+        // activation back afterwards, so confirming a quit left the user frontmost in an app with
+        // no windows.
+        //
+        // Conditional on where we started, so the settings window — which legitimately holds
+        // activation, and from which the switcher can still be opened — is not sent behind by a
+        // chord the user pressed while looking at it.
+        let wasActive = NSApp.isActive
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let response = alert.runModal()
+        if !wasActive { NSApp.deactivate() }
+        guard response == .alertFirstButtonReturn else { return }
         // The panel is already down, so this acts on the captured target rather than the selection.
         if action == .forceQuit { target.forceQuitApp() } else { target.quitApp() }
         Log.tap.notice(

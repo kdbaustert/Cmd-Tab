@@ -522,8 +522,14 @@ final class BehaviorStore: ObservableObject {
     @Published var panelScreens: PanelScreens = Defaults[.panelScreens] {
         didSet { persist(panelScreens, oldValue, to: .panelScreens) }
     }
-    /// Keeps the switcher up after the trigger is released — but only once you have actually browsed
-    /// it. A plain hold-and-release still switches; see `SwitcherController.browsed`.
+    /// Keeps the switcher up after the trigger is released, unconditionally — releasing the chord
+    /// stops being a commit at all, and the panel is left to Return, a click, a digit or Escape.
+    ///
+    /// It used to carve out a plain hold-and-release, so a session you had not browsed still
+    /// switched on the release. That carve-out is gone and the reasoning is in
+    /// `SessionRelease.staysOpenOnRelease`, which is now the only place this rule is stated: the
+    /// obvious way to use the switcher is ⌘-Tab, Tab, and re-arming the commit there closed the
+    /// panel the moment ⌘ came up — so Stay open never survived the one gesture it exists for.
     @Published var stickyMode: Bool = Defaults[.stickyMode] {
         didSet { persist(stickyMode, oldValue, to: .stickyMode) }
     }
@@ -752,9 +758,15 @@ final class BehaviorStore: ObservableObject {
     /// export/import does not carry dead settings between machines.
     ///
     /// - `titleWeight`: the tile-title font weight picker, removed along with its `Theme` field.
-    /// - `mode`, `windowScope`, `skipMinimized`, `reflectModeInMenuBar`: window mode and everything
-    ///   that only applied to it. The switcher is app-only now; one app's windows are still reachable
-    ///   through the same-app cycle and the ↓ drill-down, neither of which is a mode.
+    /// - `mode`, `windowScope`, `skipMinimized`, `reflectModeInMenuBar`: the *first* window mode
+    ///   and everything that only applied to it. Window mode was withdrawn and later rebuilt, and
+    ///   the rebuild deliberately took a fresh key (`switcherMode`) rather than reviving `mode` —
+    ///   see `Defaults.Keys.switcherMode`, which spells out why: an install predating the
+    ///   withdrawal may still have `mode = windows` in its defaults, and reading it again would
+    ///   switch those users into window mode on an update they did not ask for. So these four stay
+    ///   retired even though the feature came back. `reflectModeInMenuBar` did not come back at
+    ///   all: the menu bar carries a fixed glyph chosen in Settings, and the mode is a row on the
+    ///   Behavior tab.
     /// - `panelOpacity`: the panel translucency slider. The material already decides how much shows
     ///   through, and a second control fighting it mostly produced washed-out panels; `Theme` lost
     ///   its matching field with it.

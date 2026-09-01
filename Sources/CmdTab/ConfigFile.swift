@@ -140,11 +140,69 @@ final class ConfigFile: ObservableObject {
         isICloudSyncEnabled = UserDefaults.standard.bool(forKey: Key.iCloudSync)
     }
 
+    /// Whether a config file already on disk should switch the mirror on by itself.
+    ///
+    /// This is the rule that makes "a machine which has just checked out the repo comes up
+    /// configured" true, and without it that promise was false in exactly the case it describes.
+    /// `start()` opened with `guard isEnabled`, and `isEnabled` is read out of a `UserDefaults`
+    /// that a fresh install has nothing in — so the checked-out `config.json`, including the
+    /// `"useConfigFile": true` it carries in its own payload, was never opened. The file only
+    /// started being read once the user ticked the box by hand, which is the one step a dotfiles
+    /// setup exists to avoid.
+    ///
+    /// **Absent, not false.** The distinction is the whole safety of this, and it is the one this
+    /// app already leans on for every optional preference — `hotkeyKeyCode`, `loadConfirms`,
+    /// `AppearanceStore.read`. Someone who turned the mirror *off* has `false` written to the key,
+    /// and the file is deliberately left on disk when they do ("it may be tracked, and deleting a
+    /// tracked file because a checkbox changed is not ours to do"). Adopting on the strength of the
+    /// file alone would turn their setting back on at the next launch and overwrite their live
+    /// settings with the copy they had walked away from. Only a key that has never been written —
+    /// which is to say, an install that has never had an opinion — adopts.
+    ///
+    /// Both keys have to be untouched, not just the first. A user who has been through the sync
+    /// switch has had this decision put to them; the mirror they ended up with is theirs.
+    ///
+    /// Local only, deliberately, even though `adopt` would handle the iCloud copy just as well.
+    /// Turning the *local* mirror on is a file this Mac already has; turning sync on would start
+    /// publishing into someone's iCloud Drive on their behalf, which is a liberty rather than a
+    /// convenience — and the README's own account of that switch describes it as opt-in-then-adopt,
+    /// where this one is the launch-time rule.
+    ///
+    /// A free function over the three facts so the table can be checked without a real
+    /// `UserDefaults` to write to or a file to plant, exactly as `resolve` and `destinationWins`
+    /// are.
+    static func shouldAdoptExistingFile(
+        fileKeyWritten: Bool, syncKeyWritten: Bool, fileExists: Bool
+    ) -> Bool {
+        !fileKeyWritten && !syncKeyWritten && fileExists
+    }
+
+    /// Switches the local mirror on for an install that has never expressed a view, when a config
+    /// file is already sitting where one would live. See `shouldAdoptExistingFile`.
+    private func adoptExistingFileIfUntouched() {
+        let defaults = UserDefaults.standard
+        guard Self.shouldAdoptExistingFile(
+            fileKeyWritten: defaults.object(forKey: Key.enabled) != nil,
+            syncKeyWritten: defaults.object(forKey: Key.iCloudSync) != nil,
+            fileExists: FileManager.default.fileExists(atPath: Self.localURL.path))
+        else { return }
+        isFileEnabled = true
+        defaults.set(true, forKey: Key.enabled)
+        Log.general.notice(
+            """
+            config file: adopting \(Self.displayPath(for: .local), privacy: .public) — it was \
+            already there and this install had never chosen
+            """)
+    }
+
     /// Called once at launch. When the file is already in use it wins over what is in
     /// `UserDefaults`: the whole point of the dotfiles workflow is that a machine which has just
     /// checked out the repo comes up configured, and the local defaults on that machine are exactly
     /// the stale copy the file is meant to replace.
     func start() {
+        // Before the guard, because on the install this is written for the guard is what shuts the
+        // door: nothing is enabled yet, and the file that would enable it has not been read.
+        adoptExistingFileIfUntouched()
         guard isEnabled else { return }
         // Sync was switched on, on a Mac where iCloud Drive since went away — signed out, or turned
         // off in System Settings. `url(for:)` falls back to the local path so the settings are still

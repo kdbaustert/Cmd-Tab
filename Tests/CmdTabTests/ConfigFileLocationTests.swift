@@ -124,4 +124,41 @@ final class ConfigFileLocationTests: XCTestCase {
     func testTurningSyncOffPublishesTheLiveSettingsRatherThanRevertingToAStaleFile() {
         XCTAssertFalse(ConfigFile.destinationWins(wasMirroring: true, leaving: .iCloud))
     }
+
+    // MARK: - Adopting a file that is already there
+
+    /// The dotfiles case, and the one `destinationWins` above could never reach on its own: it only
+    /// runs once mirroring has been asked for, and on a fresh checkout nobody has asked. An install
+    /// with neither key written and a `config.json` already on disk turns the mirror on itself, so
+    /// the checkout really is the whole of the setup.
+    func testAFreshInstallAdoptsAFileThatIsAlreadyThere() {
+        XCTAssertTrue(
+            ConfigFile.shouldAdoptExistingFile(
+                fileKeyWritten: false, syncKeyWritten: false, fileExists: true))
+    }
+
+    /// Nothing to adopt. The ordinary first launch on a machine with no dotfiles.
+    func testAFreshInstallWithNoFileAdoptsNothing() {
+        XCTAssertFalse(
+            ConfigFile.shouldAdoptExistingFile(
+                fileKeyWritten: false, syncKeyWritten: false, fileExists: false))
+    }
+
+    /// **Absent is not false**, and this is the case the whole rule turns on. Unticking the switch
+    /// leaves the file on disk deliberately — it may be tracked — and writes `false` to the key. A
+    /// rule that looked only at the file would turn the mirror back on at the next launch and
+    /// overwrite the user's live settings with the copy they had just walked away from.
+    func testAnInstallThatTurnedTheMirrorOffIsNotOverruledByTheLeftoverFile() {
+        XCTAssertFalse(
+            ConfigFile.shouldAdoptExistingFile(
+                fileKeyWritten: true, syncKeyWritten: false, fileExists: true))
+    }
+
+    /// The sync switch counts as having decided too. Someone who has been through that control has
+    /// had this question put to them, and the mirror they ended up with is theirs.
+    func testHavingTouchedTheSyncSwitchCountsAsHavingDecided() {
+        XCTAssertFalse(
+            ConfigFile.shouldAdoptExistingFile(
+                fileKeyWritten: false, syncKeyWritten: true, fileExists: true))
+    }
 }

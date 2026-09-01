@@ -23,6 +23,20 @@ struct ShortcutEntry: Identifiable {
         /// Matched in a separate namespace entirely — with the trigger held, against the *extra*
         /// modifiers — so these can never collide with anything above them, only with each other.
         case inSwitcherAction
+        /// The two modifier chords the mouse gestures answer to.
+        ///
+        /// Outside the keyboard match order entirely, which is why it is declared past the end of
+        /// it rather than somewhere in the middle: no keystroke reaches these and no chord here
+        /// takes a keystroke from anything above. They are listed because the Overview's claim is
+        /// *everything this app claims*, and a chord that makes an outline appear over whatever the
+        /// cursor is on is claimed as surely as a keypress is — someone hunting for why holding ⌃⌘
+        /// draws a box had nothing in this list to find.
+        ///
+        /// They still collide with **each other**: `MouseDragSettings.action(for:)` tests move
+        /// first, so pointing both at one combination leaves resize permanently dead. The Windows
+        /// tab says so on the row; this is the same fact in the one place that is supposed to hold
+        /// all of them.
+        case mouseGesture
 
         static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -35,6 +49,7 @@ struct ShortcutEntry: Identifiable {
             case .allWindows: return "All windows"
             case .tiling: return "Window tiling"
             case .inSwitcherAction: return "Window action"
+            case .mouseGesture: return "Mouse gesture"
             }
         }
 
@@ -44,12 +59,17 @@ struct ShortcutEntry: Identifiable {
             case .switcherTrigger, .appWindowCycle, .scopedTrigger, .inSwitcherAction:
                 return "Shortcuts"
             case .directActivation: return "Apps"
-            case .allWindows, .tiling: return "Windows"
+            case .allWindows, .tiling, .mouseGesture: return "Windows"
             }
         }
 
         /// Whether these are matched globally. In-switcher actions are not — they only exist while
         /// the panel is up.
+        ///
+        /// A mouse gesture is global: the chord is watched machine-wide for as long as the feature
+        /// is on. Sharing the global namespace costs nothing, because a mouse entry's chord carries
+        /// `Chord.noKey` and the pools are keyed on the key code — so it can only ever meet another
+        /// mouse entry there. See `Chord.noKey`.
         var isGlobal: Bool { self != .inSwitcherAction }
 
         /// Whether this family fires on a chord whatever Shift is doing.
@@ -70,7 +90,8 @@ struct ShortcutEntry: Identifiable {
         var ignoresShift: Bool {
             switch self {
             case .switcherTrigger, .appWindowCycle, .scopedTrigger: return true
-            case .directActivation, .allWindows, .tiling, .inSwitcherAction: return false
+            case .directActivation, .allWindows, .tiling, .inSwitcherAction, .mouseGesture:
+                return false
             }
         }
     }
@@ -95,6 +116,17 @@ struct ShortcutEntry: Identifiable {
     /// the difference between the two rules is expressed at comparison time in `collisions`, because
     /// one normalised key cannot hold both.
     struct Chord: Hashable {
+        /// The key code of a binding that has no key: the mouse gestures, which are modifiers and a
+        /// mouse button.
+        ///
+        /// Negative, so it can never be a real key code — those are the window server's, and start
+        /// at 0 (which is `A`). That is the whole mechanism keeping a mouse chord out of the
+        /// keyboard's collision pools: `clashes(among:)` pools on the *whole* chord, key code
+        /// included, so ⌃⌘ on the mouse and ⌃⌘← on the keyboard land in different pools without
+        /// `clashes` needing to know either family exists. Two mouse chords on one combination
+        /// still meet, which is exactly the collision worth reporting.
+        static let noKey = -1
+
         let keyCode: Int
         let modifiers: CGEventFlags
 
@@ -192,6 +224,25 @@ enum ShortcutAudit {
                     chord: ShortcutEntry.Chord(
                         keyCode: binding.keyCode, modifiers: binding.extras),
                     isActive: actions.isEnabled))
+        }
+
+        // Emitted in `MouseDragAction`'s own case order, which is the order
+        // `MouseDragSettings.action(for:)` tests them in — so if both are pointed at one
+        // combination, the collision names move as the winner because move is the one that fires.
+        for action in MouseDragAction.allCases {
+            let chord = tiling.mouseChord(for: action)
+            out.append(
+                ShortcutEntry(
+                    id: "mouse.\(action.rawValue)", kind: .mouseGesture,
+                    label: "\(action.title) window with the mouse",
+                    display: chord.displayString,
+                    // An unusable chord — ⇧ alone, or nothing — is listed and inert, exactly as an
+                    // unbound keyboard row is. `displayString` already reads "Not set" for one.
+                    chord: chord.isUsable
+                        ? ShortcutEntry.Chord(
+                            keyCode: ShortcutEntry.Chord.noKey, modifiers: chord.flags)
+                        : nil,
+                    isActive: tiling.mouseDrag.isEnabled))
         }
         return out
     }

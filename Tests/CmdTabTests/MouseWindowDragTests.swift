@@ -232,6 +232,45 @@ final class MouseWindowDragTests: XCTestCase {
         XCTAssertEqual(PointDirection.zone(for: CGSize(width: 0, height: 0)), .maximize)
     }
 
+    /// The keystrokes that hold the resize chord and are **not** this app's, which is the set the
+    /// stand-down has to cover and the set a `decision.swallows` gate could never see.
+    ///
+    /// `SwitcherController.handle` stands the pointing gesture down on every key-down, and this is
+    /// the reason it cannot go back to standing down only on a keystroke Cmd-Tab claims. Two shapes
+    /// prove it, and both are `.swallows == false`:
+    ///
+    /// * `.pass` — macOS binds ⌃⌘ combinations of its own (⌃⌘Space is Emoji & Symbols, ⌃⌘F is Enter
+    ///   Full Screen, ⌃⌘Q is Lock Screen) and this app claims none of them. Under the old gate the
+    ///   gesture stayed armed through one, and the chord coming up maximized whatever the
+    ///   cursor was resting on.
+    /// * `.tilingInert` — a tiling chord pressed while our own settings window is frontmost, which
+    ///   deliberately swallows nothing so the shortcut recorder can see the keystroke. So
+    ///   *recording* a ⌃⌘ combination maximized the Settings window the moment the chord came up.
+    ///
+    /// Pinned as a precondition rather than as an assertion about `handle`, exactly as
+    /// `testTheTilingHalvesChordAlsoArmsAMouseGesture` above is: the stand-down itself is one line
+    /// inside a `@MainActor` handler behind a live event tap, and what a test can hold still is the
+    /// arithmetic that made the narrow gate wrong.
+    func testKeystrokesOnTheResizeChordAreOftenNotOursToSwallow() {
+        let settings = MouseDragSettings(isEnabled: true)
+        let chord = MouseDragAction.resize.defaultChord
+        XCTAssertEqual(settings.action(for: chord.flags), .resize, "⌃⌘ still arms the gesture")
+
+        let space = 49  // ⌃⌘Space — Emoji & Symbols
+        let unclaimed = TapRouting.idle(
+            TapRouting.Event(type: .keyDown, keyCode: space, flags: chord.flags),
+            bindings: TapRouting.Bindings(), isAppActive: false)
+        XCTAssertEqual(unclaimed, .pass)
+        XCTAssertFalse(unclaimed.swallows, "a system chord we do not claim swallows nothing")
+
+        let left = 123  // ⌃⌘← — Left half, pressed while Settings has focus
+        let inert = TapRouting.idle(
+            TapRouting.Event(type: .keyDown, keyCode: left, flags: chord.flags),
+            bindings: TapRouting.Bindings(tilingMatch: { _, _ in .leftHalf }), isAppActive: true)
+        XCTAssertEqual(inert, .tilingInert(.leftHalf))
+        XCTAssertFalse(inert.swallows, "an inert tiling chord swallows nothing either")
+    }
+
     // MARK: - Hold-and-point directions
 
     /// Staying put is the one "direction" with nowhere to point, and it takes the whole screen.
