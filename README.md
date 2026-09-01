@@ -614,6 +614,63 @@ window that can't be shown is a **minimized** one: it has no live surface, so it
 is dropped. Captures are debounced per hovered tile, run concurrently, and reuse a briefly cached
 window list so a cursor sweeping across tiles does not re-enumerate the system each time.
 
+#### Windows that are not there any more
+
+The window server keeps a layer-0 surface — last title, full-size frame, still capturable — long
+after the app has closed the window, and nothing it exposes separates one from a live window.
+Measured on Ghostty: **seven surfaces for two open tabs**, four of them the same closed tab at the
+identical frame, every one capturing 100% opaque pixels so the blank check above never rejected any
+of them. The strip filled with convincing screenshots of tabs that had closed hours earlier.
+
+Only the app can say which of its windows are real, so Accessibility gets a veto over
+ScreenCaptureKit's list: a window sitting in the Dock that the app does not claim is dropped. That
+works — until the app stops answering. **Ghostty's `AXWindows` returns success with zero elements**
+for long stretches while `AXFocusedWindow` on the same element resolves fine and the app-level
+`AXChildren` is `[AXMenuBar]`. Measured over three minutes it was empty 30% of the time, in unbroken
+runs of up to 27 seconds. An empty list disarms the veto — an empty answer is indistinguishable from
+no answer, and Chromium and Electron really do give no answer — so the app that leaks the most
+surfaces was also the one that switched off the only defence against them.
+
+So the app is asked three ways, and what makes it work is that the second one answers when the first
+does not.
+
+**Its window list**, over Accessibility. Exact where it works, and the only channel that yields
+window ids. It is also the one that goes quiet, and it under-reports for an app using native window
+tabbing — publishing one tab's window and not its siblings.
+
+**Its Window menu**, which is the list AppKit maintains itself, one item per window, minimized
+windows included. Measured with `AXWindows` at zero, it named both live Ghostty tabs and none of the
+four dead surfaces sharing their frame. It is found by the **action selector** its items carry
+(`makeKeyAndOrderFront:`) rather than by looking for a menu called "Window", which is localized and
+would find nothing on a French system. It gives titles rather than ids, so the comparison drops
+leading decoration first: a terminal's title carries a status glyph that changes several times a
+second, and the two lists are read a moment apart — `◐ Features and improvements` from the window
+server against `◑ Features and improvements` from the menu, the same window one frame later.
+
+The two are **unioned, never ranked**. Each under-reports where the other does not, and a union can
+only keep more windows than either alone. Ghostty is the case that needs it: Accessibility named one
+tab, the menu named both, and the strip shows two.
+
+**The last answer that worked**, for two minutes, when neither current channel says anything. Stale
+by definition, so it is bounded — two minutes is four times the longest gap measured — and it may
+**veto, never supplement**: the minimized windows the strip offers always come from the live read,
+so a stale list can remove a tile but can never invent one.
+
+Two rules bound what any of that can cost. Nothing is removed unless the answer **accounts for at
+least one window the strip can see** — an answer correlating with nothing is not describing this
+app, and emptying the strip on the strength of it is how a working preview becomes a blank one. And
+nothing is ever removed that is **on screen or on a Space**: only the unverifiable set is at risk, so
+no mistake here can take away a window you are looking at.
+
+Underneath all three, **identical unverifiable surfaces collapse to the frontmost**, which needs no
+cooperation from the app at all. Four tiles carrying one name and one picture are not four choices.
+It is scoped to the same unverifiable set, and for the same reason: two live windows may legitimately
+share a title and a frame — two empty terminals in one directory, two Finder windows of one folder.
+
+Measured end to end on the case that prompted all of this: **seven tiles before, two after**, three
+runs in a row, with the other apps on the desk unchanged at one apiece — including Spotify, whose
+menu names no windows at all and which therefore keeps every tile it has.
+
 ### Thumbnail tiles
 
 | Setting | What it does | Default |
@@ -969,7 +1026,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |
 | `SwitcherPanel.swift` | Non-activating overlay window |
 | `SwitcherView.swift` | SwiftUI tile grid and list, and the `Metrics` both are laid out from |
-| `WindowPreview.swift` | Hover window-preview capture (ScreenCaptureKit) and its floating panel |
+| `WindowPreview.swift` | Window-preview capture (ScreenCaptureKit), its floating panel, and the three ways it asks an app which of its windows are real — see [Windows that are not there any more](#windows-that-are-not-there-any-more) |
 | `TileThumbnails.swift` | Live window captures drawn as tile artwork in window mode |
 | `SwitchTarget.swift` | An app or window, and how to raise it |
 | `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |

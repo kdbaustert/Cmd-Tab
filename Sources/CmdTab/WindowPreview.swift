@@ -91,8 +91,66 @@ actor WindowCapture {
     /// Windows narrower or shorter than this are helper surfaces, not something to switch to.
     private static let minWindowSide: CGFloat = 40
 
+    /// What makes two unverifiable surfaces the same window as far as the strip can tell.
+    ///
+    /// The frame is rounded to whole points rather than compared exactly: a surface kept from before
+    /// a resolution change can sit a sub-pixel off, and two tiles a fraction of a point apart are
+    /// the same tile to anyone looking at them.
+    struct SurfaceKey: Hashable {
+        let title: String
+        let x: Int, y: Int, width: Int, height: Int
+
+        init(title: String, frame: CGRect) {
+            self.title = title
+            self.x = Int(frame.origin.x.rounded())
+            self.y = Int(frame.origin.y.rounded())
+            self.width = Int(frame.width.rounded())
+            self.height = Int(frame.height.rounded())
+        }
+    }
+
+    /// Collapses identical copies of a window the strip cannot verify, keeping the frontmost.
+    ///
+    /// The window server keeps a layer-0 surface — last title, full-size frame, still capturable —
+    /// after a tab or window closes, and nothing it exposes separates one from a live window.
+    /// Measured on Ghostty: four surfaces titled `~/Development/cnc-claims`, all at the identical
+    /// frame, all capturing 100% opaque pixels, none of them a window any more. Four tiles carrying
+    /// the same name and the same picture are not four choices — there is no question a person could
+    /// be asking that they are the answer to.
+    ///
+    /// **Scoped to `unverified`, which is what makes it safe.** Two live windows may legitimately
+    /// share a title and a frame — two empty terminals in the same directory, two Finder windows of
+    /// one folder — and collapsing those would take a real window off the strip. So this only
+    /// touches the set the strip already cannot vouch for: off screen and on no Space. Anything on a
+    /// Space, on screen, or named by Accessibility keeps its own tile however many twins it has.
+    ///
+    /// The frontmost copy is the one kept: `windows` arrives from ScreenCaptureKit front to back, so
+    /// the first of a group is the most recently in front and the likeliest to be the live one.
+    ///
+    /// Generic over the element so the rule can be tested without a window server — `SCWindow` can
+    /// only be obtained from one.
+    nonisolated static func collapsingDuplicates<T>(
+        _ windows: [T], unverified: (T) -> Bool, key: (T) -> SurfaceKey
+    ) -> [T] {
+        var seen: Set<SurfaceKey> = []
+        var out: [T] = []
+        out.reserveCapacity(windows.count)
+        // An explicit walk rather than `removeAll(where:)`: this depends on visiting front to back,
+        // and the standard library promises nothing about the order that predicate is called in.
+        for window in windows {
+            if unverified(window), !seen.insert(key(window)).inserted { continue }
+            out.append(window)
+        }
+        return out
+    }
+
     /// What Accessibility says an app's windows are.
-    private struct AXWindows {
+    ///
+    /// Internal rather than private so `WindowPreviewTests` can exercise the two rules built on it —
+    /// which answer the veto uses, and how identical surfaces collapse. Both decide whether a
+    /// window the user owns appears in the strip, and neither is reachable through the async
+    /// capture path without a window server.
+    struct AXWindows {
         /// Every window the app reports, by `CGWindowID`.
         let ids: Set<CGWindowID>
         /// The subset sitting in the Dock, with titles, so SC's list can be supplemented.
@@ -109,6 +167,38 @@ actor WindowCapture {
     private var content: SCShareableContent?
     private var contentFetchedAt: Date?
     private var axCache: [pid_t: (windows: AXWindows, at: Date)] = [:]
+
+    /// The most recent answer an app gave that was good enough to veto with, per app.
+    ///
+    /// Separate from `axCache`, which is a sub-second read-coalescer, and kept for a great deal
+    /// longer — because the thing it exists to survive lasts a great deal longer. Ghostty's
+    /// `AXWindows` returns *success with zero elements* for long stretches: measured at 2 Hz over
+    /// 30 seconds it was empty in 60 samples out of 60, while `AXFocusedWindow` on the same element
+    /// resolved fine and the app-level `AXChildren` was `[AXMenuBar]`. It also flaps — watched
+    /// going 2, then 1, then 0 with the app neither hidden nor frontmost.
+    ///
+    /// An empty answer disarms the veto (`resolvedEveryWindow` is false for an empty list), and the
+    /// veto is the only thing separating a live window from the dead layer-0 surfaces the window
+    /// server keeps after a tab closes. So the app that leaks the most surfaces is also the one that
+    /// disarms the only defence against them, and the strip filled with screenshots of tabs that
+    /// closed hours ago — seven tiles for two tabs, four of them the same dead tab, every one
+    /// capturing 100% opaque pixels so `isBlank` never rejected them.
+    ///
+    /// Remembering the last usable answer keeps the veto armed across the gap. What it cannot do is
+    /// add anything: see `vetoAnswer`.
+    private var lastUsableAX: [pid_t: (windows: AXWindows, at: Date)] = [:]
+
+    /// The window entries in each app's menu bar, normalized — see `menuWindowTitles`. Its own cache
+    /// rather than a field on `AXWindows` because it is read on a different condition: only when
+    /// there is a docked window a veto could act on, which is rarely.
+    private var menuCache: [pid_t: (titles: Set<String>, at: Date)] = [:]
+
+    /// How long a remembered answer may still veto with. Long enough to cover the empty stretches
+    /// measured above, and bounded because the risk it carries grows with age: a window opened
+    /// since the snapshot is not in it, and would be vetoed if it were also off screen and on no
+    /// Space. That is a narrow case — a background tab opened during the gap — and it corrects
+    /// itself the moment the app answers again.
+    private let usableAXLifetime: TimeInterval = 120
 
     /// How long a fetched window list may be reused. Sub-second: long enough that sweeping the
     /// cursor back across a tile doesn't re-enumerate every window on the system, short enough that
@@ -194,38 +284,61 @@ actor WindowCapture {
             SwitchTarget.hasWindowOnScreen(pid: pid, placement: placed)
         }.value
 
-        // Accessibility supplements the list for anything SC missed entirely, and — where it gives a
-        // complete answer — vetoes what SC reports but the app does not actually have. It still does
-        // not *drive* the list: an app whose tree is asleep answers nothing, and that has to cost a
-        // minimized thumbnail rather than the entire strip.
+        // Accessibility supplements the list for anything SC missed entirely, and — with the other
+        // two channels in `claim` — vetoes what SC reports but the app does not actually have. It
+        // still does not *drive* the list: an app that answers nothing through every channel keeps
+        // every tile it has, which has to cost a stale thumbnail rather than the entire strip.
         let ax = await axWindows(for: pid)
 
         // The window server keeps a layer-0 surface — last title, full-size frame, still capturable —
         // long after the app has closed the window. Ghostty is the standing case: measured with two
-        // tabs open it owned *twenty* such surfaces, accumulated over two days, so the strip filled
-        // with icon tiles captioned with the titles of long-gone tabs.
+        // tabs open it owned *seven*, four of them the same closed tab at the identical frame, so the
+        // strip filled with convincing screenshots of tabs that had closed hours earlier.
         //
         // Nothing the window server knows separates those from a live window. Measured across every
-        // field of `CGWindowListCopyWindowInfo` (alpha, store type, sharing state, memory usage) the
-        // twenty were byte-for-byte identical; all twenty captured real pixels; and no
-        // `CGSCopyWindowsWithOptionsAndTags` option value lists any of them, live or dead. Only the
-        // app itself can say, which is why this is the one veto Accessibility gets over SC's list.
+        // field of `CGWindowListCopyWindowInfo` (alpha, store type, sharing state, memory usage) they
+        // are byte-for-byte identical; all of them capture 100% opaque pixels, so `isBlank` never
+        // rejects one; and no `CGSCopyWindowsWithOptionsAndTags` option value lists any of them, live
+        // or dead. On Ghostty a live *background tab* has every one of those properties too — off
+        // screen, on no Space, titled, fully capturable, at the same frame as the dead ones. Only the
+        // app can say, and `claim` is where the three ways of asking it are ranked.
         //
-        // What it costs, and why that is the right trade anyway. `AXWindows` under-reports for an app
-        // using native window tabbing: it publishes the *active* tab's window and hides its siblings,
-        // so a background tab is dropped here with the dead surfaces. That is not a loss against what
-        // the strip did before — the dead surfaces outnumbered the real tab so heavily that
-        // `maxCount` cut the real one off anyway — and it leaves the strip agreeing with window mode,
-        // which builds its list from the same `AXWindows` and has always shown one tile per app here.
-        // Reaching background tabs means reading the window's `AXTabGroup`, which is a feature (they
-        // would have to appear in the switcher too), not a fix for this.
+        // Confined to the docked set, which is what keeps a mistake here cheap: a window on a Space
+        // or on screen is never a candidate, so nothing the user is looking at can be removed by any
+        // of this. And nothing is removed at all unless the app's answer accounts for at least one
+        // window we can see — see `WindowClaim.vetoing`.
+        // The app's Window menu, read only when there is something a veto could act on. Most apps
+        // most of the time have no docked window at all, and this walks every menu in the bar.
+        let hasDocked = live.contains { dockedIDs.contains($0.windowID) }
+        let menuTitles = hasDocked ? await menuWindowTitles(for: pid) : []
+        let claim = Self.claim(
+            fresh: ax, menuTitles: menuTitles, remembered: lastUsableAX[pid], now: Date(),
+            lifetime: usableAXLifetime)
+
+        let vetoed = claim.vetoing(
+            candidates: live.map {
+                (id: $0.windowID, title: $0.title ?? "", unverified: dockedIDs.contains($0.windowID))
+            })
+        live.removeAll { vetoed.contains($0.windowID) }
+
+        // And then collapse whatever identical copies are left — see `collapsingDuplicates`.
         //
-        // Confined to the docked set: a window on a Space is one SC can capture, and dropping it on
-        // an Accessibility disagreement would cost a live thumbnail. And skipped unless every AX
-        // window resolved to an id, so an app whose tree is asleep — Chrome, Electron, Catalyst —
-        // keeps every tile it has now.
-        if ax.resolvedEveryWindow {
-            live.removeAll { dockedIDs.contains($0.windowID) && !ax.ids.contains($0.windowID) }
+        // Second line of defence rather than a duplicate of the first. The veto above is the better
+        // answer when it can be given, and after it runs there is usually nothing here to collapse:
+        // duplicates are unclaimed surfaces, which it has already removed. This is what stands when
+        // it cannot be given — an app that says nothing through either channel and has no remembered
+        // answer either — and unlike the veto it needs no cooperation from the app at all. It is
+        // also the only one of the two that cannot cost a real window: a window the strip can vouch
+        // for is never a candidate.
+        let unclaimed = live.filter {
+            dockedIDs.contains($0.windowID)
+                && !claim.claims(id: $0.windowID, title: $0.title ?? "")
+        }
+        if unclaimed.count > 1 {
+            let collapsible = Set(unclaimed.map(\.windowID))
+            live = Self.collapsingDuplicates(
+                live, unverified: { collapsible.contains($0.windowID) },
+                key: { SurfaceKey(title: $0.title ?? "", frame: $0.frame) })
         }
 
         let liveIDs = Set(live.map(\.windowID))
@@ -302,6 +415,12 @@ actor WindowCapture {
         content = nil
         contentFetchedAt = nil
         axCache.removeAll()
+        // `lastUsableAX` deliberately survives. This runs at the end of *every* session, and the gap
+        // it exists to bridge is far longer than one — an app that answers nothing for half a minute
+        // answers nothing for the whole of the session too, so a remembered answer dropped here
+        // would never once be there when it was wanted. It is also the cheap one: a set of window
+        // ids per app hovered, against an `SCWindow` for every window on the system, and it ages out
+        // on its own in `axWindows`.
     }
 
     /// One window's thumbnail: a live capture when there is one to be had, the app icon when there
@@ -406,6 +525,102 @@ actor WindowCapture {
     /// full AX timeout against a beach-balling app. Run inline there is no suspension point, so
     /// every other hover would queue behind the one wedged app and previews would stop appearing
     /// entirely until it cleared.
+    /// A title with its leading decoration removed, for comparing one the app reports against one
+    /// the window server does.
+    ///
+    /// They are the same string and they are read a moment apart, which for a terminal is long
+    /// enough to matter: the title carries a status glyph that changes several times a second —
+    /// measured on Ghostty, `◐ Features and improvements` from the window server against
+    /// `◑ Features and improvements` from the menu, the same window a frame later. Everything
+    /// before the first letter or digit goes, which covers spinner glyphs, the SF Symbols apps put
+    /// in the private use area, and the dot an editor uses for unsaved changes.
+    ///
+    /// Applied to both sides, so over-stripping cannot make two different windows match — it can
+    /// only fail to distinguish two that were already going to collide, which the collapse rule
+    /// handles.
+    nonisolated static func normalizedTitle(_ title: String) -> String {
+        var rest = Substring(title)
+        while let first = rest.first, !first.isLetter, !first.isNumber { rest = rest.dropFirst() }
+        return rest.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// What the app is prepared to say are its own windows, and whether that is worth acting on.
+    struct WindowClaim {
+        /// Window ids Accessibility named.
+        let ids: Set<CGWindowID>
+        /// Normalized titles the app's Window menu named.
+        let titles: Set<String>
+        /// Whether any source answered at all. False means the app said nothing and nothing may be
+        /// removed on its behalf.
+        let canVeto: Bool
+
+        func claims(id: CGWindowID, title: String) -> Bool {
+            if ids.contains(id) { return true }
+            let normalized = WindowCapture.normalizedTitle(title)
+            return !normalized.isEmpty && titles.contains(normalized)
+        }
+
+        /// Which of `candidates` to drop — the unverifiable ones the app does not claim.
+        ///
+        /// `unverified` is the docked set: off screen *and* on no Space. Nothing on screen or on a
+        /// Space is ever a candidate, which is what keeps a window the user is looking at safe from
+        /// any mistake below.
+        ///
+        /// **Nothing is dropped unless something was kept.** If not one candidate is claimed, the
+        /// answer does not describe the windows in front of us — a title scheme that does not
+        /// correspond, an app whose menu names something else entirely — and removing everything on
+        /// the strength of an answer we cannot corroborate is how a working preview becomes an empty
+        /// one. One match is enough to show the two lists are talking about the same app.
+        func vetoing(
+            candidates: [(id: CGWindowID, title: String, unverified: Bool)]
+        ) -> Set<CGWindowID> {
+            guard canVeto else { return [] }
+            guard candidates.contains(where: { claims(id: $0.id, title: $0.title) }) else { return [] }
+            return Set(
+                candidates.filter { $0.unverified && !claims(id: $0.id, title: $0.title) }
+                    .map(\.id))
+        }
+    }
+
+    /// Which source the veto acts on, in order of how well it describes the app *now*.
+    ///
+    /// Three channels, because the first one fails and the second one does not exist everywhere.
+    ///
+    /// **Accessibility's window list** is exact where it works, and it is the only one that yields
+    /// ids. It also returns success with zero elements for long stretches — measured on Ghostty over
+    /// three minutes, empty 30% of the time in unbroken runs of up to 27 seconds — and it
+    /// under-reports for an app using native window tabbing, publishing one tab's window and not its
+    /// siblings.
+    ///
+    /// **The app's Window menu** is the one AppKit maintains itself, one item per window, minimized
+    /// windows included. It answers when the window list does not: measured with `AXWindows` at
+    /// zero, the menu named both live Ghostty tabs and none of the four dead surfaces sharing their
+    /// frame. It is found by the action selector its items carry rather than by the menu's title,
+    /// which is localized. It gives titles rather than ids, which is why the comparison is
+    /// normalized, and some apps populate no window items at all — Spotify names none — so it
+    /// cannot be the only channel either.
+    ///
+    /// The two current sources are **unioned**, never ranked: each under-reports in a way the other
+    /// does not, and a union can only keep more windows than either alone. Ghostty is the case that
+    /// needs it — Accessibility named one tab, the menu named both.
+    ///
+    /// **The last usable Accessibility answer** is the fallback of last resort, used only when
+    /// neither current source says anything. Stale by definition, so it is bounded by `lifetime`,
+    /// and it contributes ids only.
+    nonisolated static func claim(
+        fresh: AXWindows, menuTitles: Set<String>,
+        remembered: (windows: AXWindows, at: Date)?, now: Date, lifetime: TimeInterval
+    ) -> WindowClaim {
+        if fresh.resolvedEveryWindow || !menuTitles.isEmpty {
+            return WindowClaim(
+                ids: fresh.resolvedEveryWindow ? fresh.ids : [], titles: menuTitles, canVeto: true)
+        }
+        guard let remembered, remembered.windows.resolvedEveryWindow,
+            now.timeIntervalSince(remembered.at) < lifetime
+        else { return WindowClaim(ids: [], titles: [], canVeto: false) }
+        return WindowClaim(ids: remembered.windows.ids, titles: [], canVeto: true)
+    }
+
     private func axWindows(for pid: pid_t) async -> AXWindows {
         let now = Date()
         if let entry = axCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.windows }
@@ -425,9 +640,56 @@ actor WindowCapture {
             return AXWindows(
                 ids: ids, minimized: minimized, resolvedEveryWindow: resolvedEvery)
         }.value
+        // Remembered before the substitution, so only a genuinely fresh answer ever becomes the one
+        // future gaps fall back on — otherwise a remembered answer would keep renewing its own
+        // timestamp and never age out.
+        if windows.resolvedEveryWindow { lastUsableAX[pid] = (windows, now) }
+        lastUsableAX = lastUsableAX.filter { now.timeIntervalSince($0.value.at) < usableAXLifetime }
         axCache[pid] = (windows, now)
         return windows
     }
+
+    /// The normalized titles of the window entries in an app's menu bar — cached for `ttl`.
+    ///
+    /// Found by the **action selector** its items carry (`makeKeyAndOrderFront:`) rather than by
+    /// looking for a menu called "Window", which is localized and would find nothing on a French
+    /// system. AppKit sets that action on every item it adds to the windows menu, so the test is
+    /// structural: these are the entries that raise a window, whatever the menu is called.
+    ///
+    /// Read only when the caller has something a veto could remove — see `thumbnails`. It walks
+    /// every menu in the bar reading one attribute per item, measured at 11–34ms per app, which is
+    /// cheap for a background queue and not cheap enough to pay for on every hover of every tile.
+    ///
+    /// Off the actor for the same reason `axWindows` is: these are synchronous Accessibility calls
+    /// into another process, and one beach-balling app must not stall every other preview behind it.
+    private func menuWindowTitles(for pid: pid_t) async -> Set<String> {
+        let now = Date()
+        if let entry = menuCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.titles }
+        menuCache = menuCache.filter { now.timeIntervalSince($0.value.at) < ttl }
+        let titles = await Task.detached { () -> Set<String> in
+            guard let bar = AX.copyElement(AX.application(pid), kAXMenuBarAttribute as String)
+            else { return [] }
+            var out: Set<String> = []
+            for top in AX.children(of: bar) {
+                for menu in AX.children(of: top) {
+                    for item in AX.children(of: menu) {
+                        guard AX.copyString(item, kAXIdentifierAttribute as String)
+                            == Self.raiseWindowAction,
+                            let title = AX.copyString(item, kAXTitleAttribute as String)
+                        else { continue }
+                        let normalized = Self.normalizedTitle(title)
+                        if !normalized.isEmpty { out.insert(normalized) }
+                    }
+                }
+            }
+            return out
+        }.value
+        menuCache[pid] = (titles, now)
+        return titles
+    }
+
+    /// The AppKit action every windows-menu item carries. Not localized, unlike the menu's title.
+    private static let raiseWindowAction = "makeKeyAndOrderFront:"
 
     private static func capture(_ window: SCWindow, maxHeight: CGFloat) async throws -> CGImage? {
         let filter = SCContentFilter(desktopIndependentWindow: window)

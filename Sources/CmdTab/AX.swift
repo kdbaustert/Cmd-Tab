@@ -73,6 +73,27 @@ enum AX {
         return windows
     }
 
+    /// An element's children, or an empty array where it has none or will not say.
+    ///
+    /// Unsignposted, unlike `windows(of:)`: this walks menus rather than windows, and it is called
+    /// from `WindowCapture.menuWindowTitles` on a background queue where a slow app costs one
+    /// preview rather than the switcher's key path.
+    ///
+    /// Through `onOwningThread` like every other reader here, even though its one caller only ever
+    /// asks about *other* apps. A read against our own process is not IPC and has to be on the main
+    /// thread, and a helper that quietly does not know that is a trap for whoever reaches for it
+    /// next.
+    static func children(of element: AXUIElement) -> [AXUIElement] {
+        onOwningThread(element) {
+            var value: CFTypeRef?
+            guard
+                AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value)
+                    == .success
+            else { return [] }
+            return (value as? [AXUIElement]) ?? []
+        }
+    }
+
     /// A window as opposed to the other things that turn up in `AXWindows` — Finder puts the
     /// desktop in there as an `AXScrollArea`.
     static func isWindow(_ element: AXUIElement) -> Bool {
