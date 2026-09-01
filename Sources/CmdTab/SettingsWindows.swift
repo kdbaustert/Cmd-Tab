@@ -11,6 +11,16 @@ struct WindowSettings: View {
     @ObservedObject var store: WindowTilingStore
     @ObservedObject private var globals = GlobalActionsStore.shared
 
+    /// How many displays are plugged in, which decides how many of the absolute display targets
+    /// are worth showing.
+    ///
+    /// Held in state and refreshed from the screen-parameters notification rather than read inline:
+    /// SwiftUI has no reason to re-render this view when a monitor is plugged in, so a bare
+    /// `NSScreen.screens.count` in the body would leave the rows describing the desk as it was when
+    /// Settings opened — and this is the one tab someone opens *because* they have just plugged
+    /// something in.
+    @State private var displayCount = NSScreen.screens.count
+
     /// Wider than the 168 the recorders use: a `ColorSettingControl` is three controls in a row, not
     /// one, and the hex field is unusable squeezed into a recorder's width.
     private static let colorControlWidth: CGFloat = 250
@@ -36,11 +46,27 @@ struct WindowSettings: View {
             ]
         ),
         ("Corners", [.topLeft, .topRight, .bottomLeft, .bottomRight]),
-        ("Whole window", [.maximize, .center, .restore]),
+        (
+            "Whole window",
+            [.maximize, .maximizeHeight, .maximizeWidth, .almostMaximize, .center, .restore]
+        ),
         ("Size", [.larger, .smaller]),
+        ("Resize an edge", WindowArrangement.edgeResizes),
         ("Nudge", WindowArrangement.nudges),
         ("Swap", WindowArrangement.swaps),
     ]
+
+    /// The absolute display targets, one row per display that is actually plugged in.
+    ///
+    /// Filtered rather than listed in full, because a row captioned "Move to display 3" on a laptop
+    /// with no external monitor is a control that cannot do anything — and the enum has to carry a
+    /// fixed four of them for the raw values to be a stable URL grammar. On a single display the
+    /// whole card is dropped: "move it to the display it is already on" is the one arrangement here
+    /// with nothing to offer at all.
+    private static func displayTargets(count: Int) -> [WindowArrangement] {
+        guard count > 1 else { return [] }
+        return WindowArrangement.displayTargets.filter { ($0.displayIndex ?? 0) < count }
+    }
 
     /// The send-it-elsewhere group. Its own card rather than a fifth entry in `groups` because it
     /// is the one the tiling switch does not govern, and the footer has to say so.
@@ -272,6 +298,29 @@ struct WindowSettings: View {
                     isOn: restoresLayoutOnDisplayChange)
             }
 
+            // Only when there is more than one display — see `displayTargets(count:)`.
+            if !Self.displayTargets(count: displayCount).isEmpty {
+                SettingsSection(
+                    title: "Send to a display", anchor: anchor(for: "Send to a display"),
+                    footer: "Names the destination instead of counting to it: on three displays "
+                        + "\"next display\" is two presses and a guess about which way round they "
+                        + "are, where these land on the same screen every time. The numbers are the "
+                        + "ones on the window tiles' own display badges. Unbound, and ungoverned by "
+                        + "the tiling switch for the same reason the two moves above are. Rows "
+                        + "appear for the displays you actually have."
+                ) {
+                    ForEach(Self.displayTargets(count: displayCount)) { arrangement in
+                        SettingsRow(
+                            title: arrangement.title,
+                            subtitle: subtitle(for: arrangement),
+                            controlWidth: 168
+                        ) {
+                            TilingShortcutRecorder(arrangement: arrangement, store: store)
+                        }
+                    }
+                }
+            }
+
             // Unbound out of the box, and the footer says why rather than leaving someone to hunt
             // for a chord that was never claimed.
             SettingsSection(
@@ -358,6 +407,13 @@ struct WindowSettings: View {
                 Spacer()
                 Button("Restore defaults", action: store.resetToDefaults)
             }
+        }
+        // The desk changing under an open Settings window is the case the display rows exist for.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didChangeScreenParametersNotification)
+        ) { _ in
+            displayCount = NSScreen.screens.count
         }
     }
 

@@ -35,6 +35,17 @@ final class SwitcherModel: ObservableObject {
     @Published var highlightColor: Color = .accentColor
     /// Show the ⌘-number badge on the first ten tiles.
     @Published var showNumbers: Bool = true
+    /// The tile the cursor is over, or nil when it is over none of them.
+    ///
+    /// Distinct from `selection`, which the cursor also moves: the two agree while the pointer is on
+    /// a tile and diverge the moment it leaves, and it is the *leaving* that matters — the close
+    /// button belongs to the tile under the pointer and must go away with the pointer, where the
+    /// highlight stays where it was left. Driven by `PanelGroup`'s cursor poll, because the panel
+    /// never becomes key and SwiftUI's own hover tracking never runs.
+    @Published var hoverIndex: Int?
+    /// Whether a hovered tile offers a close button. Mirrors the in-switcher actions switch: the
+    /// button is the same action ⌥W performs, so it appears exactly when that key would work.
+    @Published var showsCloseButton: Bool = false
     /// Show the display badge on window tiles.
     @Published var showDisplayBadges: Bool = true
     /// Show the Space (Desktop) badge on window tiles.
@@ -58,6 +69,37 @@ final class SwitcherModel: ObservableObject {
 
     /// The title font at `size`. See `TitleFont.resolve`.
     func titleFont(size: CGFloat) -> Font { TitleFont.resolve(titleFontName, size: size) }
+
+    /// The digit that jumps to this target, or nil where there is none.
+    ///
+    /// The ⌘-number jump is disabled while filtering (digits type into the query), so the badges
+    /// come off too. The tenth target is labelled 0, because 0 is the key that selects it — there is
+    /// no ⌘-10 to press.
+    ///
+    /// On the model rather than in the view because the announcement wants the same answer: what
+    /// VoiceOver says about a tile has to match what is drawn on it, and two copies of this
+    /// expression is how that stops being true.
+    func number(for index: Int) -> Int? {
+        showNumbers && query.isEmpty && index < 10 ? (index + 1) % 10 : nil
+    }
+
+    /// Whether tile `index` draws a close button right now.
+    ///
+    /// Three conditions, and each is load-bearing. The in-switcher actions have to be on, because
+    /// the button performs exactly what ⌥W performs and an affordance for a disabled action is a
+    /// lie. The cursor has to be on *this* tile, because a button on a tile the pointer is nowhere
+    /// near is a button nobody meant to aim at. And the tile has to be something with a window: a
+    /// not-running favourite is an offer to launch, and there is nothing there to close.
+    ///
+    /// On the model rather than in the view so it can be tested — a click that closes the wrong
+    /// window is the most expensive mistake in this file, and "which tile is this button on" is the
+    /// question that would cause it.
+    func showsClose(at index: Int) -> Bool {
+        guard showsCloseButton, hoverIndex == index, targets.indices.contains(index) else {
+            return false
+        }
+        return !targets[index].isLaunchable
+    }
 
     /// Tiles carry a title only when they represent windows — the same-app cycle. App tiles show
     /// their name in the caption instead, so repeating it under every icon was pure noise.
@@ -232,11 +274,30 @@ final class SwitcherModel: ObservableObject {
     /// "chr" with Character Viewer ahead of Chrome in the list highlighted the wrong one and the
     /// user had to arrow past it — which is exactly the work filtering is supposed to save.
     /// Ties break towards the earlier index, which for the default sort is the more recently used.
+    ///
+    /// **Something running always outranks something launchable, whatever they score.** The launch
+    /// tiles are shown alongside the real ones now rather than only when nothing matched, and that
+    /// widening is only safe because of this rule: a query that reaches anything already open must
+    /// still land on it, or the switcher would have started launching second copies of things in
+    /// answer to the gesture that has always meant "go to the one I have". The suggestion is still
+    /// *there* — one arrow key away, and selected the moment nothing running answers the query —
+    /// which is the whole difference between offering a launcher and displacing the switcher.
     static func bestMatch(_ list: [SwitchTarget], query: String) -> Int? {
-        var best: (index: Int, score: Int)?
+        var best: (index: Int, score: Int, running: Bool)?
         for index in list.indices {
             guard let score = score(list[index], query: query) else { continue }
-            if best == nil || score > best!.score { best = (index, score) }
+            let running = !list[index].isLaunchable
+            guard let current = best else {
+                best = (index, score, running)
+                continue
+            }
+            // Running beats launchable outright; within a group, the higher score wins and ties
+            // break towards the earlier index.
+            if running != current.running {
+                if running { best = (index, score, running) }
+            } else if score > current.score {
+                best = (index, score, running)
+            }
         }
         return best?.index
     }

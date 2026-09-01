@@ -20,6 +20,14 @@ final class FilteringAndMetricsTests: XCTestCase {
         ]
     }
 
+    /// An installed app offered as a launch tile, built the way
+    /// `SwitcherController.updateLaunchSuggestions` builds one.
+    private func launchable(_ name: String) -> SwitchTarget {
+        SwitchTarget(
+            id: "launch:\(name)", kind: .launch(URL(fileURLWithPath: "/Applications/\(name).app")),
+            title: name, appName: name, icon: nil, isMinimized: false, isHidden: false)
+    }
+
     // MARK: - Filtering
 
     /// The titles a query matches, in list order.
@@ -78,6 +86,63 @@ final class FilteringAndMetricsTests: XCTestCase {
 
     func testMatchIsCaseInsensitive() {
         XCTAssertEqual(matches(sample, query: "SAFARI"), ["Safari"])
+    }
+
+    // MARK: - Running beats launchable
+
+    /// The rule that makes it safe to show launch tiles alongside the running ones rather than only
+    /// when nothing matched.
+    ///
+    /// "Safari" scores identically against a running Safari and an installed one, and the launch
+    /// tile is a *better* match than a running "Safari Technology Preview" would be — so without
+    /// this rule, widening the suggestions would have made ⌘-Tab-then-type start launching second
+    /// copies of apps that were already open.
+    func testARunningAppOutranksALaunchTileThatScoresHigher() {
+        let list = [target("Safari Technology Preview", app: "Safari Technology Preview")]
+            + [launchable("Safari")]
+        XCTAssertEqual(
+            SwitcherModel.bestMatch(list, query: "safari").map { list[$0].title },
+            "Safari Technology Preview")
+    }
+
+    /// Exact same name, one running and one installed: the running one still wins, whichever order
+    /// they sit in.
+    func testARunningAppWinsAgainstAnIdenticalLaunchTileEitherWayRound() {
+        let running = target("Chess", app: "Chess")
+        let installed = launchable("Chess")
+        XCTAssertFalse(
+            SwitcherModel.bestMatch([running, installed], query: "chess")
+                .map { [running, installed][$0].isLaunchable } ?? true)
+        XCTAssertFalse(
+            SwitcherModel.bestMatch([installed, running], query: "chess")
+                .map { [installed, running][$0].isLaunchable } ?? true)
+    }
+
+    /// And the other half: with nothing running that matches, the launch tile is selected — which is
+    /// the behaviour that existed before the widening and still has to hold.
+    func testALaunchTileIsSelectedWhenNothingRunningMatches() {
+        let list = sample + [launchable("Numbers")]
+        XCTAssertEqual(
+            SwitcherModel.bestMatch(list, query: "numbers").map { list[$0].title }, "Numbers")
+    }
+
+    /// Between two launch tiles the score decides, exactly as it does between two running apps —
+    /// the rule is a preference between the groups, not a suspension of ranking inside one.
+    func testBetweenTwoLaunchTilesTheScoreStillDecides() {
+        let list = [launchable("Notes"), launchable("No Such App")]
+        XCTAssertEqual(
+            SwitcherModel.bestMatch(list, query: "notes").map { list[$0].title }, "Notes")
+    }
+
+    /// The suggestions sit at the end of the list, so the running tiles keep every index they had —
+    /// which is what ⌘-number, hit-testing and the caption all depend on.
+    func testLaunchSuggestionsAreAppendedWithoutMovingTheRunningTiles() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setLaunchSuggestions([launchable("Numbers")])
+        XCTAssertEqual(model.targets.count, 4)
+        XCTAssertEqual(model.targets.prefix(3).map(\.title), sample.map(\.title))
+        XCTAssertTrue(model.targets[3].isLaunchable)
     }
 
     func testMatchIsASubstringNotAPrefix() {

@@ -423,6 +423,10 @@ extension Defaults.Keys {
     /// Off by default: it is the one feature that needs Screen Recording, and switching it on is
     /// what asks for the permission. Defaulted on, an ungranted install would show nothing on hover
     /// with no hint as to why.
+    /// The stored key still says "on hover" and stays that way: the setting has since grown to cover
+    /// the keyboard selection as well, but renaming a defaults key turns everyone's preference back
+    /// off on the update that renames it, which is a worse thing to do than carry a slightly dated
+    /// name in one string.
     static let windowPreview = Key<Bool>("windowPreviewOnHover", default: false)
     /// Window mode: draw a live capture as the tile artwork instead of the app icon.
     ///

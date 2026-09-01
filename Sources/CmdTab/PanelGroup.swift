@@ -33,6 +33,8 @@ final class PanelGroup {
 
     /// Invoked when a tile is clicked, with its index.
     var onPick: ((Int) -> Void)?
+    /// Invoked when a tile's close button is clicked, with its index.
+    var onClose: ((Int) -> Void)?
     /// Invoked with a step (+1/-1) when the scroll wheel moves over any panel.
     var onScroll: ((Int) -> Void)?
     /// Fires when what the cursor points at changes. Only while window previews are on.
@@ -380,6 +382,7 @@ final class PanelGroup {
         panel.maxColumns = maxColumns
         panel.fade = fade
         panel.onPick = { [weak self] index in self?.onPick?(index) }
+        panel.onClose = { [weak self] index in self?.onClose?(index) }
         panel.onScrollEvent = { [weak self] event in self?.handleScroll(event) }
         panel.onGeometryChange = { [weak self] in self?.refreshPreview() }
         return panel
@@ -424,6 +427,9 @@ final class PanelGroup {
         // the next session starts clean. The controller takes the strip down itself on hide.
         lastPreviewTarget = .away
         cursorMoved = false
+        // The cursor is not over anything once the panels are gone, and a stale index would draw a
+        // close button on the first tile of the next session.
+        model.hoverIndex = nil
     }
 
     /// Polls the cursor, moves the highlight to the tile under it, and reports what the preview
@@ -438,7 +444,33 @@ final class PanelGroup {
         // strip, so the tile the strip belongs to stays highlighted while its windows are picked.
         let index = overPreview ? nil : tileIndex(at: location)
         if let index, model.selection != index { model.selection = index }
+        // What the cursor is actually on, which is a different fact from what is selected: the
+        // close button is drawn on the tile under the pointer, and the pointer being *somewhere
+        // else* is exactly when it must not be. Held while the cursor is on the strip, so crossing
+        // from a tile to its own preview does not make the button flicker away underneath.
+        if !overPreview, model.hoverIndex != index { model.hoverIndex = index }
         emitPreview(previewTarget(at: location, overPreview: overPreview, index: index))
+    }
+
+    /// Points the preview at whatever the *keyboard* has selected.
+    ///
+    /// The hover path below answers "what is the cursor on"; this answers "what is highlighted", and
+    /// they are the same question only when the two happen to agree. Without it, the one feature
+    /// that shows you what is inside an app before you switch to it was reachable only with the
+    /// mouse — in a switcher whose entire premise is that your hands are on the keyboard.
+    ///
+    /// Cheap by construction: it emits a target, and `PreviewCoordinator` sits on it for its usual
+    /// debounce before any capture starts. A tap of ⌘-Tab is over long before that elapses, and
+    /// cycling quickly through ten tiles fires one capture — for the tile you stopped on — rather
+    /// than ten.
+    ///
+    /// Yields to the strip. While the cursor is *on* the floating preview the user is picking a
+    /// window out of it, and re-pointing the strip at the selection under their hand would replace
+    /// the thing they are aiming at mid-click. `.overPreview` is therefore the one state the
+    /// keyboard does not override; the selection is re-emitted as soon as the cursor leaves.
+    func previewSelection() {
+        if case .overPreview = lastPreviewTarget { return }
+        emitPreview(tileTarget(for: model.selection))
     }
 
     /// Re-resolves the preview against whatever is under the cursor now.
@@ -465,6 +497,15 @@ final class PanelGroup {
         -> PreviewTarget?
     {
         if overPreview { return .overPreview(location) }
+        return tileTarget(for: index)
+    }
+
+    /// The preview target for one tile, or `.away` when that tile has nothing to preview.
+    ///
+    /// Shared by the cursor path and the keyboard path so the two cannot answer differently about
+    /// the same tile — which is the sort of drift that ends with the strip showing one app's windows
+    /// beside another app's icon.
+    private func tileTarget(for index: Int?) -> PreviewTarget? {
         guard let index, model.targets.indices.contains(index) else { return .away }
         // A favourite that isn't running has no process, let alone windows.
         guard !model.targets[index].isLaunchable else { return .away }

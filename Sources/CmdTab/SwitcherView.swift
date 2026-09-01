@@ -115,6 +115,19 @@ private struct TileFrameKey: PreferenceKey {
     }
 }
 
+/// Reports the close button's laid-out frame, the same way tiles report theirs.
+///
+/// A second key rather than deriving the button's rect from the tile's inside the panel: the tile
+/// frame is reported precisely so nothing re-derives layout from parameters no compiler checks, and
+/// "the top-left 18 points of the tile" would be exactly that arithmetic creeping back in — right
+/// until the day the button moves. At most one entry, since only the hovered tile draws one.
+private struct CloseButtonFrameKey: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { first, _ in first })
+    }
+}
+
 extension View {
     /// Reports this tile's laid-out frame under `index`, in the panel's content coordinate space.
     /// Both layouts use it, so the panel's hit-testing does not care which one drew the target.
@@ -128,6 +141,66 @@ extension View {
     }
 }
 
+/// The close affordance on the tile under the cursor.
+///
+/// Every in-switcher action is a key — ⌥W closes, ⌥Q quits, ⌥M minimizes — and the mouse could
+/// pick a tile and nothing else. This is the one of them a pointer gets, and it is deliberately the
+/// *only* one: `SwitcherAction.isDestructive` marks quit and force-quit as needing a confirmation
+/// before they run, and a control that ends a process on a single stray click is exactly what that
+/// flag exists to prevent. Closing a window is recoverable in the way quitting an app is not, which
+/// is the same line `URLCommands` draws for the same reason.
+///
+/// Top-left, the corner every macOS close control has occupied since the platform had windows.
+private struct TileCloseButton: View {
+    /// Drawn against the tile rather than the app icon, so it reads as "close this" rather than as
+    /// part of the artwork.
+    static let diameter: CGFloat = 18
+
+    var body: some View {
+        ZStack {
+            Circle().fill(.black.opacity(0.55))
+            Circle().strokeBorder(.white.opacity(0.35), lineWidth: 0.5)
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: Self.diameter, height: Self.diameter)
+        // Fixed light-on-dark rather than themed: it sits on top of an app icon, whose colours this
+        // app does not choose and cannot predict, so a control tinted to the panel's appearance
+        // would vanish against half the icons on the machine.
+        .accessibilityLabel("Close window")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+extension View {
+    /// Overlays the close button on this tile when the cursor is on it, and reports where it landed.
+    ///
+    /// A modifier rather than two copies inside the grid and the list, since both layouts need the
+    /// identical behaviour and the reporting is the half that is easy to get subtly wrong.
+    fileprivate func closeButton(at index: Int, model: SwitcherModel, target: SwitchTarget)
+        -> some View
+    {
+        // The rule lives on the model, where it is testable — see `SwitcherModel.showsClose`.
+        // `target` is still taken as a parameter so the view reads the tile it is drawing rather
+        // than looking one up by index while the list is mid-update.
+        let shows = model.showsClose(at: index) && !target.isLaunchable
+        return overlay(alignment: .topLeading) {
+            if shows {
+                TileCloseButton()
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: CloseButtonFrameKey.self,
+                                value: [index: geo.frame(in: .named(SwitcherView.space))])
+                        }
+                    )
+                    .offset(x: 2, y: 2)
+            }
+        }
+    }
+}
+
 struct SwitcherView: View {
     @ObservedObject var model: SwitcherModel
     let columns: Int
@@ -138,6 +211,9 @@ struct SwitcherView: View {
     /// a single shared map would have them overwriting each other's frames and hit-testing against
     /// whichever display reported last.
     let onTileFrames: ([Int: CGRect]) -> Void
+    /// Where the close button, when one is drawn, reports its own frame. Empty in every session
+    /// where the cursor never rests on a tile, which is most of them.
+    let onCloseFrames: ([Int: CGRect]) -> Void
 
     /// Name of the coordinate space tile frames are measured in — the panel's content, so a screen
     /// point maps straight onto them after flipping.
@@ -182,6 +258,7 @@ struct SwitcherView: View {
         .fixedSize()
         .coordinateSpace(name: Self.space)
         .onPreferenceChange(TileFrameKey.self) { onTileFrames($0) }
+        .onPreferenceChange(CloseButtonFrameKey.self) { onCloseFrames($0) }
     }
 
     private var grid: some View {
@@ -207,6 +284,7 @@ struct SwitcherView: View {
                     showsDisplayBadges: model.showDisplayBadges,
                     showsSpaceBadges: model.showSpaceBadges,
                     thumbnail: thumbnail(for: target))
+                    .closeButton(at: index, model: model, target: target)
                     .reportingFrame(at: index)
             }
         }
@@ -245,6 +323,7 @@ struct SwitcherView: View {
                             showsDisplayBadges: model.showDisplayBadges,
                             showsSpaceBadges: model.showSpaceBadges,
                             thumbnail: thumbnail(for: model.targets[index]))
+                            .closeButton(at: index, model: model, target: model.targets[index])
                             .reportingFrame(at: index)
                     }
                 }
@@ -268,14 +347,8 @@ struct SwitcherView: View {
         model.matchingIndices.isEmpty || model.matchingIndices.contains(index)
     }
 
-    /// The digit that jumps to this target, or nil where there is none.
-    ///
-    /// The ⌘-number jump is disabled while filtering (digits type into the query), so the badges
-    /// come off too. The tenth target is labelled 0, because 0 is the key that selects it — there is
-    /// no ⌘-10 to press.
-    private func number(for index: Int) -> Int? {
-        model.showNumbers && model.query.isEmpty && index < 10 ? (index + 1) % 10 : nil
-    }
+    /// The digit that jumps to this target, or nil where there is none. See `SwitcherModel.number`.
+    private func number(for index: Int) -> Int? { model.number(for: index) }
 
     /// The live type-to-filter query, shown only while one is being typed.
     private var searchBar: some View {
@@ -335,23 +408,34 @@ struct SwitcherView: View {
 /// makes the switcher work at all. What it *can* do is stop the tiles being anonymous: everything
 /// distinguishing one tile from the next is visual — a dimmed icon for hidden, a badge glyph for
 /// the Space, a small number in the corner for the jump key — and none of it is in the text.
-private func accessibilityDescription(
-    for target: SwitchTarget, number: Int?, showsDisplayBadges: Bool, showsSpaceBadges: Bool
-) -> String {
-    var parts = [target.title]
-    // In window mode the title is the window's, and the app name is the other half of the identity.
-    if target.appName != target.title { parts.append(target.appName) }
-    if target.isMinimized { parts.append("minimized") }
-    if target.isHidden { parts.append("hidden") }
-    if target.isLaunchable { parts.append("not running") }
-    if let badge = target.badge { parts.append("\(badge) notifications") }
-    if showsDisplayBadges, let display = target.displayIndex {
-        parts.append("display \(display + 1)")
+enum TileDescription {
+    /// Everything about a tile that is carried visually and nowhere else.
+    ///
+    /// Named and internal rather than a private free function because it has a second caller now:
+    /// `SwitcherController.announceSelection` speaks the same sentence when the *keyboard* moves the
+    /// highlight. A label VoiceOver can only reach by exploring the panel is a label it never reads
+    /// during an actual ⌘-Tab, since the panel never becomes key and there is nothing to explore
+    /// with — so the announcement is the half that makes the labels useful, and both halves have to
+    /// say the same thing.
+    static func text(
+        for target: SwitchTarget, number: Int?, showsDisplayBadges: Bool, showsSpaceBadges: Bool
+    ) -> String {
+        var parts = [target.title]
+        // In window mode the title is the window's, and the app name is the other half of the
+        // identity.
+        if target.appName != target.title { parts.append(target.appName) }
+        if target.isMinimized { parts.append("minimized") }
+        if target.isHidden { parts.append("hidden") }
+        if target.isLaunchable { parts.append("not running") }
+        if let badge = target.badge { parts.append("\(badge) notifications") }
+        if showsDisplayBadges, let display = target.displayIndex {
+            parts.append("display \(display + 1)")
+        }
+        if showsSpaceBadges, let space = target.spaceIndex { parts.append("desktop \(space + 1)") }
+        // The tenth tile is reached with 0, so this says the key rather than the position.
+        if let number { parts.append("press \(number == 10 ? 0 : number) to switch") }
+        return parts.joined(separator: ", ")
     }
-    if showsSpaceBadges, let space = target.spaceIndex { parts.append("desktop \(space + 1)") }
-    // The tenth tile is reached with 0, so this says the key rather than the position.
-    if let number { parts.append("press \(number == 10 ? 0 : number) to switch") }
-    return parts.joined(separator: ", ")
 }
 
 private struct TargetTile: View {
@@ -395,7 +479,7 @@ private struct TargetTile: View {
         .opacity(isMatch ? 1 : 0.3)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            accessibilityDescription(
+            TileDescription.text(
                 for: target, number: number, showsDisplayBadges: showsDisplayBadges,
                 showsSpaceBadges: showsSpaceBadges))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -473,7 +557,7 @@ private struct TargetRow: View {
         .opacity(isMatch ? 1 : 0.3)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            accessibilityDescription(
+            TileDescription.text(
                 for: target, number: number, showsDisplayBadges: showsDisplayBadges,
                 showsSpaceBadges: showsSpaceBadges))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)

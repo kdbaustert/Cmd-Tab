@@ -52,6 +52,9 @@ final class SwitcherPanel: NSPanel {
     /// read as "no tile" — matching frames left over from a previous list would select whichever app
     /// has since taken that slot.
     private var tileFrames: [Int: CGRect] = [:]
+    /// Where the hovered tile's close button landed, keyed the same way. At most one entry, and
+    /// empty whenever the cursor is not resting on a tile.
+    private var closeFrames: [Int: CGRect] = [:]
 
     /// The display this panel is pinned to, or nil to follow the position setting. Set by
     /// `PanelGroup` when it spreads panels across displays.
@@ -108,6 +111,8 @@ final class SwitcherPanel: NSPanel {
 
     /// Invoked when a tile is clicked, with its index. Set by `PanelGroup` to commit the pick.
     var onPick: ((Int) -> Void)?
+    /// Invoked when a tile's close button is clicked, with that tile's index.
+    var onClose: ((Int) -> Void)?
     /// A scroll that landed on this panel, forwarded up to the group, which owns the accumulator so
     /// a flick spanning two displays still reads as one gesture.
     var onScrollEvent: ((NSEvent) -> Void)?
@@ -141,6 +146,13 @@ final class SwitcherPanel: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
+            // The close button first, and it has to be: it sits *inside* its tile's frame, so
+            // testing the tile first would swallow every click on it and switch to the app the user
+            // was trying to close a window of.
+            if let index = closeIndex(at: NSEvent.mouseLocation) {
+                onClose?(index)
+                return
+            }
             if let index = tileIndex(at: NSEvent.mouseLocation) {
                 onPick?(index)
                 return
@@ -242,6 +254,19 @@ final class SwitcherPanel: NSPanel {
             width: rect.width, height: rect.height)
     }
 
+    /// Maps a screen point to the close button under it, or nil if there is no button there.
+    ///
+    /// Reads the frame the button reported, exactly as `tileIndex` reads the tiles': the button is
+    /// drawn by SwiftUI and its position is SwiftUI's to decide, so re-deriving it here from an
+    /// offset and a diameter would be a second copy of the layout that no compiler checks.
+    func closeIndex(at screenPoint: NSPoint) -> Int? {
+        let point = CGPoint(x: screenPoint.x - frame.minX, y: frame.maxY - screenPoint.y)
+        guard let index = closeFrames.first(where: { $0.value.contains(point) })?.key,
+            index < model.targets.count
+        else { return nil }
+        return index
+    }
+
     /// Maps a screen point to the tile under it, or nil if the cursor is off the grid (gaps, the
     /// caption strip, or outside the panel).
     ///
@@ -276,19 +301,24 @@ final class SwitcherPanel: NSPanel {
         // reader broke: no hover highlight, no click hit-testing, and previews positioned against a
         // missing rect. Letting the callback own the cache is what keeps it in step, and because it
         // assigns the whole map rather than merging, a shorter list drops the extra entries anyway.
-        let view = SwitcherView(model: model, columns: columns) { [weak self] frames in
-            guard let self else { return }
-            self.tileFrames = frames
-            // The cache is assigned inline — readers want the new frames immediately — but the
-            // notification is not. Everything downstream of it lays out views of its own (the
-            // preview strip has its own hosting view) and reads panel geometry, and doing that
-            // from inside the SwiftUI update that is still reporting this preference is what
-            // makes SwiftUI log "Bound preference TileFrameKey tried to update multiple times
-            // per frame" and then *drop* the update. A dropped report is the failure this cache
-            // was written to avoid: stale frames mean no hover highlight, clicks hit-tested
-            // against the previous list, and previews placed off a rect that has since moved.
-            DispatchQueue.main.async { [weak self] in self?.onGeometryChange?() }
-        }
+        let view = SwitcherView(
+            model: model, columns: columns,
+            onTileFrames: { [weak self] frames in
+                guard let self else { return }
+                self.tileFrames = frames
+                // The cache is assigned inline — readers want the new frames immediately — but the
+                // notification is not. Everything downstream of it lays out views of its own (the
+                // preview strip has its own hosting view) and reads panel geometry, and doing that
+                // from inside the SwiftUI update that is still reporting this preference is what
+                // makes SwiftUI log "Bound preference TileFrameKey tried to update multiple times
+                // per frame" and then *drop* the update. A dropped report is the failure this cache
+                // was written to avoid: stale frames mean no hover highlight, clicks hit-tested
+                // against the previous list, and previews placed off a rect that has since moved.
+                DispatchQueue.main.async { [weak self] in self?.onGeometryChange?() }
+            },
+            // Assigned wholesale, so a button that has gone away — the cursor left the tile — takes
+            // its frame with it and the next click there lands on the tile again.
+            onCloseFrames: { [weak self] frames in self?.closeFrames = frames })
 
         if let host {
             host.rootView = view

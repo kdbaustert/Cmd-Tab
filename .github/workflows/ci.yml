@@ -79,4 +79,10 @@ jobs:
           # as the key, and the keys are the English text — so nothing but this check would notice.
           [[ -f "$APP/Contents/Resources/en.lproj/Localizable.strings" ]] \
             || { echo "strings were not compiled into the bundle" >&2; exit 1; }
-          echo "bundle OK — $count menu-bar glyph(s), strings compiled"
+          # And the translation, which is the half English cannot vouch for. English rendering
+          # correctly proves nothing: it renders correctly when the catalogue never reached the
+          # bundle at all. A missing fr.lproj is a French system falling back to English with
+          # nothing anywhere saying so.
+          [[ -f "$APP/Contents/Resources/fr.lproj/Localizable.strings" ]] \
+            || { echo "the French strings were not compiled into the bundle" >&2; exit 1; }
+          echo "bundle OK — $count menu-bar glyph(s), strings compiled (en, fr)"

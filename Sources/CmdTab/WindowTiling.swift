@@ -24,10 +24,13 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     case topThird, bottomThird
     case leftTwoThirds, rightTwoThirds
     case topLeft, topRight, bottomLeft, bottomRight
-    case maximize, center, restore
+    case maximize, maximizeHeight, maximizeWidth, almostMaximize, center, restore
     case larger, smaller
+    case growLeft, growRight, growUp, growDown
+    case shrinkLeft, shrinkRight, shrinkUp, shrinkDown
     case nudgeLeft, nudgeRight, nudgeUp, nudgeDown
     case previousDisplay, nextDisplay
+    case display1, display2, display3, display4
     case previousDesktop, nextDesktop
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
@@ -52,16 +55,33 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .leftTwoThirds: return "Left two-thirds"
         case .rightTwoThirds: return "Right two-thirds"
         case .maximize: return "Maximize"
+        case .maximizeHeight: return "Maximize height"
+        case .maximizeWidth: return "Maximize width"
+        case .almostMaximize: return "Almost maximize"
         case .center: return "Center"
         case .restore: return "Restore previous size"
         case .larger: return "Make larger"
         case .smaller: return "Make smaller"
+        case .growLeft: return "Grow left edge"
+        case .growRight: return "Grow right edge"
+        case .growUp: return "Grow top edge"
+        case .growDown: return "Grow bottom edge"
+        case .shrinkLeft: return "Shrink left edge"
+        case .shrinkRight: return "Shrink right edge"
+        case .shrinkUp: return "Shrink top edge"
+        case .shrinkDown: return "Shrink bottom edge"
         case .nudgeLeft: return "Nudge left"
         case .nudgeRight: return "Nudge right"
         case .nudgeUp: return "Nudge up"
         case .nudgeDown: return "Nudge down"
         case .previousDisplay: return "Move to previous display"
         case .nextDisplay: return "Move to next display"
+        // Numbered the way the tiles' own display badges are — both count `NSScreen.screens`, so
+        // "move to display 2" names the display a window tile already labels 2.
+        case .display1: return "Move to display 1"
+        case .display2: return "Move to display 2"
+        case .display3: return "Move to display 3"
+        case .display4: return "Move to display 4"
         case .previousDesktop: return "Move to previous desktop"
         case .nextDesktop: return "Move to next desktop"
         case .focusLeft: return "Focus window to the left"
@@ -125,6 +145,19 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .nudgeLeft, .nudgeRight, .nudgeUp, .nudgeDown: return nil
         case .focusLeft, .focusRight, .focusUp, .focusDown: return nil
         case .swapLeft, .swapRight, .swapUp, .swapDown: return nil
+        // The three whole-window variants. ⌃⌘↩ is maximize and there is no second key that reads as
+        // "maximize, but only this way" — so they arrive as rows with a recorder, and reachable by
+        // URL without spending a chord at all.
+        case .maximizeHeight, .maximizeWidth, .almostMaximize: return nil
+        // Eight rows, and the arrow space they would want is the one ⌃⌘/⌃⇧⌘/⌃⌥⌘ have already taken
+        // three times over. `larger`/`smaller` on ⌃⌘=/− are the two-edge version of these and are
+        // bound; the per-edge ones are for anyone who wants to tune one edge against its neighbour.
+        case .growLeft, .growRight, .growUp, .growDown: return nil
+        case .shrinkLeft, .shrinkRight, .shrinkUp, .shrinkDown: return nil
+        // Absolute display targets. Unbound because how many of them *mean* anything depends on how
+        // many displays are plugged in — see `SettingsWindows.displayTargetGroup`, which shows only
+        // the rows that name a display that exists.
+        case .display1, .display2, .display3, .display4: return nil
         // ⇧ on top of the halves' arrows: same key, "throw it further".
         case .previousDisplay:
             return Hotkey(
@@ -150,6 +183,52 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         switch self {
         case .previousDisplay: return -1
         case .nextDisplay: return 1
+        default: return nil
+        }
+    }
+
+    /// The display this sends the window to outright, 0-based, or nil if it names no display.
+    ///
+    /// The relative pair above answers "one along from here", which is the right verb on two
+    /// displays and a guess on three: reaching the left-hand monitor from the right-hand one means
+    /// counting, and counting wrong means the window is on the third screen instead. This names the
+    /// destination, so it is the same press wherever the window starts.
+    ///
+    /// Numbered against `NSScreen.screens`, which is what `WindowTiler.visibleAreas()` is built from
+    /// and what the tiles' display badges count — so the number here, the number on the badge and
+    /// the index the move lands on are one number rather than three that happen to agree.
+    ///
+    /// Four of them. A fifth display is a real thing and this would not reach it, which is the cost
+    /// of the raw values being a fixed grammar; four covers what a desk plausibly has, and the
+    /// relative moves still walk to anything beyond it.
+    var displayIndex: Int? {
+        switch self {
+        case .display1: return 0
+        case .display2: return 1
+        case .display3: return 2
+        case .display4: return 3
+        default: return nil
+        }
+    }
+
+    /// Which edge this moves and which way, or nil if it does not resize by an edge.
+    ///
+    /// The direction names the *edge*, and the sign says whether that edge moves outward (grow) or
+    /// inward (shrink) — so `growLeft` widens the window leftwards while its right edge stays put.
+    /// That is the whole difference from `larger`/`smaller`, which move both edges at once around
+    /// the window's centre: those keep the window where it is and change its size, these change one
+    /// boundary and leave the other three alone, which is what tuning a tile against its neighbour
+    /// actually needs.
+    var edgeStep: (edge: WindowDirection, sign: CGFloat)? {
+        switch self {
+        case .growLeft: return (.left, 1)
+        case .growRight: return (.right, 1)
+        case .growUp: return (.up, 1)
+        case .growDown: return (.down, 1)
+        case .shrinkLeft: return (.left, -1)
+        case .shrinkRight: return (.right, -1)
+        case .shrinkUp: return (.up, -1)
+        case .shrinkDown: return (.down, -1)
         default: return nil
         }
     }
@@ -228,7 +307,13 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// Everything else is tiling proper, off until asked for. See
     /// `WindowTilingBindings.arrangement(code:flags:)`, which is where that split is enforced. The
     /// Desktop moves carry a second switch of their own on top — see `desktopMoves` there.
-    var isMove: Bool { displayStep != nil || desktopStep != nil }
+    var isMove: Bool { displayStep != nil || desktopStep != nil || displayIndex != nil }
+
+    /// Whether this carries the window to another display, however it names the destination.
+    ///
+    /// One predicate for the relative pair and the four absolute targets, so the pointer warp and
+    /// the "this is a move, not a tile" rules cannot end up applying to one and not the other.
+    var movesAcrossDisplays: Bool { displayStep != nil || displayIndex != nil }
 
     /// Whether this only moves the keyboard focus, changing no window's geometry at all.
     var isFocus: Bool { focusStep != nil }
@@ -250,6 +335,13 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
 
     /// The nudges, likewise.
     static let nudges: [WindowArrangement] = allCases.filter { $0.nudgeStep != nil }
+
+    /// The eight per-edge resizes, in declared order — grow before shrink, and each in the order
+    /// the arrows read.
+    static let edgeResizes: [WindowArrangement] = allCases.filter { $0.edgeStep != nil }
+
+    /// The absolute display targets, in display order.
+    static let displayTargets: [WindowArrangement] = allCases.filter { $0.displayIndex != nil }
 
     /// Everything the tiling switch does **not** govern.
     ///
@@ -281,6 +373,7 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// to swap with and a launching window has no established place among its neighbours yet.
     static let launchable: [WindowArrangement] = tilingArrangements.filter {
         $0 != .restore && $0.sizeStep == nil && $0.nudgeStep == nil && $0.swapStep == nil
+            && $0.edgeStep == nil
     }
 
     /// Whether a gap applies. Only the arrangements that *tile* — the ones whose frame is a
@@ -297,9 +390,20 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     var takesGap: Bool {
         switch self {
         case .center, .restore, .previousDisplay, .nextDisplay, .previousDesktop,
-            .nextDesktop:
+            .nextDesktop, .display1, .display2, .display3, .display4:
             return false
-        default: return sizeStep == nil && nudgeStep == nil && focusStep == nil && swapStep == nil
+        // The two half-maximizes keep one axis of the window exactly as the user left it, and
+        // `TilingGap.inset` insets all four edges — so a gap would quietly move the two edges this
+        // arrangement promised not to touch. `.center` is excluded for the same sentence.
+        //
+        // `almostMaximize` is excluded on the opposite argument: its margin *is* the point of it, so
+        // a gap on top would inset a frame that has already been inset and make the setting mean
+        // two different things depending on which key produced the window.
+        case .maximizeHeight, .maximizeWidth, .almostMaximize:
+            return false
+        default:
+            return sizeStep == nil && nudgeStep == nil && focusStep == nil && swapStep == nil
+                && edgeStep == nil
         }
     }
 
@@ -373,10 +477,31 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
                 width: area.width * 2 / 3, height: area.height)
         case .larger, .smaller:
             return resized(current, in: area)
+        case .growLeft, .growRight, .growUp, .growDown,
+            .shrinkLeft, .shrinkRight, .shrinkUp, .shrinkDown:
+            return edgeResized(current, in: area)
         case .nudgeLeft, .nudgeRight, .nudgeUp, .nudgeDown:
             return nudged(current, in: area)
         case .maximize:
             return area
+        // Full height at the width the window already has, and the mirror of it. The preserved axis
+        // is copied straight from `current` rather than recomputed, which is what makes pressing
+        // both in turn equal `maximize` exactly.
+        case .maximizeHeight:
+            return CGRect(x: current.minX, y: area.minY, width: current.width, height: area.height)
+        case .maximizeWidth:
+            return CGRect(x: area.minX, y: current.minY, width: area.width, height: current.height)
+        // Maximize with the screen left visible around it — the size you want for one window you
+        // are working in without losing the fact that there is a desktop behind it. Centred, so the
+        // margin is the same on all four sides.
+        case .almostMaximize:
+            let size = CGSize(
+                width: area.width * Self.almostMaximizeFraction,
+                height: area.height * Self.almostMaximizeFraction)
+            return CGRect(
+                x: area.minX + (area.width - size.width) / 2,
+                y: area.minY + (area.height - size.height) / 2,
+                width: size.width, height: size.height)
         case .center:
             // Keeps the window's size — centring is a move, not a resize — and clamps so a window
             // bigger than the screen still lands with its top-left on it rather than off the edge.
@@ -386,7 +511,10 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
                 x: area.minX + (area.width - size.width) / 2,
                 y: area.minY + (area.height - size.height) / 2,
                 width: size.width, height: size.height)
-        case .restore, .previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop:
+        // The absolute display targets join the relative pair: their destination is another
+        // display's area, which `apply` substitutes, not a rectangle on this one.
+        case .restore, .previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop,
+            .display1, .display2, .display3, .display4:
             return nil
         // Focus moves no window, and a swap needs a second window this function has never been told
         // about. Both are dispatched before the tiler is ever reached — see
@@ -421,6 +549,59 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
             width: size.width, height: size.height)
         return WindowTiler.clamp(grown, into: area)
     }
+
+    /// `current` with one edge moved by a step, the opposite edge pinned, held inside `area`.
+    ///
+    /// Where `resized` moves both edges around the centre, this moves exactly one — so a window
+    /// tiled to the left half can have its right edge pushed out over the neighbour without its
+    /// left edge leaving the screen edge it was snapped to.
+    ///
+    /// Two guards, and they are the two ways this can go wrong. Growing is clamped to `area`, so an
+    /// edge pushed repeatedly stops at the screen instead of walking the window off it — the same
+    /// argument `nudged` makes for itself. Shrinking stops at `minimumSize`, so a chord held down
+    /// cannot end at a window too small to grab; at that point the press does nothing rather than
+    /// producing a sliver.
+    ///
+    /// `WindowTiler.clamp` is deliberately *not* used: it preserves the size and slides the frame
+    /// back onto the screen, which for a one-edge resize would move the edge that was supposed to
+    /// stay pinned. Clamping the edge itself is what keeps the promise.
+    private func edgeResized(_ current: CGRect, in area: CGRect) -> CGRect? {
+        guard let (edge, sign) = edgeStep else { return nil }
+        let dx = area.width * Self.sizeStepFraction * sign
+        let dy = area.height * Self.sizeStepFraction * sign
+        var frame = current
+        switch edge {
+        case .left:
+            // Top-left origin: the left edge grows by moving to a smaller x, and the width has to
+            // grow with it or the whole window would slide instead of stretching.
+            let minX = min(max(current.minX - dx, area.minX), current.maxX - Self.minimumSize)
+            frame = CGRect(
+                x: minX, y: current.minY, width: current.maxX - minX, height: current.height)
+        case .right:
+            let maxX = max(min(current.maxX + dx, area.maxX), current.minX + Self.minimumSize)
+            frame = CGRect(
+                x: current.minX, y: current.minY, width: maxX - current.minX,
+                height: current.height)
+        case .up:
+            let minY = min(max(current.minY - dy, area.minY), current.maxY - Self.minimumSize)
+            frame = CGRect(
+                x: current.minX, y: minY, width: current.width, height: current.maxY - minY)
+        case .down:
+            let maxY = max(min(current.maxY + dy, area.maxY), current.minY + Self.minimumSize)
+            frame = CGRect(
+                x: current.minX, y: current.minY, width: current.width,
+                height: maxY - current.minY)
+        }
+        // An edge already against the screen (growing) or already at the floor (shrinking) leaves
+        // the frame untouched. Returning nil rather than the identity means `apply` writes nothing
+        // at all, which is one fewer Accessibility round-trip per press of a held-down chord.
+        return frame == current ? nil : frame
+    }
+
+    /// How much of the usable area `almostMaximize` fills. Nine tenths, centred: enough of the
+    /// screen left showing at each edge to see what is behind, without the window reading as merely
+    /// badly maximized.
+    static let almostMaximizeFraction: CGFloat = 0.9
 
     /// `current` moved one step in the nudge's direction, keeping its size, held inside `area`.
     ///
@@ -1290,6 +1471,19 @@ enum WindowTiler {
                 // A move is not a tile: it must not consume the restore point, and the width cycle
                 // has to start over on the new display.
                 cycle = nil
+            } else if let index = arrangement.displayIndex {
+                // Same arithmetic as the relative move, and deliberately the same `carried` call —
+                // a window thrown to display 2 has to land exactly where "next display" would have
+                // put it when display 2 is the next one along.
+                //
+                // Two ways this is a no-op rather than a mistake: a display that is not plugged in
+                // (the row is hidden in Settings, but a URL or a chord bound while it *was* plugged
+                // in can still name it), and the window's own display, where the move has nothing to
+                // do. Both return before anything is written, so the frame is untouched rather than
+                // rewritten to the value it already had.
+                guard resolved != nil, areas.indices.contains(index), index != home else { return }
+                target = carried(current, from: areas[home], to: areas[index])
+                cycle = nil
             } else if arrangement == .restore {
                 guard let saved = restorePoints.removeValue(forKey: key) else { return }
                 restoreOrder.removeAll { $0 == key }
@@ -1338,7 +1532,7 @@ enum WindowTiler {
             // and its downward y with the Accessibility coordinates `target` is already in — so the
             // centre needs no flip. The same call, in the same space, that `DesktopMover` uses to
             // put the pointer on a window before it drags one.
-            if warpsPointer, arrangement.displayStep != nil {
+            if warpsPointer, arrangement.movesAcrossDisplays {
                 CGWarpMouseCursorPosition(CGPoint(x: target.midX, y: target.midY))
                 // Without this the pointer is *drawn* at the new place while the window server keeps
                 // feeding mouse deltas relative to the old one, so the next flick of the trackpad

@@ -240,8 +240,8 @@ enum SettingsIndex {
         item("screens", .behavior, SettingsAnchor.placement, "Placement", "Show on",
              ["display", "monitor", "screen", "mirror", "multi monitor"]),
         item("preview", .behavior, SettingsAnchor.placement, "Placement",
-             "Preview windows on hover",
-             ["preview", "thumbnail", "hover", "screen recording"]),
+             "Preview windows",
+             ["preview", "thumbnail", "hover", "keyboard", "screen recording"]),
         item("thumbnailTiles", .behavior, SettingsAnchor.placement, "Placement",
              "Thumbnail tiles",
              ["thumbnail", "thumbnails", "preview", "screenshot", "window contents", "alttab",
@@ -1040,11 +1040,12 @@ struct BehaviorSettings: View {
                         }
                     }
                 SettingsToggle(
-                    title: "Preview windows on hover",
+                    title: "Preview windows",
                     subtitle: behavior.mode == .windows
                         ? "Applications only — in window mode the tiles are already windows."
-                        : "Hover a tile to float live thumbnails of that app's windows, and click "
-                            + "one to go straight to it. Needs Screen Recording permission.",
+                        : "Pause on a tile — with the pointer or with the keyboard — to float live "
+                            + "thumbnails of that app's windows, and click one to go straight to "
+                            + "it. Needs Screen Recording permission.",
                     isOn: $behavior.windowPreview)
                     .disabled(behavior.mode == .windows)
                     .onChange(of: behavior.windowPreview) {

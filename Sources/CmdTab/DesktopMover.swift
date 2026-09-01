@@ -350,8 +350,9 @@ enum DesktopMover {
         // be stale by the time we get here.
         for attempt in 1...followAttempts {
             // Re-read every time: the drop re-lays out the Spaces Bar, and a press already
-            // half-accepted can leave a stale element behind.
-            let buttons = desktopButtons(on: display)
+            // half-accepted can leave a stale element behind. The bar is re-read with them, for the
+            // same reason and so the scoping still describes one display.
+            let buttons = desktopButtons(on: display, bar: spacesBarFrame(on: display))
             guard buttons.indices.contains(destination) else {
                 Log.general.notice("desktop move: no thumbnail to follow to; staying put")
                 return false
@@ -480,14 +481,17 @@ enum DesktopMover {
         for _ in 0..<Int(spacesBarTimeout / spacesBarPoll) {
             post(.leftMouseDragged, point)
             usleep(useconds_t(spacesBarPoll * 1_000_000))
-            let buttons = desktopButtons(on: display)
+            // The bar first, because it is what scopes the buttons — see `desktopButtons(on:bar:)`.
+            // Read in this order the two can never describe different displays, which is exactly
+            // what an x-only match did on displays stacked one above the other.
+            let bar = spacesBarFrame(on: display)
+            let buttons = desktopButtons(on: display, bar: bar)
             guard buttons.indices.contains(index) else { continue }
             // The button's own rectangle is the *label* under the thumbnail, and its reported y sits
             // outside the Spaces Bar group. The x is right, so take that and aim at the middle of
             // the bar itself, which is the thumbnail the label belongs to.
-            let bar = spacesBarFrame(on: display)
-                ?? CGRect(x: 0, y: 0, width: 0, height: defaultSpacesBarHeight)
-            return CGPoint(x: buttons[index].frame.midX, y: bar.minY + bar.height / 2)
+            let aim = bar ?? CGRect(x: 0, y: 0, width: 0, height: defaultSpacesBarHeight)
+            return CGPoint(x: buttons[index].frame.midX, y: aim.minY + aim.height / 2)
         }
         return nil
     }
@@ -533,20 +537,47 @@ enum DesktopMover {
     /// that on two displays the index can name a thumbnail on the other one, and the window lands on
     /// the wrong Desktop entirely.
     ///
-    /// Matched on x alone: the buttons report a y outside the Spaces Bar's own group (they are the
-    /// labels beneath the thumbnails), so it is not usable for this, while displays are laid out
-    /// side by side and x separates them cleanly. The unfiltered list is the fallback, which is
-    /// exactly the old behaviour and is what a single-display setup gets either way — every button
-    /// is on the one display, so the filter keeps all of them.
+    /// Scoped by the **bar** first and the display second. x alone is not enough: two displays
+    /// stacked vertically share an x range entirely, so an x-only filter keeps both bars' buttons
+    /// and the index then names a thumbnail on the wrong screen — the case the header used to state
+    /// as a limitation. The bar's own frame is trustworthy where the buttons' is not (see
+    /// `spacesBarFrame(on:)`), so once the right bar is known, "the buttons belonging to it" is a
+    /// question with an answer: the ones under it.
     ///
-    /// Reasoned rather than measured: this was written on a one-display machine, so the two-display
-    /// case has not been observed. The fallback is what keeps that honest — a filter that matches
-    /// nothing degrades to what shipped before rather than to no move at all.
-    private static func desktopButtons(on display: CGRect?) -> [(element: AXUIElement, frame: CGRect)] {
+    /// Falls back down the chain rather than to nothing — bar-scoped, then display-x-scoped (what
+    /// shipped before), then unfiltered. A single display reaches the same list by every route,
+    /// since every button is on the one screen.
+    private static func desktopButtons(on display: CGRect?, bar: CGRect?)
+        -> [(element: AXUIElement, frame: CGRect)]
+    {
         let all = desktopButtons()
-        guard let display else { return all }
-        let scoped = all.filter { $0.frame.midX >= display.minX && $0.frame.midX < display.maxX }
-        return scoped.isEmpty ? all : scoped
+        let kept = buttonIndices(of: all.map(\.frame), on: display, bar: bar)
+        return kept.map { all[$0] }
+    }
+
+    /// Which of `frames` belong to the Spaces Bar being aimed at. Pure, so the multi-display cases
+    /// can be tested without Mission Control.
+    ///
+    /// See `desktopButtons(on:bar:)` for why the bar is consulted before the display.
+    static func buttonIndices(of frames: [CGRect], on display: CGRect?, bar: CGRect?) -> [Int] {
+        // Under the bar it belongs to. The labels sit outside the bar's own rectangle, so this is a
+        // proximity test rather than containment — but two bars on stacked displays are a whole
+        // display apart, which no slack this size can confuse.
+        if let bar {
+            let slack = max(bar.height * 2, 1)
+            let near = frames.indices.filter {
+                frames[$0].midX >= bar.minX && frames[$0].midX < bar.maxX
+                    && abs(frames[$0].midY - bar.midY) <= slack
+            }
+            if !near.isEmpty { return near }
+        }
+        if let display {
+            let scoped = frames.indices.filter {
+                frames[$0].midX >= display.minX && frames[$0].midX < display.maxX
+            }
+            if !scoped.isEmpty { return scoped }
+        }
+        return Array(frames.indices)
     }
 
     private static func desktopButtons() -> [(element: AXUIElement, frame: CGRect)] {
@@ -568,11 +599,17 @@ enum DesktopMover {
     /// an external at the origin and a laptop below and to the right of it — that drop lands off
     /// every Spaces Bar and the window does not move.
     ///
-    /// Matched on midX only, like the buttons. A centre-containment test would be the obvious
-    /// thing and is the wrong thing here: the comment on the drop point records that these
-    /// elements report a y outside the group they belong to, so a test against the full rect could
-    /// reject every candidate. Same honesty as `desktopButtons(on:)` — no match falls back to the
-    /// first bar rather than to no move at all.
+    /// Containment first, then midX, then the first bar. The y *is* usable here and only here: the
+    /// caveat recorded on the drop point is about the Desktop **buttons**, which report a y outside
+    /// the group they sit in — a bar is a group, and a group reports its own rectangle. That
+    /// distinction is what makes vertically stacked displays work: two bars one above the other
+    /// share their whole x range, so midX cannot tell them apart and containment can.
+    ///
+    /// The midX rule is kept as the second step rather than deleted, because it is what shipped and
+    /// it is right whenever containment fails for a reason not foreseen here — a bar reported in
+    /// another coordinate space, say. Falling back to the first bar rather than to nothing is the
+    /// same choice `desktopButtons(on:bar:)` makes: a wrong bar is a move to the wrong Desktop, and
+    /// no bar is a window that does not move at all.
     private static func spacesBarFrame(on display: CGRect? = nil) -> CGRect? {
         var found: [CGRect] = []
         walk(dockElement()) { element, role, _ in
@@ -582,8 +619,22 @@ enum DesktopMover {
             else { return }
             found.append(frame)
         }
-        guard let display else { return found.first }
-        return found.first { $0.midX >= display.minX && $0.midX < display.maxX } ?? found.first
+        return barIndex(in: found, on: display).map { found[$0] }
+    }
+
+    /// Which of `bars` belongs to `display`. Pure, so the multi-display cases can be tested without
+    /// Mission Control. See `spacesBarFrame(on:)` for the argument behind the order.
+    static func barIndex(in bars: [CGRect], on display: CGRect?) -> Int? {
+        guard !bars.isEmpty else { return nil }
+        guard let display else { return bars.startIndex }
+        let centred = bars.indices.first {
+            display.contains(CGPoint(x: bars[$0].midX, y: bars[$0].midY))
+        }
+        if let centred { return centred }
+        let horizontal = bars.indices.first {
+            bars[$0].midX >= display.minX && bars[$0].midX < display.maxX
+        }
+        return horizontal ?? bars.startIndex
     }
 
     /// Whether Mission Control is still showing. Checked before toggling it shut, because the

@@ -245,9 +245,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// prompt.
     private func watchForRevokedTrust() {
         trustWatch?.invalidate()
-        trustWatch = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // Slower on battery — see `PowerState`. Nobody revokes Accessibility in a hurry, and this
+        // is the one timer in the app that runs for the whole life of a *healthy* process, so it is
+        // the one whose wakeups are worth not spending. The state is re-checked on the tick and the
+        // timer re-armed if it changed, which is why the interval is computed here rather than
+        // captured once at launch.
+        let conserving = PowerState.isConserving
+        let interval = PowerState.interval(Self.trustPollInterval, conserving: conserving)
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) {
+            [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !Permissions.isTrusted else { return }
+                guard let self else { return }
+                // The cable came out, or went back in: re-arm at the other rate and let the new
+                // timer do the checking. `watchForRevokedTrust` invalidates this one on the way in.
+                guard PowerState.isConserving == conserving else {
+                    self.watchForRevokedTrust()
+                    return
+                }
+                guard !Permissions.isTrusted else { return }
                 Log.general.error("accessibility trust revoked; stopping until it is granted again")
                 self.trustWatch?.invalidate()
                 self.trustWatch = nil
@@ -261,7 +276,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        // Nothing depends on this landing on time: it is watching for a state a person changes in
+        // System Settings, which takes far longer than any slack this allows. Letting the run loop
+        // batch the wakeup is most of the saving.
+        timer.tolerance = interval / 4
+        trustWatch = timer
     }
+
+    /// How often to check that Accessibility is still granted, plugged in. Slower than
+    /// `Permissions.waitForTrust`'s poll on purpose: that one runs only until a user answers a
+    /// prompt they are looking at, where this runs for the life of a healthy process.
+    private static let trustPollInterval: TimeInterval = 5
 
     /// Leaving the system switcher disabled after we exit would strand the user with no ⌘-Tab
     /// at all, so catch the signals a `kill` or a Ctrl-C would send. Nothing can be done about

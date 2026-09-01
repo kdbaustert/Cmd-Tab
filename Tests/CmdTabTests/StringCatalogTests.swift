@@ -92,4 +92,62 @@ final class StringCatalogTests: XCTestCase {
             XCTAssertFalse(key.contains("\\("), "interpolated key cannot match: \(key.prefix(60))")
         }
     }
+
+    /// Every entry is translated into every language the catalogue claims, and none of the
+    /// translations is just the English back again.
+    ///
+    /// This is the assertion the file was missing while it had one language: with only English in
+    /// it, every check here was a check that a string equalled itself. A half-translated catalogue
+    /// is the failure mode that matters — the settings window would come up in French with an
+    /// English paragraph in the middle of it — and it is invisible from the English side, which
+    /// renders identically whether the translation exists or not.
+    func testEveryEntryIsTranslatedIntoEveryShippedLanguage() throws {
+        let catalog = try loadCatalog()
+        let languages = Set(catalog.strings.values.flatMap { $0.localizations.keys })
+        XCTAssertTrue(languages.contains("fr"), "the French translation has gone missing")
+        for language in languages.sorted() where language != catalog.sourceLanguage {
+            for (key, entry) in catalog.strings {
+                guard let unit = entry.localizations[language]?.stringUnit else {
+                    XCTFail("no \(language) for: \(key.prefix(60))")
+                    continue
+                }
+                XCTAssertEqual(unit.state, "translated", "\(language), \(key.prefix(60))")
+                XCTAssertFalse(
+                    unit.value.trimmingCharacters(in: .whitespaces).isEmpty,
+                    "empty \(language) translation for: \(key.prefix(60))")
+                // A translation identical to the source is almost always a key that was copied in
+                // and never translated. A few words genuinely are the same in both languages, so
+                // those are listed by name — a rule that waved through every short string would
+                // wave through exactly the ones most likely to have been forgotten.
+                let identical = ["Diagnostics", "Position", "Session", "Version"]
+                if unit.value == key && !identical.contains(key) {
+                    XCTFail("\(language) is the English text verbatim: \(key.prefix(60))")
+                }
+            }
+        }
+    }
+
+    /// Every row title the settings window draws from an enum has to be in the catalogue.
+    ///
+    /// These are the strings most easily missed, and they were: the whole Windows tab is built by
+    /// mapping over `WindowArrangement`, so its rows never appear as literals at a call site the way
+    /// every other title does — and "Left half" and "Maximize" were absent while the sentence
+    /// explaining them three lines below was present. Nothing could notice, because a missing key
+    /// renders as the key and the keys here are the English text.
+    ///
+    /// Asserted against the live enums rather than a hand-kept list, so adding an arrangement or an
+    /// in-switcher action fails here until its name is translatable.
+    @MainActor
+    func testEveryEnumRowTitleIsInTheCatalog() throws {
+        let keys = Set(try loadCatalog().strings.keys)
+        var needed: [String] = []
+        needed += WindowArrangement.allCases.map(\.title)
+        needed += SwitcherAction.allCases.map(\.title)
+        needed += SwitcherAction.allCases.map(\.detail)
+        needed += MouseDragAction.allCases.map(\.title)
+        needed += SwitcherScope.allCases.map(\.title)
+        for string in Set(needed) {
+            XCTAssertTrue(keys.contains(string), "not localizable: \(string.prefix(70))")
+        }
+    }
 }

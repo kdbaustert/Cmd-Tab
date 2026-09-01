@@ -3,9 +3,11 @@ import AppKit
 /// A catalogue of installed applications, for the switcher's launch-from-search fallback.
 ///
 /// The favourites feature already puts *chosen* non-running apps in the list as launchable tiles;
-/// this widens that to everything installed, but only when a query has matched nothing running —
-/// so the switcher stays a switcher and quietly becomes a launcher at the moment it would otherwise
-/// have shown "No matches".
+/// this widens that to everything installed. Offered alongside whatever the query found running
+/// rather than only when it found nothing — see `SwitcherController.updateLaunchSuggestions` for
+/// why the old gate produced a cliff mid-word — and capped at five, which is what keeps the
+/// switcher a switcher: the tail is short, and the highlight stays on something running whenever
+/// anything running matches.
 @MainActor
 enum InstalledApps {
     struct Entry {

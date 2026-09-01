@@ -233,7 +233,15 @@ final class SwitcherController {
         }
     }
     /// Whether those bindings are live at all. Off leaves every ⌥-key to type-to-filter.
-    var actionsEnabled = false { didSet { publishTapState() } }
+    var actionsEnabled = false {
+        didSet {
+            publishTapState()
+            // The pointer's one action. Mirrored onto the model rather than read from here, because
+            // the view has no route back to the controller — and mirrored from the *same* switch the
+            // keys answer to, so the button can never appear on a session where ⌥W would do nothing.
+            model.showsCloseButton = actionsEnabled
+        }
+    }
     /// Confirm before quit / force-quit.
     var confirmsDestructiveActions = true
 
@@ -506,6 +514,7 @@ final class SwitcherController {
         // Alongside the tap, since it feeds the same decision and is only needed once one is live.
         startActiveMirror()
         panels.onPick = { [weak self] index in self?.pick(index) }
+        panels.onClose = { [weak self] index in self?.closeTile(index) }
         panels.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
             // Scroll and hover are the advertised way to move the selection in a stay-open session,
@@ -980,12 +989,20 @@ final class SwitcherController {
     /// Whether a query that matches nothing running may offer installed apps to launch.
     var launchFromSearch = true
 
-    /// Offers installed apps when the query has matched nothing on screen.
+    /// Offers installed apps alongside whatever the query found running.
     ///
-    /// Only on an empty result, deliberately: the switcher is a switcher, and padding a list that
-    /// already has what you asked for with apps you would have to launch is noise. This is the
-    /// moment the panel would otherwise say "No matches", which is exactly when a launcher is
-    /// useful and nothing is being displaced.
+    /// This used to fire *only* on an empty result, on the argument that padding a list which
+    /// already has what you asked for is noise. The argument was right about the noise and wrong
+    /// about the cliff it produced: typing `ter` with something running that matched showed one
+    /// list, and one more character — the moment the last running match dropped out — replaced it
+    /// wholesale with a different one. The set of tiles changed discontinuously in the middle of a
+    /// word, which is the opposite of what a filter should feel like.
+    ///
+    /// Two things keep the noise bounded, and both matter more than the gate did. `InstalledApps`
+    /// caps its answer at five, so the tail is short whatever is installed; and
+    /// `SwitcherModel.bestMatch` never selects a launchable tile while anything running matches, so
+    /// the highlight — which is what a press of the trigger actually acts on — behaves exactly as it
+    /// did before. The suggestions are offered, not imposed.
     ///
     /// Runs against `InstalledApps`' in-memory catalogue — a filter over a few hundred strings, no
     /// disk — so it is safe on the keystroke path. The icon lookup is the one piece of I/O, and it
@@ -994,7 +1011,7 @@ final class SwitcherController {
     /// keystroke is disk-backed LaunchServices work inline on the key path — the one thing the
     /// class comment's invariant says must never go there.
     private func updateLaunchSuggestions(for query: String) {
-        guard launchFromSearch, !model.matchesAnything, !query.isEmpty else {
+        guard launchFromSearch, !query.isEmpty else {
             model.setLaunchSuggestions([])
             return
         }
@@ -1041,8 +1058,10 @@ final class SwitcherController {
                     appName: entry.name, icon: icon, isMinimized: false, isHidden: false)
             }
         model.setLaunchSuggestions(suggestions)
-        // Re-run the query so the freshly added tiles are matched and one of them is selected;
-        // without it the panel would show suggestions with nothing highlighted.
+        // Re-run the query so the freshly added tiles are matched and the highlight is settled
+        // against the whole list; without it the panel would show suggestions the filter had never
+        // been applied to. Where the highlight lands is `bestMatch`'s rule — a running match keeps
+        // it, and a suggestion only takes it when nothing running answered.
         if !suggestions.isEmpty { model.setQuery(query) }
     }
 
@@ -1076,8 +1095,57 @@ final class SwitcherController {
                 // whatever is under the pointer now. Deduped downstream, so an unchanged target
                 // costs nothing.
                 self.panels.refreshPreview()
+                // Then the keyboard's answer, which wins where the two disagree — the last input
+                // decides, and reaching this point means a key was the last input. Ordered after the
+                // cursor's so it can override it; `previewSelection` declines while the cursor is on
+                // the strip itself, which is the one case where overriding would be wrong.
+                //
+                // After `layout()` on purpose: it reads the tile's reported frame to place the
+                // strip, and a selection that has just moved has not been laid out until then.
+                self.panels.previewSelection()
+                self.announceSelection()
             }
         }
+    }
+
+    /// The tile last spoken to VoiceOver, so a relayout that moved nothing says nothing.
+    ///
+    /// The id rather than the index: a background refresh can fold a new app into the list and shift
+    /// every index below it without the highlight having moved at all, and announcing that would
+    /// interrupt the user to tell them nothing changed.
+    private var announcedTarget: String?
+
+    /// Speaks the highlighted tile, for the case the panel's own labels cannot cover.
+    ///
+    /// The switcher is a `.nonactivatingPanel` that never becomes key and has no key handling of its
+    /// own — the event tap is the only input path, which is what makes the switcher work at all. So
+    /// an assistive technology cannot drive it the way it drives an ordinary window, and the
+    /// per-tile labels, which are real and correct, are reachable only by exploring a panel that
+    /// VoiceOver has no focus in. The result was a switcher that announced *nothing at all* while
+    /// somebody cycled through it, which is the state this fixes: every ⌘-Tab now says what it
+    /// landed on, out of the same sentence the tile carries.
+    ///
+    /// Announced rather than focused, because focus is exactly what this panel must never take.
+    ///
+    /// Costs nothing when VoiceOver is off, which is the overwhelming case: one `Bool` read of a
+    /// cached workspace property before any string is built.
+    private func announceSelection() {
+        guard NSWorkspace.shared.isVoiceOverEnabled, let target = model.selected else { return }
+        guard announcedTarget != target.id else { return }
+        announcedTarget = target.id
+        let text = TileDescription.text(
+            for: target, number: model.number(for: model.selection),
+            showsDisplayBadges: model.showDisplayBadges, showsSpaceBadges: model.showSpaceBadges)
+        // High priority so a fast cycle is not silently coalesced away: each press is a deliberate
+        // move the user is waiting to hear the result of, and the *last* one is the one that
+        // matters. `NSApp` as the element because the panel is not in the focus tree — an
+        // announcement posted from a window VoiceOver never focused is one it may never read.
+        NSAccessibility.post(
+            element: NSApp as Any, notification: .announcementRequested,
+            userInfo: [
+                .announcement: text,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ])
     }
 
     /// The character a key event would type, ignoring ⌘/⌥/⌃ (Shift/Caps kept for case) and honouring
@@ -1400,6 +1468,11 @@ final class SwitcherController {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
             MainLoopMonitor.marking("panel show") { self.panels.show() }
+            // The session's first tile. Every *later* move goes through `scheduleLayout`, which a
+            // freshly shown panel has not been through — so without this the opening selection was
+            // the one the preview never offered and VoiceOver never named.
+            self.panels.previewSelection()
+            self.announceSelection()
             // `.public` deliberately: interpolation redacts by default, and this line reading
             // `frame=<private>` is exactly why a log full of apparently healthy shows could not
             // tell a panel that drew from one that came up 0×0 or fully transparent. There is
@@ -1439,6 +1512,10 @@ final class SwitcherController {
         isVisible = false
         isSticky = false
         isScopedSession = false
+        // So the next session announces its opening tile rather than treating it as unchanged. The
+        // two sessions can genuinely start on the same app, which is exactly when that would be
+        // wrong — a ⌘-Tab that says nothing reads as one the machine ignored.
+        announcedTarget = nil
         // Anything still in flight belongs to the session just ended.
         beginSession()
         stopWatchdog()
@@ -1885,6 +1962,22 @@ final class SwitcherController {
         guard isVisible, model.targets.indices.contains(index) else { return }
         model.selection = index
         commit()
+    }
+
+    /// A tile's close button was clicked.
+    ///
+    /// Routed through the same `perform(_:)` every bound key goes through rather than calling
+    /// `closeSelectedWindow` directly, so the pointer and ⌥W cannot drift apart in what they do to a
+    /// window — the guard on launch tiles, the hop off the tap callback and the list bookkeeping
+    /// afterwards are all in there and all needed here.
+    ///
+    /// The selection is moved first because every action acts on the selection. In practice the
+    /// cursor has already put it there — a button is only drawn on the tile under the pointer — but
+    /// "in practice" is not a thing to close someone's window on.
+    private func closeTile(_ index: Int) {
+        guard isVisible, actionsEnabled, model.targets.indices.contains(index) else { return }
+        model.selection = index
+        perform(.close)
     }
 
 }

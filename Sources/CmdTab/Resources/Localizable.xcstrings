@@ -9,6 +9,12 @@
             "state": "translated",
             "value": "A second shortcut that shows only the frontmost app's windows. Off by default — the usual ⌘` is a shortcut apps use themselves."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un second raccourci qui n'affiche que les fenêtres de l'application au premier plan. Désactivé par défaut — le ⌘` habituel est un raccourci que les applications utilisent elles-mêmes."
+          }
         }
       }
     },
@@ -19,6 +25,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "A theme carries only the look — never a shortcut — so importing one can not change what your keys do."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un thème ne contient que l'apparence — jamais un raccourci — donc en importer un ne peut pas changer ce que font vos touches."
           }
         }
       }
@@ -31,6 +43,12 @@
             "state": "translated",
             "value": "A twentieth of the screen at a time, from the middle of the window outward, stopping at the edges."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un vingtième de l'écran à la fois, depuis le centre de la fenêtre vers l'extérieur, en s'arrêtant aux bords."
+          }
         }
       }
     },
@@ -41,6 +59,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "About"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "À propos"
           }
         }
       }
@@ -53,6 +77,12 @@
             "state": "translated",
             "value": "Accessibility"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accessibilité"
+          }
         }
       }
     },
@@ -63,6 +93,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Accessibility is granted per binary. A rebuild signed with a different certificate looks like a new app to macOS and has to be granted again."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'accessibilité est accordée par binaire. Une nouvelle compilation signée avec un autre certificat ressemble à une nouvelle application pour macOS et doit être autorisée à nouveau."
           }
         }
       }
@@ -75,6 +111,12 @@
             "state": "translated",
             "value": "Act on the highlighted tile without leaving the switcher. Each is a key plus ⌥ or ⌃ held on top of the trigger — an extra modifier is required, since a bare letter is type-to-filter input."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agissez sur la vignette sélectionnée sans quitter le sélecteur. Chaque action est une touche plus ⌥ ou ⌃ maintenue en plus du déclencheur — un modificateur supplémentaire est obligatoire, car une lettre seule sert à filtrer."
+          }
         }
       }
     },
@@ -85,6 +127,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "All desktops"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les bureaux"
           }
         }
       }
@@ -97,6 +145,29 @@
             "state": "translated",
             "value": "All windows"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toutes les fenêtres"
+          }
+        }
+      }
+    },
+    "Almost maximize": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Almost maximize"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Presque plein écran"
+          }
         }
       }
     },
@@ -107,6 +178,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Alphabetical order always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'ordre alphabétique groupe toujours : triée par nom, une liste non groupée disperserait les fenêtres d'une application au gré de l'alphabet."
           }
         }
       }
@@ -119,6 +196,12 @@
             "state": "translated",
             "value": "Also reachable by pressing the matching half twice or three times — this is the same place in one press."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Également accessible en appuyant deux ou trois fois sur la moitié correspondante — ceci y mène en une seule pression."
+          }
         }
       }
     },
@@ -129,6 +212,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "An exported file carries every preference, including favourites and exclusions."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un fichier exporté contient tous les réglages, favoris et exclusions compris."
+          }
+        }
+      }
+    },
+    "Anchor dot": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anchor dot"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point d'ancrage"
           }
         }
       }
@@ -141,6 +247,12 @@
             "state": "translated",
             "value": "App rules"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Règles par application"
+          }
         }
       }
     },
@@ -151,6 +263,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Appearance"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apparence"
           }
         }
       }
@@ -163,6 +281,12 @@
             "state": "translated",
             "value": "Application mode only — a window list has as many tiles per app as the app has windows, so no app can hold a slot in it."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mode application uniquement — une liste de fenêtres contient autant de vignettes par application que celle-ci a de fenêtres, donc aucune application ne peut y garder une place."
+          }
         }
       }
     },
@@ -173,6 +297,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Apps"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applications"
           }
         }
       }
@@ -185,6 +315,12 @@
             "state": "translated",
             "value": "Ask first for Quit and Force-quit. One key separates ⌥W (close a window) from ⌥Q (quit the app), and only one of them can be undone."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Demander confirmation pour Quitter et Forcer à quitter. Une seule touche sépare ⌥W (fermer une fenêtre) de ⌥Q (quitter l'application), et une seule des deux est réversible."
+          }
         }
       }
     },
@@ -195,6 +331,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Backup"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sauvegarde"
           }
         }
       }
@@ -207,6 +349,12 @@
             "state": "translated",
             "value": "Behavior"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comportement"
+          }
         }
       }
     },
@@ -217,6 +365,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bindings are matched in the order listed above, so the first one to claim a combination is the one that fires. Openers come first: nothing you bind can take the switcher's own trigger away from it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les raccourcis sont évalués dans l'ordre ci-dessus : le premier à revendiquer une combinaison est celui qui se déclenche. Les ouvertures passent en premier — rien de ce que vous associez ne peut retirer au sélecteur son propre déclencheur."
+          }
+        }
+      }
+    },
+    "Bottom half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moitié inférieure"
           }
         }
       }
@@ -229,6 +400,46 @@
             "state": "translated",
             "value": "Bottom third"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiers inférieur"
+          }
+        }
+      }
+    },
+    "Bottom-left corner": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-left corner"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coin inférieur gauche"
+          }
+        }
+      }
+    },
+    "Bottom-right corner": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-right corner"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coin inférieur droit"
+          }
         }
       }
     },
@@ -239,6 +450,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bring back exactly what Hide all hid — apps you hid yourself stay hidden."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablit exactement ce que « Masquer toutes les fenêtres » avait masqué — les applications que vous avez masquées vous-même le restent."
           }
         }
       }
@@ -251,6 +468,46 @@
             "state": "translated",
             "value": "Build"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version de compilation"
+          }
+        }
+      }
+    },
+    "Captures come back empty, so tiles fall back to icons and hover previews show nothing. Turn Cmd-Tab off and on again in the Screen Recording list, then relaunch — the grant is tied to the app's signature, so a rebuilt or updated copy loses it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Captures come back empty, so tiles fall back to icons and hover previews show nothing. Turn Cmd-Tab off and on again in the Screen Recording list, then relaunch — the grant is tied to the app's signature, so a rebuilt or updated copy loses it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les captures reviennent vides : les vignettes retombent sur les icônes et les aperçus au survol n'affichent rien. Désactivez puis réactivez Cmd-Tab dans la liste Enregistrement de l'écran, puis relancez l'application — l'autorisation est liée à sa signature, donc une copie recompilée ou mise à jour la perd."
+          }
+        }
+      }
+    },
+    "Center": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Center"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Centrer"
+          }
         }
       }
     },
@@ -261,6 +518,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Changes apply live, including to a switcher that is already open."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les modifications s'appliquent immédiatement, y compris à un sélecteur déjà ouvert."
           }
         }
       }
@@ -273,6 +536,12 @@
             "state": "translated",
             "value": "Check automatically"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher automatiquement"
+          }
         }
       }
     },
@@ -283,6 +552,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Check for updates"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher les mises à jour"
           }
         }
       }
@@ -295,6 +570,46 @@
             "state": "translated",
             "value": "Clears every Cmd-Tab preference, including excluded apps."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Efface tous les réglages de Cmd-Tab, y compris les applications exclues."
+          }
+        }
+      }
+    },
+    "Close window": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close window"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer la fenêtre"
+          }
+        }
+      }
+    },
+    "Closes the highlighted window, or the frontmost window of the highlighted app.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Closes the highlighted window, or the frontmost window of the highlighted app."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ferme la fenêtre sélectionnée, ou la fenêtre au premier plan de l'application sélectionnée."
+          }
         }
       }
     },
@@ -305,6 +620,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Configuration file"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fichier de configuration"
           }
         }
       }
@@ -317,6 +638,12 @@
             "state": "translated",
             "value": "Confirm before quitting"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirmer avant de quitter"
+          }
         }
       }
     },
@@ -327,6 +654,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Console command"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commande Terminal"
           }
         }
       }
@@ -339,6 +672,12 @@
             "state": "translated",
             "value": "Contents"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contenu"
+          }
         }
       }
     },
@@ -349,6 +688,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Corner radius"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rayon des coins"
           }
         }
       }
@@ -361,6 +706,12 @@
             "state": "translated",
             "value": "Custom blur"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flou personnalisé"
+          }
         }
       }
     },
@@ -371,6 +722,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Cycle app windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parcourir les fenêtres de l'application"
           }
         }
       }
@@ -383,6 +740,12 @@
             "state": "translated",
             "value": "Cycle widths"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alterner les largeurs"
+          }
         }
       }
     },
@@ -394,6 +757,12 @@
             "state": "translated",
             "value": "Desktops"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bureaux"
+          }
         }
       }
     },
@@ -401,6 +770,12 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diagnostics"
+          }
+        },
+        "fr": {
           "stringUnit": {
             "state": "translated",
             "value": "Diagnostics"
@@ -416,6 +791,12 @@
             "state": "translated",
             "value": "Direct activation"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activation directe"
+          }
         }
       }
     },
@@ -426,6 +807,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Display badges"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pastilles d'écran"
           }
         }
       }
@@ -438,6 +825,12 @@
             "state": "translated",
             "value": "Dot"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point"
+          }
         }
       }
     },
@@ -448,6 +841,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Download and install without asking, applying it the next time Cmd-Tab starts. Off keeps the decision yours — this app owns ⌘-Tab for the whole machine, so replacing itself mid-session is worth a prompt."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Télécharge et installe sans demander, en appliquant la mise à jour au prochain démarrage de Cmd-Tab. Désactivé, la décision vous revient — cette application détient le ⌘-Tab de toute la machine, donc se remplacer en pleine session mérite une confirmation."
           }
         }
       }
@@ -460,6 +859,12 @@
             "state": "translated",
             "value": "Drag a window's title bar to a screen edge or corner to tile it there. Independent of the shortcuts below — you can have either, or both."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Faites glisser la barre de titre d'une fenêtre vers un bord ou un coin de l'écran pour l'y paver. Indépendant des raccourcis ci-dessous — vous pouvez avoir l'un, l'autre, ou les deux."
+          }
         }
       }
     },
@@ -470,6 +875,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Each opens the switcher on part of the window list instead of all of it. Held and released like the main trigger, and never sticky — a scoped cycle is a quick jump, not a panel to browse."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chacun ouvre le sélecteur sur une partie de la liste des fenêtres plutôt que sur sa totalité. Maintenus et relâchés comme le déclencheur principal, et jamais persistants — un cycle ciblé est un saut rapide, pas un panneau à parcourir."
           }
         }
       }
@@ -482,6 +893,12 @@
             "state": "translated",
             "value": "Edit"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modifier"
+          }
         }
       }
     },
@@ -492,6 +909,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Enable window actions"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer les actions sur les fenêtres"
           }
         }
       }
@@ -504,6 +927,12 @@
             "state": "translated",
             "value": "Enable window tiling"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer le pavage des fenêtres"
+          }
         }
       }
     },
@@ -514,6 +943,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Fade in and out"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apparition et disparition en fondu"
           }
         }
       }
@@ -526,6 +961,12 @@
             "state": "translated",
             "value": "Favorite order"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordre des favoris"
+          }
         }
       }
     },
@@ -536,6 +977,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Focus follows the pointer"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le focus suit le pointeur"
           }
         }
       }
@@ -548,6 +995,12 @@
             "state": "translated",
             "value": "Focus the window under the pointer"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer la fenêtre sous le pointeur"
+          }
         }
       }
     },
@@ -558,6 +1011,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Focus window above"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer la fenêtre au-dessus"
           }
         }
       }
@@ -570,6 +1029,12 @@
             "state": "translated",
             "value": "Focus window below"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer la fenêtre en dessous"
+          }
         }
       }
     },
@@ -580,6 +1045,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Focus window to the left"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer la fenêtre à gauche"
           }
         }
       }
@@ -592,6 +1063,29 @@
             "state": "translated",
             "value": "Focus window to the right"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer la fenêtre à droite"
+          }
+        }
+      }
+    },
+    "Follow the window": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow the window"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suivre la fenêtre"
+          }
         }
       }
     },
@@ -602,6 +1096,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "For the handful of apps you reach for all day, the switcher is overhead. These jump straight there, launching the app if it isn't running."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pour la poignée d'applications que vous utilisez toute la journée, le sélecteur est un détour. Ces raccourcis y mènent directement, en lançant l'application si elle ne tourne pas."
           }
         }
       }
@@ -614,6 +1114,46 @@
             "state": "translated",
             "value": "Force the panel light or dark regardless of the system setting."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forcer le panneau en clair ou en sombre, quel que soit le réglage du système."
+          }
+        }
+      }
+    },
+    "Force-quit app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Force-quit app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forcer à quitter l'application"
+          }
+        }
+      }
+    },
+    "Force-terminates it, for an app that has stopped responding.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Force-terminates it, for an app that has stopped responding."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Termine l'application de force, lorsqu'elle ne répond plus."
+          }
         }
       }
     },
@@ -624,6 +1164,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Gap"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écart"
           }
         }
       }
@@ -636,6 +1182,12 @@
             "state": "translated",
             "value": "Gap between an icon and its name."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Espace entre une icône et son nom."
+          }
         }
       }
     },
@@ -646,6 +1198,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "General"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Général"
           }
         }
       }
@@ -658,6 +1216,97 @@
             "state": "translated",
             "value": "Group windows by app"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grouper les fenêtres par application"
+          }
+        }
+      }
+    },
+    "Grow bottom edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grow bottom edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Étendre le bord inférieur"
+          }
+        }
+      }
+    },
+    "Grow left edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grow left edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Étendre le bord gauche"
+          }
+        }
+      }
+    },
+    "Grow right edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grow right edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Étendre le bord droit"
+          }
+        }
+      }
+    },
+    "Grow top edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grow top edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Étendre le bord supérieur"
+          }
+        }
+      }
+    },
+    "Hex colour": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hex colour"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couleur hexadécimale"
+          }
         }
       }
     },
@@ -668,6 +1317,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Hide all windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer toutes les fenêtres"
+          }
+        }
+      }
+    },
+    "Hide app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer l'application"
           }
         }
       }
@@ -680,6 +1352,12 @@
             "state": "translated",
             "value": "Hide apps with no windows"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer les applications sans fenêtre"
+          }
         }
       }
     },
@@ -690,6 +1368,63 @@
           "stringUnit": {
             "state": "translated",
             "value": "Hide every app to clear the screen to the desktop."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque toutes les applications pour dégager l'écran jusqu'au bureau."
+          }
+        }
+      }
+    },
+    "Hide other apps": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide other apps"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer les autres applications"
+          }
+        }
+      }
+    },
+    "Hides every other app, leaving this one up.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hides every other app, leaving this one up."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque toutes les autres applications et laisse celle-ci affichée."
+          }
+        }
+      }
+    },
+    "Hides the app and takes its tiles out of the list.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hides the app and takes its tiles out of the list."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque l'application et retire ses vignettes de la liste."
           }
         }
       }
@@ -702,6 +1437,12 @@
             "state": "translated",
             "value": "Highlight"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Surbrillance"
+          }
         }
       }
     },
@@ -712,6 +1453,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Hold a modifier and drag anywhere in a window — no aiming at the titlebar or a 4px edge. A resize takes the corner of the quarter you press in; the opposite corner stays put. Drag to a screen edge or corner and the snap zone lights up: let go there and the window tiles to it, gaps included."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maintenez un modificateur et faites glisser n'importe où dans une fenêtre — sans viser la barre de titre ni un bord de 4 px. Un redimensionnement prend le coin du quart où vous appuyez ; le coin opposé reste en place. Amenez le pointeur vers un bord ou un coin de l'écran et la zone d'aimantation s'allume : relâchez là et la fenêtre s'y pave, écarts compris."
           }
         }
       }
@@ -724,6 +1471,12 @@
             "state": "translated",
             "value": "Hold to open the switcher; release to switch."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maintenez pour ouvrir le sélecteur, relâchez pour basculer."
+          }
         }
       }
     },
@@ -734,6 +1487,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "How Cmd-Tab itself starts and presents itself."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La façon dont Cmd-Tab démarre et se présente."
           }
         }
       }
@@ -746,6 +1505,12 @@
             "state": "translated",
             "value": "How long the pointer has to be still first. This is what separates stopping at a window from crossing it on the way somewhere else — shorter is more eager, and too short retargets your typing mid-sentence."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le temps pendant lequel le pointeur doit rester immobile. C'est ce qui distingue s'arrêter sur une fenêtre de la traverser en allant ailleurs — plus court est plus empressé, et trop court redirige votre frappe en pleine phrase."
+          }
         }
       }
     },
@@ -756,6 +1521,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "How the switcher opens, what it lists, and where it appears."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La façon dont le sélecteur s'ouvre, ce qu'il liste et où il apparaît."
           }
         }
       }
@@ -768,6 +1539,12 @@
             "state": "translated",
             "value": "How tiles are sorted."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'ordre de tri des vignettes."
+          }
         }
       }
     },
@@ -778,6 +1555,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Icon size"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taille des icônes"
           }
         }
       }
@@ -790,6 +1573,12 @@
             "state": "translated",
             "value": "Icon spacing"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Espacement des icônes"
+          }
         }
       }
     },
@@ -800,6 +1589,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "In-switcher keys"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touches du sélecteur"
           }
         }
       }
@@ -812,6 +1607,12 @@
             "state": "translated",
             "value": "Install automatically"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer automatiquement"
+          }
         }
       }
     },
@@ -822,6 +1623,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Keep settings in a config file"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserver les réglages dans un fichier"
           }
         }
       }
@@ -834,6 +1641,12 @@
             "state": "translated",
             "value": "Keep the per-key tracing in the system log, so a problem can be read back afterwards instead of having to happen again while you watch."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserve le suivi touche par touche dans le journal du système, pour qu'un problème puisse être relu après coup au lieu de devoir se reproduire sous vos yeux."
+          }
         }
       }
     },
@@ -844,6 +1657,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Keeps the window's size and its relative position on the new display. Live whether or not tiling is on: a move changes no layout, so the switch above does not govern it, and a bound chord is claimed system-wide."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserve la taille de la fenêtre et sa position relative sur le nouvel écran. Actif que le pavage soit activé ou non : un déplacement ne change aucune disposition, donc l'interrupteur ci-dessus ne le régit pas, et un raccourci associé est revendiqué pour tout le système."
           }
         }
       }
@@ -856,6 +1675,29 @@
             "state": "translated",
             "value": "Labels"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Libellés"
+          }
+        }
+      }
+    },
+    "Landing block": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Landing block"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zone d'arrivée"
+          }
         }
       }
     },
@@ -866,6 +1708,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "Layout"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disposition"
+          }
+        }
+      }
+    },
+    "Left half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moitié gauche"
+          }
+        }
+      }
+    },
+    "Left third": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left third"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiers gauche"
           }
         }
       }
@@ -878,6 +1760,12 @@
             "state": "translated",
             "value": "Left two-thirds"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deux tiers gauche"
+          }
         }
       }
     },
@@ -888,6 +1776,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Look for a new version in the background, about once a day, and say so when one turns up."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recherche une nouvelle version en arrière-plan, environ une fois par jour, et vous prévient lorsqu'il y en a une."
           }
         }
       }
@@ -900,6 +1794,12 @@
             "state": "translated",
             "value": "Make larger"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agrandir"
+          }
         }
       }
     },
@@ -910,6 +1810,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Make smaller"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réduire"
           }
         }
       }
@@ -922,6 +1828,12 @@
             "state": "translated",
             "value": "Markers"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repères"
+          }
         }
       }
     },
@@ -932,6 +1844,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Material"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matière"
           }
         }
       }
@@ -944,6 +1862,63 @@
             "state": "translated",
             "value": "Max columns"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Colonnes maximum"
+          }
+        }
+      }
+    },
+    "Maximize": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximize"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plein écran"
+          }
+        }
+      }
+    },
+    "Maximize height": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximize height"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hauteur maximale"
+          }
+        }
+      }
+    },
+    "Maximize width": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximize width"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Largeur maximale"
+          }
         }
       }
     },
@@ -954,6 +1929,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Menu bar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Barre des menus"
           }
         }
       }
@@ -966,6 +1947,80 @@
             "state": "translated",
             "value": "Menu-bar glyph"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Icône de la barre des menus"
+          }
+        }
+      }
+    },
+    "Middle third": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Middle third"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiers central"
+          }
+        }
+      }
+    },
+    "Minimize window": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimize window"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réduire la fenêtre"
+          }
+        }
+      }
+    },
+    "Minimized windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimized windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtres réduites"
+          }
+        }
+      }
+    },
+    "Minimizes the window into the Dock. The tile stays.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimizes the window into the Dock. The tile stays."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réduit la fenêtre dans le Dock. La vignette reste."
+          }
         }
       }
     },
@@ -976,6 +2031,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mouse"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Souris"
+          }
+        }
+      }
+    },
+    "Move": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacer"
           }
         }
       }
@@ -988,6 +2066,165 @@
             "state": "translated",
             "value": "Move and resize with the mouse"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacer et redimensionner à la souris"
+          }
+        }
+      }
+    },
+    "Move to display 1": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to display 1"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers l'écran 1"
+          }
+        }
+      }
+    },
+    "Move to display 2": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to display 2"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers l'écran 2"
+          }
+        }
+      }
+    },
+    "Move to display 3": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to display 3"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers l'écran 3"
+          }
+        }
+      }
+    },
+    "Move to display 4": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to display 4"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers l'écran 4"
+          }
+        }
+      }
+    },
+    "Move to next desktop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to next desktop"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau suivant"
+          }
+        }
+      }
+    },
+    "Move to next display": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to next display"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers l'écran suivant"
+          }
+        }
+      }
+    },
+    "Move to previous desktop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to previous desktop"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau précédent"
+          }
+        }
+      }
+    },
+    "Move to previous display": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to previous display"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers l'écran précédent"
+          }
+        }
+      }
+    },
+    "Move windows between desktops": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move windows between desktops"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacer les fenêtres entre les bureaux"
+          }
         }
       }
     },
@@ -998,6 +2235,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Move your whole setup between Macs."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Emportez toute votre configuration d'un Mac à l'autre."
           }
         }
       }
@@ -1010,6 +2253,12 @@
             "state": "translated",
             "value": "Moves the keyboard to the nearest window in that direction — the other half of tiling, which places windows but never let you walk between them. Live whether or not tiling is on, since focus resizes nothing. Unbound by default: every arrow combination on ⌃⌘ is already spoken for, and the only one left is ⌃⌥⇧⌘, which is not a chord to claim on your behalf."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amène le clavier sur la fenêtre la plus proche dans cette direction — l'autre moitié du pavage, qui plaçait les fenêtres sans jamais vous laisser circuler entre elles. Actif que le pavage soit activé ou non, puisque le focus ne redimensionne rien. Non associé par défaut : toutes les combinaisons de flèches sur ⌃⌘ sont déjà prises, et la seule restante est ⌃⌥⇧⌘, qui n'est pas un raccourci à revendiquer à votre place."
+          }
         }
       }
     },
@@ -1020,6 +2269,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Moves the window without resizing it, a twentieth of the screen a press. Stops at the screen edge rather than walking the window off it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplace la fenêtre sans la redimensionner, d'un vingtième de l'écran par pression. S'arrête au bord de l'écran plutôt que d'y faire sortir la fenêtre."
+          }
+        }
+      }
+    },
+    "Names the destination instead of counting to it: on three displays \"next display\" is two presses and a guess about which way round they are, where these land on the same screen every time. The numbers are the ones on the window tiles' own display badges. Unbound, and ungoverned by the tiling switch for the same reason the two moves above are. Rows appear for the displays you actually have.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Names the destination instead of counting to it: on three displays \"next display\" is two presses and a guess about which way round they are, where these land on the same screen every time. The numbers are the ones on the window tiles' own display badges. Unbound, and ungoverned by the tiling switch for the same reason the two moves above are. Rows appear for the displays you actually have."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nomme la destination au lieu de la compter : sur trois écrans, « écran suivant » demande deux pressions et une supposition sur leur ordre, alors que ceux-ci arrivent sur le même écran à chaque fois. Les numéros sont ceux des pastilles d'écran portées par les vignettes de fenêtre. Non associés, et non régis par l'interrupteur de pavage pour la même raison que les deux déplacements ci-dessus. Les lignes n'apparaissent que pour les écrans dont vous disposez réellement."
           }
         }
       }
@@ -1032,6 +2304,12 @@
             "state": "translated",
             "value": "No conflicts"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun conflit"
+          }
         }
       }
     },
@@ -1042,6 +2320,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Notification badges"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pastilles de notification"
           }
         }
       }
@@ -1054,6 +2338,12 @@
             "state": "translated",
             "value": "Nudge down"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décaler vers le bas"
+          }
         }
       }
     },
@@ -1064,6 +2354,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Nudge left"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décaler vers la gauche"
           }
         }
       }
@@ -1076,6 +2372,12 @@
             "state": "translated",
             "value": "Nudge right"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décaler vers la droite"
+          }
         }
       }
     },
@@ -1086,6 +2388,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Nudge up"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décaler vers le haut"
           }
         }
       }
@@ -1098,6 +2406,29 @@
             "state": "translated",
             "value": "Number badges"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pastilles numérotées"
+          }
+        }
+      }
+    },
+    "Off by default — unlike the display moves, this one drives the mouse and flashes Mission Control, so it is not claimed until you ask.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off by default — unlike the display moves, this one drives the mouse and flashes Mission Control, so it is not claimed until you ask."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivé par défaut — contrairement aux déplacements d'écran, celui-ci pilote la souris et fait apparaître Mission Control, il n'est donc pas revendiqué tant que vous ne le demandez pas."
+          }
         }
       }
     },
@@ -1108,6 +2439,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Off by default. Each binding is a real global hotkey — while tiling is on, Cmd-Tab takes those combinations from whatever app is in front, so nothing is claimed until you ask for it. Displays and Focus are the exceptions: moving a window is not resizing it and moving the keyboard is not either, so both stay live whatever this switch says."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivé par défaut. Chaque association est un véritable raccourci global — tant que le pavage est actif, Cmd-Tab prend ces combinaisons à l'application au premier plan, donc rien n'est revendiqué avant que vous ne le demandiez. Écrans et Focus font exception : déplacer une fenêtre n'est pas la redimensionner, et déplacer le clavier non plus, donc les deux restent actifs quel que soit cet interrupteur."
           }
         }
       }
@@ -1120,6 +2457,12 @@
             "state": "translated",
             "value": "Off leaves every ⌥-key to the filter. Off by default: quitting an app is not something to discover by mistyping a search."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivé, toutes les touches ⌥ restent au filtre. Désactivé par défaut : quitter une application ne doit pas se découvrir en tapant une recherche de travers."
+          }
         }
       }
     },
@@ -1130,6 +2473,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Off leaves no menu-bar item. Reopen Cmd-Tab from Finder to get Settings back."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivé, aucun élément n'apparaît dans la barre des menus. Rouvrez Cmd-Tab depuis le Finder pour retrouver les réglages."
           }
         }
       }
@@ -1142,6 +2491,12 @@
             "state": "translated",
             "value": "Off, the switcher records what it did — sessions opening, picks, tiling, anything that failed. On, it also records every key it saw getting there. Leave it off unless you are chasing something; it is a line per keystroke."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivée, le sélecteur consigne ce qu'il a fait — ouvertures de session, choix, pavage, tout ce qui a échoué. Activée, il consigne aussi chaque touche vue en chemin. Laissez-la désactivée sauf si vous cherchez quelque chose : cela fait une ligne par frappe."
+          }
         }
       }
     },
@@ -1152,6 +2507,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "On keeps each app's windows in a run. Off ranks every window against every other by when you last used it, so one tap of the trigger goes to the window you were in before this one whichever app it belongs to."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activé, les fenêtres de chaque application restent groupées. Désactivé, chaque fenêtre est classée par rapport à toutes les autres selon sa dernière utilisation : une seule pression du déclencheur mène à la fenêtre précédant celle-ci, quelle que soit son application."
           }
         }
       }
@@ -1164,6 +2525,12 @@
             "state": "translated",
             "value": "Only apps with an override are listed. Everything else follows the global settings."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seules les applications ayant un réglage particulier sont listées. Toutes les autres suivent les réglages globaux."
+          }
         }
       }
     },
@@ -1174,6 +2541,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Only for window previews on hover. Everything else works without it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uniquement pour les aperçus de fenêtres au survol. Tout le reste fonctionne sans."
           }
         }
       }
@@ -1186,6 +2559,12 @@
             "state": "translated",
             "value": "Only windows on the Desktop (Space) in front. With more than one display, each has its own front Desktop and both count as here."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uniquement les fenêtres du bureau (Space) au premier plan. Avec plusieurs écrans, chacun a son propre bureau au premier plan et les deux comptent comme « ici »."
+          }
         }
       }
     },
@@ -1196,6 +2575,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Open the repository in your browser."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir le dépôt dans votre navigateur."
           }
         }
       }
@@ -1208,6 +2593,12 @@
             "state": "translated",
             "value": "Order"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordre"
+          }
         }
       }
     },
@@ -1218,6 +2609,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Override the material's built-in glass blur. 0 = none, 50 = heavy."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remplace le flou de verre intégré à la matière. 0 = aucun, 50 = intense."
           }
         }
       }
@@ -1230,6 +2627,12 @@
             "state": "translated",
             "value": "Overview"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vue d'ensemble"
+          }
         }
       }
     },
@@ -1240,6 +2643,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Panel"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panneau"
           }
         }
       }
@@ -1252,6 +2661,12 @@
             "state": "translated",
             "value": "Paste into Terminal to read back what was logged."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "À coller dans le Terminal pour relire ce qui a été consigné."
+          }
         }
       }
     },
@@ -1262,6 +2677,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Per-app overrides"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réglages par application"
           }
         }
       }
@@ -1274,6 +2695,12 @@
             "state": "translated",
             "value": "Permissions"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autorisations"
+          }
         }
       }
     },
@@ -1284,6 +2711,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pin favorites to the front"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Épingler les favoris en tête"
           }
         }
       }
@@ -1296,6 +2729,12 @@
             "state": "translated",
             "value": "Placement"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Emplacement"
+          }
         }
       }
     },
@@ -1307,6 +2746,12 @@
             "state": "translated",
             "value": "Point size of tile titles and the caption."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Corps des titres de vignette et de la légende."
+          }
         }
       }
     },
@@ -1314,6 +2759,12 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Position"
+          }
+        },
+        "fr": {
           "stringUnit": {
             "state": "translated",
             "value": "Position"
@@ -1329,6 +2780,12 @@
             "state": "translated",
             "value": "Press the same half twice to step the window through ½ → ⅔ → ⅓ of the screen on that side."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appuyez deux fois sur la même moitié pour faire passer la fenêtre par ½ → ⅔ → ⅓ de l'écran de ce côté."
+          }
         }
       }
     },
@@ -1339,6 +2796,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pressed while the panel is up — on top of the held trigger, or on their own once it is released in Stay open. Scrolling or hovering over a tile moves the selection too, and a click switches straight to it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "À presser pendant que le panneau est ouvert — en plus du déclencheur maintenu, ou seules une fois celui-ci relâché en mode Rester ouvert. Faire défiler ou survoler une vignette déplace aussi la sélection, et un clic y bascule directement."
+          }
+        }
+      }
+    },
+    "Preview windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu des fenêtres"
           }
         }
       }
@@ -1351,6 +2831,46 @@
             "state": "translated",
             "value": "Preview windows on hover"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu des fenêtres au survol"
+          }
+        }
+      }
+    },
+    "Quit app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitter l'application"
+          }
+        }
+      }
+    },
+    "Quits the highlighted app and drops it from the list.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quits the highlighted app and drops it from the list."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitte l'application sélectionnée et la retire de la liste."
+          }
         }
       }
     },
@@ -1361,6 +2881,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Recovery"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Récupération"
           }
         }
       }
@@ -1373,6 +2899,12 @@
             "state": "translated",
             "value": "Releasing the trigger leaves the switcher up instead of switching. Tab, Return, a click or 1–9/0 then picks; Escape backs out."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relâcher le déclencheur laisse le sélecteur ouvert au lieu de basculer. Tab, Retour, un clic ou 1–9/0 choisissent alors ; Échap referme."
+          }
         }
       }
     },
@@ -1383,6 +2915,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Remembers where every window sat under each set of monitors and puts them back when that set returns — the undo macOS has never had for undocking. It has to have seen a desk before it can restore it, so the first plug or unplug after switching this on only learns; the one after that restores. Kept in memory for the session, never written to disk."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retient la place de chaque fenêtre sous chaque ensemble d'écrans et les y remet lorsque cet ensemble revient — l'annulation que macOS n'a jamais eue pour le débranchement. Il faut avoir vu une configuration avant de pouvoir la rétablir : le premier branchement ou débranchement après activation ne fait qu'apprendre, le suivant rétablit. Conservé en mémoire pour la session, jamais écrit sur le disque."
           }
         }
       }
@@ -1395,6 +2933,12 @@
             "state": "translated",
             "value": "Required. Without it the event tap cannot see ⌘-Tab, and windows cannot be raised."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Obligatoire. Sans elle, la capture d'événements ne peut pas voir ⌘-Tab et les fenêtres ne peuvent pas être mises au premier plan."
+          }
         }
       }
     },
@@ -1405,6 +2949,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Reset to defaults"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser"
+          }
+        }
+      }
+    },
+    "Resize": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resize"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redimensionner"
           }
         }
       }
@@ -1417,6 +2984,12 @@
             "state": "translated",
             "value": "Rest for"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Immobilité requise"
+          }
         }
       }
     },
@@ -1427,6 +3000,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rest the cursor over a window and the keyboard goes to it, with no click. Off by default: it changes where every keystroke on the machine lands, which is not a thing to switch on for someone."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laissez le curseur au repos sur une fenêtre et le clavier lui revient, sans clic. Désactivé par défaut : cela change la destination de chaque frappe de la machine, ce qui ne s'active pas à la place de quelqu'un."
           }
         }
       }
@@ -1439,6 +3018,29 @@
             "state": "translated",
             "value": "Restore macOS ⌘-Tab"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir le ⌘-Tab de macOS"
+          }
+        }
+      }
+    },
+    "Restore previous size": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore previous size"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir la taille précédente"
+          }
         }
       }
     },
@@ -1449,6 +3051,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "Restore the layout when displays change"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir la disposition au changement d'écrans"
+          }
+        }
+      }
+    },
+    "Right half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moitié droite"
+          }
+        }
+      }
+    },
+    "Right third": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right third"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiers droit"
           }
         }
       }
@@ -1461,6 +3103,12 @@
             "state": "translated",
             "value": "Right two-thirds"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deux tiers droit"
+          }
         }
       }
     },
@@ -1471,6 +3119,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Roundness of the selected tile's highlight."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrondi de la surbrillance de la vignette sélectionnée."
           }
         }
       }
@@ -1483,6 +3137,12 @@
             "state": "translated",
             "value": "Scales the whole panel. Window tiles and list rows use a smaller icon, and follow in step."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Met tout le panneau à l'échelle. Les vignettes de fenêtre et les lignes de liste utilisent une icône plus petite et suivent proportionnellement."
+          }
         }
       }
     },
@@ -1493,6 +3153,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Scoped shortcuts"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raccourcis ciblés"
           }
         }
       }
@@ -1505,6 +3171,63 @@
             "state": "translated",
             "value": "Screen Recording"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement de l'écran"
+          }
+        }
+      }
+    },
+    "Screen Recording is not granted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Screen Recording is not granted"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'enregistrement de l'écran n'est pas autorisé"
+          }
+        }
+      }
+    },
+    "Send to a display": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send to a display"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers un écran"
+          }
+        }
+      }
+    },
+    "Sends the window to the next display along, keeping its relative position.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends the window to the next display along, keeping its relative position."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoie la fenêtre vers l'écran suivant en conservant sa position relative."
+          }
         }
       }
     },
@@ -1512,6 +3235,12 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Session"
+          }
+        },
+        "fr": {
           "stringUnit": {
             "state": "translated",
             "value": "Session"
@@ -1527,6 +3256,29 @@
             "state": "translated",
             "value": "Settings file"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fichier de réglages"
+          }
+        }
+      }
+    },
+    "Settings sections": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings sections"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sections des réglages"
+          }
         }
       }
     },
@@ -1537,6 +3289,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Shortcuts"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raccourcis"
           }
         }
       }
@@ -1549,6 +3307,12 @@
             "state": "translated",
             "value": "Show all windows"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher toutes les fenêtres"
+          }
         }
       }
     },
@@ -1559,6 +3323,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show delay"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Délai d'affichage"
           }
         }
       }
@@ -1571,6 +3341,12 @@
             "state": "translated",
             "value": "Show menu-bar icon"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher l'icône dans la barre des menus"
+          }
         }
       }
     },
@@ -1581,6 +3357,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show on"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher sur"
           }
         }
       }
@@ -1593,6 +3375,80 @@
             "state": "translated",
             "value": "Show the file"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher le fichier"
+          }
+        }
+      }
+    },
+    "Shrink bottom edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shrink bottom edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rentrer le bord inférieur"
+          }
+        }
+      }
+    },
+    "Shrink left edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shrink left edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rentrer le bord gauche"
+          }
+        }
+      }
+    },
+    "Shrink right edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shrink right edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rentrer le bord droit"
+          }
+        }
+      }
+    },
+    "Shrink top edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shrink top edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rentrer le bord supérieur"
+          }
         }
       }
     },
@@ -1603,6 +3459,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sizes and positions only — the Displays moves and the Focus chords do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tailles et positions uniquement — les déplacements d'écran et les raccourcis de focus n'en dépendent pas. Les valeurs par défaut sont sur ⌃⌘, que macOS laisse presque entièrement libre."
           }
         }
       }
@@ -1615,6 +3477,12 @@
             "state": "translated",
             "value": "Slack around each icon, inside its highlight."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Marge autour de chaque icône, à l'intérieur de sa surbrillance."
+          }
         }
       }
     },
@@ -1625,6 +3493,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Snap by dragging"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aimanter par glissement"
           }
         }
       }
@@ -1637,6 +3511,29 @@
             "state": "translated",
             "value": "Snap the focused window without reaching for its edges. These work system-wide, whether or not the switcher is open."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aimantez la fenêtre active sans attraper ses bords. Ces raccourcis fonctionnent pour tout le système, que le sélecteur soit ouvert ou non."
+          }
+        }
+      }
+    },
+    "Snaps the highlighted window to that half of its display — the same tile the global ⌃⌘-arrow chord makes, gap and width cycle included.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snaps the highlighted window to that half of its display — the same tile the global ⌃⌘-arrow chord makes, gap and width cycle included."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aimante la fenêtre sélectionnée sur cette moitié de son écran — le même pavage que le raccourci global ⌃⌘-flèche, écart et cycle des largeurs compris."
+          }
         }
       }
     },
@@ -1647,6 +3544,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Source"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Code source"
           }
         }
       }
@@ -1659,6 +3562,12 @@
             "state": "translated",
             "value": "Space badges"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pastilles de bureau"
+          }
         }
       }
     },
@@ -1669,6 +3578,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Space left around a tiled window: the full gap against a screen edge, half of it where two windows meet — so neighbours sit exactly one gap apart. 0 keeps them flush."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Espace laissé autour d'une fenêtre pavée : l'écart entier contre un bord d'écran, la moitié là où deux fenêtres se rejoignent — les voisines sont ainsi séparées d'exactement un écart. 0 les laisse jointives."
           }
         }
       }
@@ -1681,6 +3596,12 @@
             "state": "translated",
             "value": "Star an app to keep it in the switcher even when it isn't running; picking it launches it. Excluded apps never appear."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Marquez une application d'une étoile pour la garder dans le sélecteur même lorsqu'elle ne tourne pas ; la choisir la lance. Les applications exclues n'apparaissent jamais."
+          }
         }
       }
     },
@@ -1691,6 +3612,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Start at login"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir à la session"
           }
         }
       }
@@ -1703,6 +3630,12 @@
             "state": "translated",
             "value": "Startup"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Démarrage"
+          }
         }
       }
     },
@@ -1713,6 +3646,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Stay open"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rester ouvert"
           }
         }
       }
@@ -1725,6 +3664,12 @@
             "state": "translated",
             "value": "Swap with window above"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permuter avec la fenêtre au-dessus"
+          }
         }
       }
     },
@@ -1735,6 +3680,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Swap with window below"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permuter avec la fenêtre en dessous"
           }
         }
       }
@@ -1747,6 +3698,12 @@
             "state": "translated",
             "value": "Swap with window to the left"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permuter avec la fenêtre à gauche"
+          }
         }
       }
     },
@@ -1757,6 +3714,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Swap with window to the right"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permuter avec la fenêtre à droite"
           }
         }
       }
@@ -1769,6 +3732,29 @@
             "state": "translated",
             "value": "Switch between"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Basculer entre"
+          }
+        }
+      }
+    },
+    "Switch to the desktop the window landed on, so you arrive with it instead of watching it go. Turn this off to throw a window somewhere and stay where you are.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to the desktop the window landed on, so you arrive with it instead of watching it go. Turn this off to throw a window somewhere and stay where you are."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bascule vers le bureau où la fenêtre a atterri, pour arriver avec elle au lieu de la regarder partir. Désactivez pour envoyer une fenêtre ailleurs et rester où vous êtes."
+          }
         }
       }
     },
@@ -1779,6 +3765,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Switcher shortcut"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raccourci du sélecteur"
           }
         }
       }
@@ -1791,6 +3783,12 @@
             "state": "translated",
             "value": "Sync settings over iCloud"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synchroniser les réglages via iCloud"
+          }
         }
       }
     },
@@ -1801,6 +3799,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "Take the pointer along"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Emmener le pointeur"
+          }
+        }
+      }
+    },
+    "Target outline": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Target outline"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contour de la cible"
+          }
+        }
+      }
+    },
+    "That file could not be read as settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That file could not be read as settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce fichier n'a pas pu être lu comme des réglages"
           }
         }
       }
@@ -1813,6 +3851,46 @@
             "state": "translated",
             "value": "The anchor the hold-and-point gesture measures its direction from. The outline and the landing block are not configurable — they match Rectangle's snap footprint: light grey on black."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le repère à partir duquel le geste « maintenir et pointer » mesure sa direction. Le contour et la zone d'arrivée ne sont pas configurables — ils reprennent l'empreinte d'aimantation de Rectangle : gris clair sur noir."
+          }
+        }
+      }
+    },
+    "The block showing where the window will end up. Drawn as a solid border with the fill washed back, so one colour covers both.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The block showing where the window will end up. Drawn as a solid border with the fill washed back, so one colour covers both."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le bloc indiquant où la fenêtre va atterrir. Dessiné en bordure pleine avec un remplissage atténué, pour qu'une seule couleur suffise aux deux."
+          }
+        }
+      }
+    },
+    "The border drawn around the window a gesture is about to act on.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The border drawn around the window a gesture is about to act on."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La bordure dessinée autour de la fenêtre sur laquelle un geste va agir."
+          }
         }
       }
     },
@@ -1823,6 +3901,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "The frosted glass behind the tiles."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le verre dépoli derrière les vignettes."
+          }
+        }
+      }
+    },
+    "The green button: maximize, or restore a zoomed window.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The green button: maximize, or restore a zoomed window."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le bouton vert : agrandir, ou rétablir une fenêtre zoomée."
+          }
+        }
+      }
+    },
+    "The mark the hold-and-point gesture measures its direction from.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The mark the hold-and-point gesture measures its direction from."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le repère à partir duquel le geste « maintenir et pointer » mesure sa direction."
           }
         }
       }
@@ -1835,6 +3953,12 @@
             "state": "translated",
             "value": "The shape the switcher takes."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La forme que prend le sélecteur."
+          }
         }
       }
     },
@@ -1845,6 +3969,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "The takeover lives in the window server's memory, never in `com.apple.symbolichotkeys`, so logging out restores ⌘-Tab too."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La prise de contrôle réside dans la mémoire du serveur de fenêtres, jamais dans `com.apple.symbolichotkeys` : fermer la session rétablit donc aussi ⌘-Tab."
+          }
+        }
+      }
+    },
+    "The two moves keep the window's size and its relative position on the new display, and are live whether or not tiling is on: a move changes no layout, so the switch above does not govern it, and a bound chord is claimed system-wide. The two switches below them are about what happens around a display change rather than about the chords.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The two moves keep the window's size and its relative position on the new display, and are live whether or not tiling is on: a move changes no layout, so the switch above does not govern it, and a bound chord is claimed system-wide. The two switches below them are about what happens around a display change rather than about the chords."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les deux déplacements conservent la taille de la fenêtre et sa position relative sur le nouvel écran, et sont actifs que le pavage soit activé ou non : un déplacement ne change aucune disposition, donc l'interrupteur ci-dessus ne le régit pas, et un raccourci associé est revendiqué pour tout le système. Les deux interrupteurs en dessous concernent ce qui se passe autour d'un changement d'écrans, pas les raccourcis."
           }
         }
       }
@@ -1857,6 +4004,12 @@
             "state": "translated",
             "value": "The two windows change places, each taking the other's exact frame."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les deux fenêtres échangent leur place, chacune prenant le cadre exact de l'autre."
+          }
         }
       }
     },
@@ -1867,6 +4020,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "The ⌘-number jump hint on the first ten targets."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'indice de saut ⌘-chiffre sur les dix premières cibles."
           }
         }
       }
@@ -1879,6 +4038,29 @@
             "state": "translated",
             "value": "Theme"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thème"
+          }
+        }
+      }
+    },
+    "This app's windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This app's windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les fenêtres de cette application"
+          }
         }
       }
     },
@@ -1889,6 +4071,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "This desktop"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce bureau"
+          }
+        }
+      }
+    },
+    "Those settings could not be exported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Those settings could not be exported"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ces réglages n'ont pas pu être exportés"
+          }
+        }
+      }
+    },
+    "Those settings could not be saved": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Those settings could not be saved"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ces réglages n'ont pas pu être enregistrés"
           }
         }
       }
@@ -1901,6 +4123,80 @@
             "state": "translated",
             "value": "Thumbnail tiles"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vignettes miniatures"
+          }
+        }
+      }
+    },
+    "Tile to bottom half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tile to bottom half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paver sur la moitié inférieure"
+          }
+        }
+      }
+    },
+    "Tile to left half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tile to left half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paver sur la moitié gauche"
+          }
+        }
+      }
+    },
+    "Tile to right half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tile to right half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paver sur la moitié droite"
+          }
+        }
+      }
+    },
+    "Tile to top half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tile to top half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paver sur la moitié supérieure"
+          }
         }
       }
     },
@@ -1911,6 +4207,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tiles"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vignettes"
           }
         }
       }
@@ -1923,6 +4225,12 @@
             "state": "translated",
             "value": "Tint behind the selected tile."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teinte derrière la vignette sélectionnée."
+          }
         }
       }
     },
@@ -1933,6 +4241,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Title font"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Police des titres"
           }
         }
       }
@@ -1945,6 +4259,12 @@
             "state": "translated",
             "value": "Title size"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taille des titres"
+          }
         }
       }
     },
@@ -1955,6 +4275,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Title spacing"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Espacement des titres"
+          }
+        }
+      }
+    },
+    "Top half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moitié supérieure"
           }
         }
       }
@@ -1967,6 +4310,46 @@
             "state": "translated",
             "value": "Top third"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiers supérieur"
+          }
+        }
+      }
+    },
+    "Top-left corner": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-left corner"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coin supérieur gauche"
+          }
+        }
+      }
+    },
+    "Top-right corner": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-right corner"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coin supérieur droit"
+          }
         }
       }
     },
@@ -1977,6 +4360,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Trigger"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déclencheur"
           }
         }
       }
@@ -1989,6 +4378,12 @@
             "state": "translated",
             "value": "Unbound by default: these act system-wide and have no natural home key, so the combination is yours to pick rather than ours to claim."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non associés par défaut : ils agissent sur tout le système et n'ont pas de touche naturelle, la combinaison vous revient donc plutôt que de nous revenir."
+          }
         }
       }
     },
@@ -1999,6 +4394,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Unread counts from each app's Dock icon. Read from the Dock over Accessibility, so it is best-effort."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le nombre d'éléments non lus porté par l'icône de chaque application dans le Dock. Lu dans le Dock via l'accessibilité, donc au mieux."
           }
         }
       }
@@ -2011,6 +4412,12 @@
             "state": "translated",
             "value": "Updates"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mises à jour"
+          }
         }
       }
     },
@@ -2022,6 +4429,12 @@
             "state": "translated",
             "value": "Verbose logging"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Journalisation détaillée"
+          }
         }
       }
     },
@@ -2029,6 +4442,12 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version"
+          }
+        },
+        "fr": {
           "stringUnit": {
             "state": "translated",
             "value": "Version"
@@ -2044,6 +4463,12 @@
             "state": "translated",
             "value": "Wait before drawing the panel, so a quick tap switches with no flash. 0 = instant."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attendre avant de dessiner le panneau, pour qu'une pression rapide bascule sans clignotement. 0 = immédiat."
+          }
         }
       }
     },
@@ -2054,6 +4479,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Warp the cursor onto the window after it lands on the other display, so the next click and the next hover are where you are looking. Off leaves the pointer on the display you threw the window from."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amène le curseur sur la fenêtre une fois arrivée sur l'autre écran, pour que le prochain clic et le prochain survol soient là où vous regardez. Désactivé, le pointeur reste sur l'écran d'où vous avez envoyé la fenêtre."
           }
         }
       }
@@ -2066,6 +4497,12 @@
             "state": "translated",
             "value": "What each tile stands for."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce que représente chaque vignette."
+          }
         }
       }
     },
@@ -2076,6 +4513,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "What opens the switcher, and what the keys do while it is up."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce qui ouvre le sélecteur, et ce que font les touches pendant qu'il est ouvert."
           }
         }
       }
@@ -2088,6 +4531,12 @@
             "state": "translated",
             "value": "Where on a display the panel opens."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'endroit de l'écran où le panneau s'ouvre."
+          }
         }
       }
     },
@@ -2098,6 +4547,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Which Desktop a window is on. Only ever appears when you have more than one."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le bureau sur lequel se trouve une fenêtre. N'apparaît que si vous en avez plusieurs."
           }
         }
       }
@@ -2110,6 +4565,12 @@
             "state": "translated",
             "value": "Which Desktops window tiles may come from. Application tiles are never affected — an app is not on a Desktop. Read fresh each time the switcher opens, so it follows you the moment you switch."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les bureaux dont peuvent provenir les vignettes de fenêtre. Les vignettes d'application ne sont jamais concernées — une application n'est pas sur un bureau. Relu à chaque ouverture du sélecteur, il vous suit donc dès que vous changez de bureau."
+          }
         }
       }
     },
@@ -2120,6 +4581,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Which display a window is on. Only ever appears when more than one is connected."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'écran sur lequel se trouve une fenêtre. N'apparaît que si plusieurs sont connectés."
           }
         }
       }
@@ -2132,6 +4599,12 @@
             "state": "translated",
             "value": "Which displays get a panel."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les écrans qui reçoivent un panneau."
+          }
         }
       }
     },
@@ -2142,6 +4615,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Which icon the menu-bar item shows."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'icône affichée dans la barre des menus."
           }
         }
       }
@@ -2154,6 +4633,12 @@
             "state": "translated",
             "value": "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch above, and of Snap by dragging."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tant que le modificateur est maintenu, le glissement appartient à Cmd-Tab et l'application en dessous ne le voit jamais — un déplacement au-dessus d'un document ne sélectionne donc pas de texte au passage. Indépendant de l'interrupteur de pavage ci-dessus et de l'aimantation par glissement."
+          }
         }
       }
     },
@@ -2164,6 +4649,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Window"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtre"
           }
         }
       }
@@ -2176,6 +4667,12 @@
             "state": "translated",
             "value": "Window actions"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actions sur les fenêtres"
+          }
         }
       }
     },
@@ -2186,6 +4683,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Window lists only — application tiles are one per app already."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listes de fenêtres uniquement — les vignettes d'application sont déjà uniques par application."
           }
         }
       }
@@ -2198,6 +4701,12 @@
             "state": "translated",
             "value": "Window tiling"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pavage des fenêtres"
+          }
         }
       }
     },
@@ -2208,6 +4717,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtres"
           }
         }
       }
@@ -2220,6 +4735,29 @@
             "state": "translated",
             "value": "Windows on this desktop"
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les fenêtres de ce bureau"
+          }
+        }
+      }
+    },
+    "Windows on this display": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Windows on this display"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les fenêtres de cet écran"
+          }
         }
       }
     },
@@ -2231,6 +4769,46 @@
             "state": "translated",
             "value": "Written in place rather than replaced, so a symlink into a dotfiles repo survives every save. On launch the file wins over local settings — that is what makes a fresh checkout come up configured, and what makes a second Mac pick up the settings iCloud sent it rather than publish its own over them."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écrit sur place plutôt que remplacé, pour qu'un lien symbolique vers un dépôt de dotfiles survive à chaque enregistrement. Au lancement, le fichier l'emporte sur les réglages locaux — c'est ce qui fait qu'un dépôt fraîchement cloné démarre configuré, et qu'un second Mac reprend les réglages qu'iCloud lui a envoyés au lieu d'imposer les siens."
+          }
+        }
+      }
+    },
+    "Zoom window": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zoom window"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zoomer la fenêtre"
+          }
+        }
+      }
+    },
+    "macOS has no way to move another app's window between desktops, so this performs the gesture instead: it picks the window up, opens Mission Control for a moment and drops it on the next desktop along. That means it takes over the pointer for about half a second, which is why it is off by default. Stops at the first and last desktop rather than wrapping around.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS has no way to move another app's window between desktops, so this performs the gesture instead: it picks the window up, opens Mission Control for a moment and drops it on the next desktop along. That means it takes over the pointer for about half a second, which is why it is off by default. Stops at the first and last desktop rather than wrapping around."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS n'offre aucun moyen de déplacer la fenêtre d'une autre application entre les bureaux : ceci exécute donc le geste à la main — la fenêtre est saisie, Mission Control s'ouvre un instant, et elle est déposée sur le bureau suivant. Cela mobilise le pointeur pendant environ une demi-seconde, d'où sa désactivation par défaut. S'arrête au premier et au dernier bureau au lieu de boucler."
+          }
         }
       }
     },
@@ -2241,6 +4819,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "macOS raises a window as part of focusing it, so the window you rest over comes to the front. Nothing happens while a mouse button or a modifier is held, or while the switcher is open — each of those is a gesture that belongs to the window it started in."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS met une fenêtre au premier plan en même temps qu'il l'active : celle que vous survolez passe donc devant. Rien ne se produit tant qu'un bouton de la souris ou un modificateur est maintenu, ni pendant que le sélecteur est ouvert — chacun de ces cas est un geste qui appartient à la fenêtre où il a commencé."
           }
         }
       }

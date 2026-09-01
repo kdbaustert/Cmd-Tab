@@ -25,7 +25,7 @@ raise windows without it.
 
 The switcher itself never needs Screen Recording: tiles are app icons, and window *titles* come
 from the Accessibility API rather than `CGWindowListCopyWindowInfo`. The one exception is the
-optional **window preview on hover** (Settings → Behavior) — its live thumbnails are captured
+optional **window preview** (Settings → Behavior) — its live thumbnails are captured
 with ScreenCaptureKit, so turning it on prompts for Screen Recording. Leave it off and that second
 permission is never touched.
 
@@ -42,6 +42,7 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | ⌘-↑ / ⌘-↓ | Move the selection by one row — `columns` tiles in the grid, one in the list, keeping the column when it wraps. With a filter active it lands on the nearest tile the filter allows, since filtering dims tiles rather than removing them |
 | *type* | Filter the list by app / window name |
 | ⌫ | Delete the last character of the filter |
+| ⌥W | Close the highlighted window (with **Enable window actions** on) — the ⌥ keys act on the tile without leaving the switcher; see [Window actions](#shortcuts) |
 | ⌘-1 … ⌘-9, ⌘-0 | Switch straight to that tile (no filter active). 0 is the tenth tile |
 | Esc | Dismiss the switcher — always, filter or not. While the panel is up it owns every key on the machine, so this is the one exit that must never depend on any other state; ⌫ is how you back out of a query |
 | Release ⌘ | Switch to the selection — unless **Stay open** is on, which keeps the panel up |
@@ -61,9 +62,19 @@ selection lands on the **best** match rather than the first one in list order �
 Character Viewer ahead of Chrome used to highlight the wrong one and make you arrow past it, which
 is exactly the work filtering is meant to save.
 
-When a query matches **nothing** running, the switcher offers installed apps to launch instead —
-the moment it would otherwise have said "No matches", so nothing is displaced. Turn it off with
-*Launch apps from search*.
+Installed apps you could **launch** are offered alongside whatever the query found running, appended
+after it and capped at five. This used to fire only when the query matched nothing at all, on the
+argument that padding a list which already has what you asked for is noise. The argument was right
+about the noise and wrong about the cliff it produced: typing `ter` with something running that
+matched showed one list, and one more character — the moment the last running match dropped out —
+replaced it wholesale with a different one. The set of tiles changed discontinuously in the middle of
+a word, which is the opposite of what a filter should feel like.
+
+What keeps that safe is the ranking rule underneath it: **something running always outranks something
+launchable, whatever they score.** A query reaching anything already open still lands on it, so the
+gesture that has always meant "go to the one I have" never starts second copies of things; a launch
+tile takes the highlight only when nothing running answered, which is exactly what happened before.
+The suggestions are offered, not imposed. Turn them off entirely with *Launch apps from search*.
 Because you are still holding ⌘, the character each key would type is read from the event honouring
 your keyboard layout, so it follows the physical keys rather than assuming a US layout.
 
@@ -79,8 +90,15 @@ because the panel is deliberately non-activating and never becomes key: the high
 polling the cursor position on a timer, and clicks are caught in the panel's `sendEvent`. The poll
 is used rather than a global mouse-moved monitor because such a monitor only sees events bound for
 *other* apps — so whenever Cmd-Tab itself is frontmost the highlight would stop following the cursor.
-With **Preview windows on hover** enabled, pausing over an app tile also floats live thumbnails of
-that app's windows beside it — see [Window preview on hover](#window-preview-on-hover).
+With **Preview windows** enabled, pausing over an app tile also floats live thumbnails of
+that app's windows beside it — see [Window preview](#window-preview).
+
+The pointer gets one of the window actions as a control rather than a key: with **Enable window
+actions** on, the tile under the cursor carries a small **×** in its top-left corner, and clicking it
+closes that window — the same thing ⌥W does. It is the only action a click can reach. Quit and
+force-quit are marked destructive and ask before they run, and a control that ends a process on one
+stray click is exactly what that flag exists to prevent; closing a window is recoverable in the way
+quitting an app is not. That is the same line the `cmdtab://` scheme draws, for the same reason.
 
 The first nine tiles carry their number in the bottom-right corner. The number switches
 immediately rather than moving the highlight — waiting for ⌘ to come up would make it slower than
@@ -95,6 +113,10 @@ Both the number row and the keypad work. The mapping is by physical key position
 the keys *labelled* 0–9 on ANSI-style layouts.
 
 ## Settings
+
+<p align="center">
+  <img src="docs/settings.png" alt="The Settings window, General tab" width="900">
+</p>
 
 **Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of seven tabs, each with
 its own gradient icon badge, and a search field above them. Typing in the search field replaces the
@@ -244,9 +266,46 @@ and checks it came out whole. That last step is not redundant with the build: th
 the icon and the menu-bar PNG flattening are all steps that can break without the compiler noticing,
 and a glyph left in a subfolder is a blank menu bar at runtime with nothing else to catch it.
 
-The suite is worth running on every push precisely because it is cheap — 254 pure-logic tests in
-about 30 milliseconds, no window server, no Accessibility grant, no running apps. The parts that
-*cannot* be tested that way are the parts where a silent regression costs the most.
+The suite is worth running on every push precisely because it is cheap — 509 pure-logic tests in
+about a tenth of a second, no window server, no Accessibility grant, no running apps. The parts that
+*cannot* be tested that way are the parts where a silent regression costs the most, which is what
+the harness below is for.
+
+### The Accessibility harness
+
+Nine more tests that use real windows, the real Accessibility API and the real window server, and
+**are skipped unless asked for**:
+
+```sh
+CMDTAB_AX_HARNESS=1 swift test --filter AccessibilityHarnessTests
+```
+
+They cover the layer the pure suite cannot reach, and it is the layer where being wrong is most
+expensive. `WindowClassification` encodes a subrole table Apple has never documented and that has
+already changed under this app once — the `AXDialog` trap, and Finder on top of it — and the table in
+this README was established by hand, against TextEdit, on one OS version. The harness re-derives it
+on whatever macOS is running: it opens a window, minimizes it, and asserts the subrole flips
+`AXStandardWindow` → `AXDialog` and back while the window stays switchable. `WindowTiler` writes
+frames through an API whose hosts clamp and round them, so a computed frame is checked by writing it
+to a real window and reading it back — the halves, maximize, a gap, restore, and a one-edge resize
+with the other three edges asserted unmoved. `WindowNavigator.onScreen()` is checked to actually find
+three real windows, in the coordinate space `WindowNeighbors.pick` assumes.
+
+A macOS point release can break any of that without a single other test going red; the symptom would
+be a user reporting that half their windows had vanished from the switcher.
+
+Two guards, because it needs the Accessibility grant and it puts windows on someone's screen: the
+environment variable, and `AXIsProcessTrusted()`. It says which one is missing rather than failing.
+The grant is on the binary that runs the tests, so the first run prompts and the run after it
+measures something — which is why this is opt-in rather than part of the suite. The value is in
+running it deliberately against a new macOS, not a hundred times a day.
+
+One thing about it is worth writing down, because it cost an hour and looks exactly like a
+permissions problem no amount of granting fixes: **an XCTest bundle has to call
+`NSApplication.finishLaunching()` before any of this works.** AppKit installs its Accessibility
+server as part of launching and XCTest never calls `NSApplication.run()`, so without that line every
+`AXWindows` read against our own pid returns `kAXErrorNotImplemented` (-25208). Measured with an
+identical probe one line apart: -25208 and zero windows against 0 and one window.
 
 **`release.yml`** — on a `v*` tag. Imports the Developer ID certificate into a throwaway keychain,
 imports the Sparkle key and checks it against `SUPublicEDKey`, stores notarisation credentials, runs
@@ -299,9 +358,13 @@ you are looking at, which is why they are not on the Shortcuts tab with the swit
 | Thirds (rows) | Top and bottom — full width, a third of the height. Unbound: pressing ⌃⌘↑ three times already lands there, so these are for anyone who wants one press and a fixed destination rather than a position in the width cycle. | Unbound |
 | Two-thirds | Left and right — the ⅔ half of a ⅔/⅓ pair. Unbound for the same reason: ⌃⌘← twice is the same tile. | Unbound |
 | Make larger / smaller | Grows or shrinks the window by a twentieth of the *screen* a press, anchored on the window's own centre so a press of each returns it to where it started. Measured against the screen rather than the window, so the step is the same size whatever it is aimed at; clamped to the display, and with a floor so repeated shrinking cannot end at a window too small to grab. | ⌃⌘ = − |
+| Grow / shrink an edge | Eight rows: move one edge outward or inward by the same twentieth of the screen, with the other three pinned. The difference from *Make larger* is the whole point — that one moves all four edges around the centre and keeps the window where it is, these change one boundary and leave the rest alone, which is what tuning a tile against its neighbour actually needs. A window snapped to the left half can have its right edge pushed out over the gap without its left edge leaving the screen edge it was snapped to. Growing stops at the display and shrinking stops at a window you can still grab; at either limit the press writes nothing at all rather than producing a sliver. | Unbound |
+| Maximize height / width | Fills the screen in one axis and leaves the other exactly as it was. Pressing one and then the other is *Maximize*, precisely — the preserved axis is copied from the window rather than recomputed, which is what makes the pair compose. Neither takes a gap: the axis they promise not to touch is one the user positioned, and `TilingGap` insets all four edges. | Unbound |
+| Almost maximize | Nine tenths of the usable area, centred — the size for one window you are working in without losing the fact that there is a desktop behind it. No gap either, and for the opposite reason: its margin *is* the point, so insetting a frame that has already been inset would make the gap setting mean two different things depending on which key produced the window. | Unbound |
 | Nudge | Moves the window without resizing it, a twentieth of the screen a press. Stops at the screen edge rather than walking the window off it — a chord pressed repeatedly and without looking must not be able to lose one. | Unbound |
 | Swap | Exchanges the focused window's frame with the window in that direction. The two take each other's exact frames — no gap, no fraction — so the inverse is the same chord the other way. Gated on the tiling switch, unlike Focus below: a swap moves two windows, which is a layout change however you describe it. | Unbound |
 | Move to previous / next display | Keeps the window's size and its relative position on the new display. ⇧ on the halves' own arrows: same key, "throw it further". Fires whether or not tiling is on. | ⌃⇧⌘ ← → |
+| Move to display 1 … 4 | Names the destination instead of counting to it. On two displays "next display" is exact; on three it is two presses and a guess about which way round they are, and guessing wrong puts the window on the far screen. These land on the same display every time, wherever the window starts. The numbers are the ones on the window tiles' own **display badges** — both count `NSScreen.screens`, so the number here, the number on the badge and the display it lands on are one number rather than three that happen to agree. Rows appear only for displays you actually have: four cases exist because the raw values are a fixed URL grammar, and a row captioned "Move to display 3" on a laptop is a control that cannot do anything. Ungoverned by the tiling switch, like the two relative moves. | Unbound |
 | Take the pointer along | Warp the cursor onto the window after a display move, so the next click and the next hover are where you are looking. Off by default — every display is on screen at once, so the move is already visible wherever the pointer is, and moving someone's pointer is a liberty worth asking for. (Following a *Desktop* move defaults to **on**, and the difference is not inconsistency: without it you are left looking at the space the window has just left.) | Off |
 | Restore the layout when displays change | Remembers where every window sat under each set of monitors and puts them back when that set returns — the undo macOS has never had for undocking. See [Restoring a layout across a display change](#restoring-a-layout-across-a-display-change). | Off |
 | Focus left / right / up / down | Moves the **keyboard** to the nearest window in that direction. The other half of tiling, which could always place windows and never let you walk between them. Live whether or not tiling is on, since focus resizes nothing. Unbound by default: ⌃⌘, ⌃⇧⌘ and ⌃⌥⌘ arrows are all spoken for, and the only combination left is the four-modifier ⌃⌥⇧⌘. | Unbound |
@@ -351,7 +414,7 @@ window through every width.
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| Switch between | **Applications** — one tile per running app, the way ⌘-Tab has always worked — or **Windows**, one tile per open window across every app, each carrying its own title. Window tiles get a smaller icon to pay for the title, and in window mode *Hide apps with no windows* and *Preview windows on hover* are both moot and disabled. Persists as `switcherMode`. | Applications |
+| Switch between | **Applications** — one tile per running app, the way ⌘-Tab has always worked — or **Windows**, one tile per open window across every app, each carrying its own title. Window tiles get a smaller icon to pay for the title, and in window mode *Hide apps with no windows* and *Preview windows* are both moot and disabled. Persists as `switcherMode`. | Applications |
 | Show delay | How long to wait before drawing the panel, so a quick tap switches with no flash. | 0 ms |
 | Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
@@ -360,7 +423,7 @@ window through every width.
 | Hide apps with no windows | An app whose windows are all minimized counts as empty. | Off |
 | Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
 | Show on | Which displays get a panel. | Automatic |
-| Preview windows on hover | See [Window preview on hover](#window-preview-on-hover). | Off |
+| Preview windows | See [Window preview](#window-preview). | Off |
 
 Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `sortOrder`, `stickyMode`,
 `showDelayMs`, `hideEmptyApps`, `panelPosition`, `panelScreens`).
@@ -516,11 +579,22 @@ Ties resolve to whichever is nearer the front, since the window list arrives in 
 
 **Swap** uses the same neighbour rule and exchanges the two frames verbatim.
 
-### Window preview on hover
+### Window preview
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| Preview windows on hover | App mode only: pausing over a tile floats live thumbnails of that app's windows beside it. Persists as `windowPreviewOnHover`. | Off |
+| Preview windows | App mode only: pausing on a tile — with the pointer *or* with the keyboard — floats live thumbnails of that app's windows beside it. Persists as `windowPreviewOnHover`, which still says "on hover": the setting has since grown to cover the keyboard, and renaming a defaults key turns everyone's preference back off on the update that renames it. | Off |
+
+**It follows the selection, not only the cursor.** For a long time this was a mouse feature in a
+switcher whose whole premise is that your hands are on the keyboard: cycling with ⌘-Tab showed you
+icons, and the only way to see what was actually inside an app was to let go and reach for the mouse.
+Pausing on a tile now floats the strip whichever way you got there.
+
+Both paths share one debounce, and that is what keeps it cheap: a tap of ⌘-Tab is over long before
+the 0.28s elapses, so the common gesture captures nothing at all, and cycling quickly through ten
+tiles fires one capture — for the tile you stopped on — rather than ten. The last input wins where
+the two disagree, with one exception: while the cursor is *on* the strip you are picking a window out
+of it, so the keyboard does not re-point the strip out from under your hand.
 
 This is the one feature that uses Screen Recording. Thumbnails are captured with ScreenCaptureKit
 into a second non-activating panel that never takes the mouse or keyboard, so the tile behind it —
@@ -551,13 +625,13 @@ fifth — five identical Chrome icons distinguished only by a truncated title is
 for. The icon stays, inset in the corner: a thumbnail alone loses the app identity the icon carried
 for free.
 
-**Off by default**, for the same reason the hover preview is. Capture needs Screen Recording, and
+**Off by default**, for the same reason the window preview is. Capture needs Screen Recording, and
 this app's permission story is that it needs Accessibility and nothing else; leaving this off keeps
 that true. Turning it on flips Screen Recording from optional to required for the mode you are using
 — a real cost, and the user's call.
 
-It is a separate object from the hover preview (`TileThumbnails` vs `WindowCapture`) because it is a
-different problem. The hover preview captures *one app's* windows on a deliberate pause, debounced
+It is a separate object from the window preview (`TileThumbnails` vs `WindowCapture`) because it is a
+different problem. That one captures *one app's* windows on a deliberate pause, debounced
 and cancelled on movement. This captures *every* tile the moment the panel opens, so the flow is
 inverted: **nothing waits**. The panel draws icons immediately and each tile swaps to its capture
 when that capture lands, in batches of four so a thirty-window list does not start thirty
@@ -569,7 +643,7 @@ after the panel opens does not re-capture what is already on screen. They are dr
 session ends — a thumbnail is a photograph of a moment, and showing the next session what the last
 one looked like is worse than showing it an icon. Minimized windows keep their icon: they have no
 live surface, so they capture blank. So do the Electron and Catalyst phantom backing windows, caught
-by the same downsampled-alpha check the hover preview uses.
+by the same downsampled-alpha check the window preview uses.
 
 ### Apps
 
@@ -670,6 +744,9 @@ and a line of `open` can reach the whole feature set **without spending a hotkey
 open 'cmdtab://tile/leftHalf'          # any WindowArrangement, by its stored name
 open 'cmdtab://tile/focusRight'        # including the families that ship unbound
 open 'cmdtab://tile/nudgeUp'
+open 'cmdtab://tile/growRight'         # one edge, the other three pinned
+open 'cmdtab://tile/almostMaximize'
+open 'cmdtab://tile/display2'          # by name, not by counting
 open 'cmdtab://activate/com.apple.Safari'
 open 'cmdtab://windows/hideAll'        # or showAll
 ```
@@ -825,7 +902,7 @@ after that. Remove the identity in Keychain Access to undo it.
   case falls back to Accessibility z-order until the next activation catches up. Cross-app ordering
   is full MRU, tracked from activation notifications.
 - Windows on other Spaces are listed, and switching to one follows macOS's normal Space-switch
-  behavior. The hover preview shows them too — only *minimized* windows can't be previewed, since
+  behavior. The window preview shows them too — only *minimized* windows can't be previewed, since
   they have no live surface to capture.
 - Moving a window to another **desktop** (Space) works, but not through any API — it is the one
   feature here that drives the interface rather than calling into it, so it is **off by default**
@@ -842,12 +919,17 @@ after that. Remove the identity in Keychain Access to undo it.
   checked with those hotkeys verified enabled), a drag paired with `SpaceMover`'s private Space
   switch (the display switches, the window stays — the carry needs a real transition), and dragging
   to the screen edge and holding (macOS does no edge-switching for window drags). What is left is
-  the gesture a person performs, which is what `DesktopMover` does. With more than one display it
-  assumes they are laid out **side by side**: Mission Control draws a Spaces Bar per display, and
-  both the thumbnail and the bar it belongs to are picked by horizontal position, so two displays
-  stacked vertically can pair a correct x with the wrong bar. Stated rather than fixed, because the
-  fix cannot be written blind — the elements report a y outside the group they sit in, so the
-  obvious containment test may reject every candidate, and this was developed on one display. Moving to another **display** is
+  the gesture a person performs, which is what `DesktopMover` does. It no longer assumes the displays
+  are laid out **side by side**, which it used to: Mission Control draws a Spaces Bar per display,
+  and picking both the bar and the thumbnail by horizontal position paired a correct x with the wrong
+  bar whenever two displays shared an x range — which is every vertically stacked desk. The fix turns
+  on a distinction the old note had already half-found. A Desktop **button** reports a y outside the
+  group it sits in, so containment genuinely cannot be used on one; a Spaces **Bar** is a group, and
+  a group reports its own rectangle. So the bar is picked by containment, and the buttons are then
+  scoped to the bar that was picked rather than both being guessed from x. Each selection falls back
+  down a chain — bar, then display x, then everything — because a wrong bar is a move to the wrong
+  Desktop where no bar is a window that does not move at all. Both are pure functions now, with
+  `DesktopMoverLayoutTests` covering side-by-side, stacked, offset and single-display desks. Moving to another **display** is
   a different thing entirely: ⌃⇧⌘-←/→, plain Accessibility geometry, instant, and on whether or not
   tiling is.
 - **Moving focus by direction only reaches windows that are on screen.** It is built on the window
@@ -863,7 +945,7 @@ after that. Remove the identity in Keychain Access to undo it.
 - **Focus follows the pointer raises the window it focuses.** macOS treats the two as one action for
   another app's window, so the X11 "focus without raise" is not on offer here rather than being an
   omission. The rest delay is what keeps it from firing on windows the pointer merely crosses.
-- Live window thumbnails are optional in both modes and off by default: the hover preview in app
+- Live window thumbnails are optional in both modes and off by default: the window preview in app
   mode, and **Thumbnail tiles** in window mode. Without either, tiles are app icons and Screen
   Recording is never touched.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
@@ -901,6 +983,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
 | `WindowTiling.swift` | Tiling geometry, the binding store, and the Accessibility frame writer |
 | `WindowNavigation.swift` | Which window lies in a direction from another — pure, and tested — and the focus and swap chords built on it |
+| `PowerState.swift` | Whether to poll sparingly, and by how much — see [Two timers](#two-timers-and-what-they-cost-on-battery) |
 | `DisplayLayouts.swift` | The window layout under each set of displays, and putting it back when one returns |
 | `FocusFollowsMouse.swift` | Focus the window the pointer comes to rest over |
 | `URLCommands.swift` | The `cmdtab://` grammar, and what is deliberately outside it |
@@ -959,6 +1042,29 @@ see a guarantee that genuinely holds. Each carries its reasoning at the declarat
 | `Permissions.waitForTrust`'s timer | `Timer` is not `Sendable` and its callback is nonisolated | One reference, written once before the timer can fire and read only from the run loop it is scheduled on. |
 | `SystemSwitcher.isNativeDisabled`, `SwitchTarget.focusGeneration`, the two `dlopen` handles | Nonisolated global mutable state | The `dlopen` handles are `let`s initialised once by the runtime's thread-safe lazy-static machinery. `focusGeneration` is touched only from the serial `focusQueue`. `isNativeDisabled` is a `Bool`, which cannot tear, and a redundant restore is a no-op. |
 
+### Two timers, and what they cost on battery
+
+Almost everything here is driven by a notification. Two things are not, because there is no
+notification in front of them: Accessibility being **revoked** (`AppDelegate.watchForRevokedTrust`),
+and the window layout worth putting back after a **display change** (`DisplayLayouts`, whose reason
+is spelt out under [Restoring a layout](#restoring-a-layout-across-a-display-change)). Both poll at
+five seconds. The trust watch is the more expensive of the two by a distance, because it is the one
+timer that runs for the whole life of a *healthy* process — including on a laptop sitting in a bag.
+
+Neither is watching for something that happens quickly. Nobody revokes Accessibility in a hurry, and
+a layout worth remembering is one that has been sat in for a while. So on battery — or in Low Power
+Mode on any power source, which is the user asking every process to do less — both stretch to thirty
+seconds (`PowerState`), and both carry a tolerance so the run loop can batch the wakeup with whatever
+else it has to do rather than waking the CPU on its own schedule. The only thing that costs is how
+stale an answer may be at the moment it matters: half a minute rather than five seconds, on a
+question whose answer changes a few times a year.
+
+The state is re-read on the tick and the timer re-armed if it changed, rather than subscribing to a
+power notification — one comparison against a cached flag, on a timer that has just woken the process
+anyway, against a run-loop source and its teardown for a transition that happens a few times a day.
+Deliberately not a setting: how often a background timer should fire is not a question anyone can
+answer about software they did not write.
+
 `nonisolated static` on every helper in `TargetProvider` is not an escape hatch but the opposite:
 without it, `@MainActor` on the class would drag the Accessibility walk onto the thread the whole
 design exists to keep it off. `MainActor.assumeIsolated` appears at each point where a
@@ -977,19 +1083,56 @@ someone adds. Sliders announce their formatted value rather than a percentage (s
 pixel sizes), and the sidebar tabs and the card-shaped radio buttons carry `.isSelected`, which is
 otherwise conveyed only by a background tint or a filled-in circle.
 
-The switcher panel is a harder case and is honestly only half-solved. It is a `.nonactivatingPanel`
-that never becomes key and has no key handling of its own — the event tap is the only input path,
-which is what makes the switcher work at all — so driving it the way an assistive technology drives
-an ordinary window is not something it can offer. What it does now is stop the tiles being
-anonymous: each announces its title, app name, minimized/hidden/not-running state, notification
-count, display and Desktop, and the digit that jumps to it. All of that was previously carried by a
-dimmed icon, a badge glyph and a small corner number, and none of it was in any text.
+The switcher panel is a harder case. It is a `.nonactivatingPanel` that never becomes key and has no
+key handling of its own — the event tap is the only input path, which is what makes the switcher work
+at all — so driving it the way an assistive technology drives an ordinary window is not something it
+can offer. The first half of the answer was to stop the tiles being anonymous: each announces its
+title, app name, minimized/hidden/not-running state, notification count, display and Desktop, and the
+digit that jumps to it, all of which was previously carried by a dimmed icon, a badge glyph and a
+small corner number and none of which was in any text.
+
+That half was necessary and, on its own, useless. **Labels on a panel nothing can focus are labels
+nobody ever hears.** VoiceOver reads a tile when it is explored, and there is nothing here to explore
+with — so the actual experience of holding ⌘ and cycling was a switcher that said nothing at all, in
+a session where the user cannot see which tile is highlighted and the keys are being swallowed
+machine-wide. The panel now **announces the highlighted tile** as the selection moves, using the same
+sentence the tile carries (`TileDescription.text`, one function so the two cannot drift). Announced
+rather than focused, because taking focus is the one thing this panel must never do; posted at high
+priority so a fast cycle is not coalesced away, since the last press is the one whose answer matters.
+
+It costs nothing when VoiceOver is off, which is nearly always: one cached `Bool` read before any
+string is built. Suppressed when the highlight has not actually moved — a background refresh can fold
+a new app into the list and shift every index below it — so it is keyed on the target rather than the
+index, and a ⌘-Tab that lands somewhere new always speaks, including the first tile of a session.
 
 ### Localization
 
-Every string in the settings window is localizable. Nothing visibly changes — English is the base
-language and each entry currently translates to itself — but the infrastructure is there and adding
-a language is now filling in `Sources/CmdTab/Resources/Localizable.xcstrings`.
+Every string in the settings window is localizable, and the app ships in **English and French**.
+
+The French translation is the first thing that has ever exercised any of this. A catalogue with one
+language in it is a catalogue where every check is a check that a string equals itself: the lookup
+path, the compile step, the bundle layout and the fallback behaviour were all *written* and none of
+them had ever resolved a key to anything but the English it started as. Adding a second language is
+what turns the infrastructure from plausible into tested, and it found two real faults on the way in.
+
+**The catalogue was missing a third of the interface.** 88 strings were absent, and the pattern
+behind them is worth naming: the entire Windows tab is built by mapping over `WindowArrangement`, so
+its row titles never appear as literals at a call site the way every other title does — "Left half"
+and "Maximize" were untranslatable while the sentence explaining them three lines below was fine. In
+English that is invisible, because a missing key renders as the key and the keys *are* the English
+text. `StringCatalogTests` now asserts every enum-derived row title against the live enums, so adding
+an arrangement or an in-switcher action fails the suite until its name is translatable, and asserts
+that every entry is translated into every language the catalogue claims — with a short list of the
+words that are genuinely identical in both (`Diagnostics`, `Position`, `Session`, `Version`) rather
+than a rule that would wave through exactly the strings most likely to have been forgotten.
+
+**CI checked the wrong half.** It verified that `en.lproj` reached the bundle, which proves nothing:
+English renders correctly when the catalogue never reached the bundle at all. It now checks
+`fr.lproj` too, which is the only version of that check that can fail.
+
+Adding a third language is filling in a column of
+`Sources/CmdTab/Resources/Localizable.xcstrings` — the tests say what "complete" means, and
+`build.sh` compiles every locale it finds.
 
 The obvious way to localize SwiftUI is to type the view parameters `LocalizedStringKey`, which makes
 string literals at the call sites localizable for free. **It does not work for this codebase.** The

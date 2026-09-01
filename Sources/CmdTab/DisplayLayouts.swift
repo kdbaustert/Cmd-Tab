@@ -63,6 +63,9 @@ final class DisplayLayouts {
     private var latestDesk: String?
 
     private var timer: Timer?
+    /// The power state the running timer was armed for, so a change of it can be noticed on the
+    /// tick. See `scheduleCapture`.
+    private var conserving = false
     private var observer: NSObjectProtocol?
     private var settle: DispatchWorkItem?
 
@@ -91,10 +94,7 @@ final class DisplayLayouts {
     private func start() {
         latestDesk = Self.signature()
         capture()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.captureInterval, repeats: true) {
-            [weak self] _ in
-            MainActor.assumeIsolated { self?.capture() }
-        }
+        scheduleCapture()
         observer = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -117,6 +117,31 @@ final class DisplayLayouts {
         deskOrder.removeAll()
         latest.removeAll()
         latestDesk = nil
+    }
+
+    /// Arms the capture timer at whatever interval the current power source deserves.
+    ///
+    /// Rebuilt rather than left running when that changes, because the whole point is the *rate*:
+    /// a timer armed at five seconds on AC keeps firing every five seconds after the cable comes
+    /// out. Checked on the tick rather than subscribed to a power notification — one comparison
+    /// against a cached flag, on a timer that has just woken the process anyway, against a run-loop
+    /// source and its teardown for a transition that happens a few times a day.
+    private func scheduleCapture() {
+        timer?.invalidate()
+        conserving = PowerState.isConserving
+        let interval = PowerState.interval(Self.captureInterval, conserving: conserving)
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.capture()
+                // The cable came out, or went back in. Re-arm at the other rate.
+                if PowerState.isConserving != self.conserving { self.scheduleCapture() }
+            }
+        }
+        // Nothing here needs to land on time — it samples a layout rather than driving anything —
+        // so let the run loop batch the wakeup with whatever else it has to do. That is most of the
+        // saving on battery, where the alternative is waking the CPU on its own schedule.
+        timer?.tolerance = interval / 4
     }
 
     /// Reads where every window currently is, in fractions of the display it is on.

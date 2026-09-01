@@ -100,6 +100,116 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertNil(frame(.restore))
     }
 
+    /// Full height at the width the window already had, and the mirror of it. The preserved axis is
+    /// copied from the window rather than recomputed, which is what makes the pair compose.
+    func testTheHalfMaximizesKeepTheOtherAxisExactly() {
+        let tall = frame(.maximizeHeight)
+        XCTAssertEqual(tall?.minX, window.minX)
+        XCTAssertEqual(tall?.width, window.width)
+        XCTAssertEqual(tall?.minY, area.minY)
+        XCTAssertEqual(tall?.height, area.height)
+
+        let wide = frame(.maximizeWidth)
+        XCTAssertEqual(wide?.minY, window.minY)
+        XCTAssertEqual(wide?.height, window.height)
+        XCTAssertEqual(wide?.minX, area.minX)
+        XCTAssertEqual(wide?.width, area.width)
+    }
+
+    /// Pressing one then the other is `maximize`, exactly. The second press sees the first's output
+    /// as its `current`, which is the only way the two can compose without a special case.
+    func testHeightThenWidthIsMaximize() {
+        let tall = try? XCTUnwrap(frame(.maximizeHeight))
+        let both = WindowArrangement.maximizeWidth.frame(
+            in: area, current: tall ?? .zero, fraction: 0.5)
+        XCTAssertEqual(both, area)
+    }
+
+    /// Nine tenths of the usable area, centred — so the margin is equal on all four sides and the
+    /// screen stays visible around it.
+    func testAlmostMaximizeLeavesAnEqualMarginOnEverySide() {
+        let almost = try? XCTUnwrap(frame(.almostMaximize))
+        XCTAssertEqual(almost?.width ?? 0, area.width * 0.9, accuracy: 0.001)
+        XCTAssertEqual(almost?.height ?? 0, area.height * 0.9, accuracy: 0.001)
+        XCTAssertEqual(almost?.midX ?? 0, area.midX, accuracy: 0.001)
+        XCTAssertEqual(almost?.midY ?? 0, area.midY, accuracy: 0.001)
+        // Equal margins, which is the claim the centring is making.
+        XCTAssertEqual(
+            (almost?.minX ?? 0) - area.minX, area.maxX - (almost?.maxX ?? 0), accuracy: 0.001)
+        XCTAssertEqual(
+            (almost?.minY ?? 0) - area.minY, area.maxY - (almost?.maxY ?? 0), accuracy: 0.001)
+    }
+
+    // MARK: - Per-edge resize
+
+    /// Each of the eight moves exactly one edge and leaves the other three where they were. This is
+    /// the whole difference from `larger`/`smaller`, which move all four around the centre.
+    func testEachEdgeResizeMovesOnlyItsOwnEdge() throws {
+        let unchanged: [WindowArrangement: [KeyPath<CGRect, CGFloat>]] = [
+            .growLeft: [\.maxX, \.minY, \.maxY], .shrinkLeft: [\.maxX, \.minY, \.maxY],
+            .growRight: [\.minX, \.minY, \.maxY], .shrinkRight: [\.minX, \.minY, \.maxY],
+            .growUp: [\.minX, \.maxX, \.maxY], .shrinkUp: [\.minX, \.maxX, \.maxY],
+            .growDown: [\.minX, \.maxX, \.minY], .shrinkDown: [\.minX, \.maxX, \.minY],
+        ]
+        for arrangement in WindowArrangement.edgeResizes {
+            let result = try XCTUnwrap(frame(arrangement), "\(arrangement.rawValue)")
+            for edge in try XCTUnwrap(unchanged[arrangement]) {
+                XCTAssertEqual(
+                    result[keyPath: edge], window[keyPath: edge], accuracy: 0.001,
+                    "\(arrangement.rawValue) moved an edge it should not have")
+            }
+        }
+    }
+
+    /// Grow widens, shrink narrows, and one of each returns the window to where it started — the
+    /// same round-trip promise `larger`/`smaller` make, one edge at a time.
+    func testGrowAndShrinkOfTheSameEdgeCancelOut() throws {
+        for (grow, shrink) in [
+            (WindowArrangement.growLeft, WindowArrangement.shrinkLeft),
+            (.growRight, .shrinkRight), (.growUp, .shrinkUp), (.growDown, .shrinkDown),
+        ] {
+            let grown = try XCTUnwrap(grow.frame(in: area, current: window, fraction: 0.5))
+            XCTAssertGreaterThan(
+                grown.width * grown.height, window.width * window.height,
+                "\(grow.rawValue) should enlarge")
+            let back = try XCTUnwrap(shrink.frame(in: area, current: grown, fraction: 0.5))
+            XCTAssertEqual(back.minX, window.minX, accuracy: 0.001)
+            XCTAssertEqual(back.minY, window.minY, accuracy: 0.001)
+            XCTAssertEqual(back.width, window.width, accuracy: 0.001)
+            XCTAssertEqual(back.height, window.height, accuracy: 0.001)
+        }
+    }
+
+    /// A held-down grow stops at the screen rather than walking the window off it, and stops
+    /// writing at all once it is there — nil, so `apply` skips the Accessibility round-trip.
+    func testGrowingStopsAtTheScreenEdgeAndThenDoesNothing() throws {
+        var current = window
+        for _ in 0..<40 {
+            guard let next = WindowArrangement.growLeft.frame(
+                in: area, current: current, fraction: 0.5)
+            else { break }
+            current = next
+        }
+        XCTAssertEqual(current.minX, area.minX, accuracy: 0.001)
+        XCTAssertEqual(current.maxX, window.maxX, accuracy: 0.001)
+        XCTAssertNil(
+            WindowArrangement.growLeft.frame(in: area, current: current, fraction: 0.5),
+            "an edge already against the screen should write nothing")
+    }
+
+    /// A held-down shrink stops at a window that can still be grabbed rather than at a sliver.
+    func testShrinkingStopsAtTheMinimumRatherThanVanishing() {
+        var current = window
+        for _ in 0..<60 {
+            guard let next = WindowArrangement.shrinkRight.frame(
+                in: area, current: current, fraction: 0.5)
+            else { break }
+            current = next
+        }
+        XCTAssertGreaterThanOrEqual(current.width, 120)
+        XCTAssertEqual(current.minX, window.minX, accuracy: 0.001)
+    }
+
     // MARK: - Gaps
 
     /// The whole gap against a screen edge, half of it at a seam — so two neighbours end up exactly
@@ -302,12 +412,40 @@ final class WindowTilingTests: XCTestCase {
         var tiling = WindowTilingBindings.defaults
         tiling.isEnabled = false
         tiling.desktopMoves = true
+        // The moves that ship with a chord. The four absolute display targets are moves too and
+        // ship unbound — see `testTheAbsoluteDisplayTargetsShipUnbound` — so asking them for a
+        // default here would be asserting against a nil nobody promised anything about.
         for arrangement in WindowArrangement.moves {
-            let chord = try XCTUnwrap(arrangement.defaultHotkey)
+            guard let chord = arrangement.defaultHotkey else { continue }
             XCTAssertEqual(
                 tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), arrangement,
                 "\(arrangement.rawValue) should fire with tiling off")
         }
+    }
+
+    /// The absolute display targets are ungated like every other move, and unbound like every other
+    /// family that has no key left to take.
+    ///
+    /// Both halves matter. Ungated, because a move changes no layout and the tiling switch is about
+    /// layout; unbound, because how many of the four *mean* anything depends on how many displays
+    /// are plugged in, and claiming four chords for rows that are mostly inert on a laptop is the
+    /// guess this app declines to make everywhere else.
+    func testTheAbsoluteDisplayTargetsShipUnbound() {
+        XCTAssertEqual(WindowArrangement.displayTargets.count, 4)
+        for (index, arrangement) in WindowArrangement.displayTargets.enumerated() {
+            XCTAssertEqual(arrangement.displayIndex, index)
+            XCTAssertNil(arrangement.defaultHotkey, "\(arrangement.rawValue) should ship unbound")
+            XCTAssertTrue(arrangement.isMove)
+            XCTAssertTrue(arrangement.isUngated)
+            XCTAssertTrue(arrangement.movesAcrossDisplays)
+            // No frame of its own: the destination is another display's area, which `apply`
+            // substitutes. Answering with a rectangle on *this* screen would tile rather than move.
+            XCTAssertNil(arrangement.frame(in: area, current: window, fraction: 0.5))
+        }
+        // The relative pair moves across displays too, and nothing else does.
+        XCTAssertEqual(
+            Set(WindowArrangement.allCases.filter(\.movesAcrossDisplays)),
+            Set(WindowArrangement.displayTargets + [.previousDisplay, .nextDisplay]))
     }
 
     /// A cleared move is still cleared: ungating them is not a licence to revive a binding the user
@@ -423,7 +561,10 @@ final class WindowTilingTests: XCTestCase {
     /// The four move chords have to be four distinct combinations, or one of them silently shadows
     /// another — the arrows are shared and only the modifiers tell them apart.
     func testTheMoveChordsDoNotCollide() throws {
-        let moves = WindowArrangement.moves
+        // The bound ones. Two unbound arrangements both have a nil default, which is not a
+        // collision — it is two rows waiting for a chord.
+        let moves = WindowArrangement.moves.filter { $0.defaultHotkey != nil }
+        XCTAssertEqual(moves.count, 4)
         for (index, arrangement) in moves.enumerated() {
             for other in moves[moves.index(after: index)...] {
                 XCTAssertNotEqual(
@@ -431,7 +572,7 @@ final class WindowTilingTests: XCTestCase {
                     "\(arrangement.rawValue) and \(other.rawValue) share a default chord")
             }
         }
-        for arrangement in WindowArrangement.moves {
+        for arrangement in moves {
             XCTAssertTrue(
                 try XCTUnwrap(arrangement.defaultHotkey).isUsableGlobally,
                 "\(arrangement.rawValue) needs a globally usable default")
@@ -453,7 +594,9 @@ final class WindowTilingTests: XCTestCase {
             Set(WindowArrangement.ungated).isDisjoint(with: WindowArrangement.tilingArrangements))
         XCTAssertEqual(
             Set(WindowArrangement.moves),
-            Set([.previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop]))
+            Set(
+                [.previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop]
+                    + WindowArrangement.displayTargets))
         XCTAssertEqual(
             Set(WindowArrangement.ungated),
             Set(WindowArrangement.moves).union(WindowArrangement.focusMoves))
