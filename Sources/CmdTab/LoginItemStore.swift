@@ -71,7 +71,11 @@ final class LoginItemStore: ObservableObject {
                     try SMAppService.mainApp.register()
                 }
             } else {
-                if SMAppService.mainApp.status == .enabled {
+                // `isOn`, not `== .enabled`: the toggle reads on for `.requiresApproval` too, and
+                // that is a registration `unregister` can withdraw. Testing only `.enabled` left it
+                // stuck — nothing was called, `sync()` read the same status back, and the switch
+                // snapped on with no error to explain why.
+                if Self.isOn(SMAppService.mainApp.status) {
                     try SMAppService.mainApp.unregister()
                 }
             }

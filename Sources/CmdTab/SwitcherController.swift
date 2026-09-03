@@ -87,6 +87,11 @@ final class SwitcherController {
     private var armWorkItem: DispatchWorkItem?
     /// Modifiers of whichever hotkey opened the current session; releasing them ends it.
     private var activeHeld: CGEventFlags = [.maskCommand] { didSet { publishTapState() } }
+    /// The key that opened the session, which is the key that cycles it. `hotkey.keyCode` for the
+    /// main trigger; the same-app and scoped chords each have their own, and a second press of one
+    /// of those used to be swallowed with nothing to show for it — the chord that opened a list
+    /// could not move through it, where macOS's own ⌘-` can.
+    private var activeKeyCode = Key.tab
 
     // A same-app cycle whose window list is still being fetched. The list can't be built on the tap
     // callback (per-window Accessibility walk), so the trigger is swallowed before there is anything
@@ -714,7 +719,11 @@ final class SwitcherController {
         // Armed: a trigger press is waiting out the show-delay. A second press shows immediately.
         if armed {
             if type == .keyUp { return true }
-            if !stillHeld(flags, activeHeld) { releaseTrigger(); return true }
+            // The same sticky guard `flagsChanged` carries: a stay-open session does not end on
+            // release. Without it, a key landing inside the show delay after ⌘ was let go — a
+            // release `flagsChanged` had rightly ignored — quick-switched to the previous app
+            // instead of showing the panel.
+            if !staysOpenOnRelease, !stillHeld(flags, activeHeld) { releaseTrigger(); return true }
             showFromArm()
             // `advance` rather than a bare `layout()`: this runs on the tap callback, where a full
             // NSHostingView rebuild is the one thing that must not happen inline.
@@ -762,7 +771,7 @@ final class SwitcherController {
         case .openSameApp(let backwards):
             return openSameApp(backwards: backwards)
         case .openScoped(let scope, let held, let backwards):
-            return openScoped(scope, held: held, backwards: backwards)
+            return openScoped(scope, code: code, held: held, backwards: backwards)
         case .activate(let bundleID):
             GlobalActions.activate(bundleID: bundleID)
         case .allWindows(let action):
@@ -921,7 +930,8 @@ final class SwitcherController {
         // the chord is up — a stay-open session — it switches to whatever is highlighted, because
         // there is no longer a release to do that job. Deliberately *before* `endSteering`, so a Tab
         // out of a steered window strip still commits the window the strip has selected.
-        if code == hotkey.keyCode {
+        // Or the chord that opened a narrowed session — see `activeKeyCode`.
+        if code == hotkey.keyCode || code == activeKeyCode {
             // Only the real Tab key may become the go key, and only on a fresh press.
             //
             // A trigger bound to a printable key is legal (`HotkeyRecorder` takes any key with
@@ -1071,7 +1081,8 @@ final class SwitcherController {
         // the id rather than the name because the two names come from different sources
         // (`FileManager.displayName` for the tile, `CFBundleDisplayName` for the catalogue), which
         // is precisely what lets a query hit one and miss the other.
-        let alreadyTiled = Set(model.targets.map(\.id))
+        // Against the provider's tiles, not `model.targets` — see `providerTargetIDs`.
+        let alreadyTiled = model.providerTargetIDs
         let suggestions = InstalledApps.matches(query, excluding: excluded)
             .filter { !alreadyTiled.contains("launch:\($0.bundleID)") }
             .map { entry -> SwitchTarget in
@@ -1220,6 +1231,7 @@ final class SwitcherController {
         }
         beginSession()
         activeHeld = hotkey.heldModifiers
+        activeKeyCode = hotkey.keyCode
         isSticky = stickyMode
         if case .arm(let watchdog) = plan {
             armed = true
@@ -1249,6 +1261,7 @@ final class SwitcherController {
         else { return true }
         let token = beginSession()
         activeHeld = sameAppHotkey?.heldModifiers ?? [.maskCommand]
+        activeKeyCode = sameAppHotkey?.keyCode ?? hotkey.keyCode
         // Never inherits stickiness from the main trigger's setting — this hotkey was not the one
         // the user asked to stay open.
         isSticky = false
@@ -1318,11 +1331,14 @@ final class SwitcherController {
     /// routes through the existing front-app fetch rather than filtering the whole list: that walk
     /// touches one app instead of every running one, which is the difference between a few
     /// Accessibility round-trips and a few hundred.
-    private func openScoped(_ scope: SwitcherScope, held: CGEventFlags, backwards: Bool) -> Bool {
+    private func openScoped(
+        _ scope: SwitcherScope, code: Int, held: CGEventFlags, backwards: Bool
+    ) -> Bool {
         guard AsyncSession.canOpen(pendingSameApp: pendingSameApp, isVisible: isVisible, armed: armed)
         else { return true }
         let token = beginSession()
         activeHeld = held
+        activeKeyCode = code
         // Not inherited from the main trigger's setting: this chord is not the one the user asked to
         // stay open, the same reasoning `openSameApp` uses.
         isSticky = false
@@ -1512,6 +1528,11 @@ final class SwitcherController {
                 panel shown: \(self.panels.diagnostics, privacy: .public) \
                 targets=\(self.model.targets.count, privacy: .public)
                 """)
+            // Here as well as in `finishListMutation`: a narrowed session returns at the guard
+            // below, before the refresh that reaches `finishListMutation` — so the sessions that
+            // are window mode by definition, the same-app cycle and the scoped triggers, never
+            // asked for a thumbnail and drew icons for their whole life.
+            self.beginThumbnails()
 
             // Only the global session folds in a fresh list. `provider.refresh` rebuilds from
             // `provider.mode` over every switchable app and has no notion of the narrowing

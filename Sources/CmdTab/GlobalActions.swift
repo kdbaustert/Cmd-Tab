@@ -315,7 +315,10 @@ enum GlobalActions {
                     else { continue }
                     if app.hide() { hidden.append(id) }
                 }
-                hiddenByUs = hidden
+                // Only when something was hidden. A second press finds everything already hidden
+                // and used to overwrite the record with nothing, so the next "show all" took the
+                // unhide-everything fallback — including the apps the user had hidden themselves.
+                if !hidden.isEmpty { hiddenByUs = hidden }
             case .show:
                 // Restore what we hid; if that list is empty — a fresh launch, say — fall back to
                 // unhiding everything, which is what someone pressing "show all" plainly means.

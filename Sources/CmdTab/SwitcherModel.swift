@@ -126,6 +126,14 @@ final class SwitcherModel: ObservableObject {
     /// What the panel actually shows.
     private var composed: [SwitchTarget] { allTargets + suggestions }
 
+    /// The ids of the tiles the provider built — `targets` without the launch suggestions.
+    ///
+    /// For deduplicating a fresh set of suggestions. `targets` is the wrong list to check against:
+    /// it still carries the *previous* keystroke's suggestions, whose ids are exactly the ones a
+    /// suggestion for the same app builds again, so every app that stayed a match was filtered out
+    /// on alternate keystrokes.
+    var providerTargetIDs: Set<String> { Set(allTargets.map(\.id)) }
+
     /// Replaces the launch suggestions, keeping the current query and selection sensible.
     ///
     /// Cleared by `begin` and by any query change that finds matches, so a stale suggestion from a
