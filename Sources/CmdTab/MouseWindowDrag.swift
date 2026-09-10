@@ -779,10 +779,14 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// only thing saying so; `visibleDisplays()` reports both spaces from a single pass.
     @MainActor
     private func refreshDisplays() {
-        let snapshot = WindowTiler.visibleDisplays().map {
-            Display(frame: $0.frame, area: $0.area)
+        // Labelled: this runs on every screen-parameter notification, including the burst a wake
+        // posts, and `NSScreen` answers from the window server that is itself just coming back.
+        let (snapshot, height) = MainLoopMonitor.marking("display cache refresh") {
+            (
+                WindowTiler.visibleDisplays().map { Display(frame: $0.frame, area: $0.area) },
+                NSScreen.primary?.frame.height ?? 0
+            )
         }
-        let height = NSScreen.primary?.frame.height ?? 0
         lock.withLock {
             displays = snapshot
             primaryHeight = height

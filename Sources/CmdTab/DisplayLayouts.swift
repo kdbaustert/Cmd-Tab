@@ -146,8 +146,17 @@ final class DisplayLayouts {
 
     /// Reads where every window currently is, in fractions of the display it is on.
     private func capture() {
+        // Labelled because this is one of the two pieces of main-thread work that run while the
+        // app is otherwise idle — every five seconds, and first thing after a wake when the timer
+        // is overdue. A stall reported during "unlabelled work" with nothing else in the log was
+        // this or the trust poll, and the label is what tells them apart.
+        latest = MainLoopMonitor.marking("layout capture") { Self.snapshot() }
+    }
+
+    /// One photograph of the desk: every on-screen window's frame, as a fraction of its display.
+    private static func snapshot() -> [CGWindowID: StoredFrame] {
         let displays = WindowTiler.visibleDisplays()
-        guard !displays.isEmpty else { return }
+        guard !displays.isEmpty else { return [:] }
         let areas = displays.map(\.area)
         var out: [CGWindowID: StoredFrame] = [:]
         for window in WindowNavigator.onScreen() {
@@ -155,9 +164,9 @@ final class DisplayLayouts {
                 let id = displays[index].id
             else { continue }
             out[window.id] = StoredFrame(
-                display: id, fraction: Self.fraction(of: window.frame, in: areas[index]))
+                display: id, fraction: fraction(of: window.frame, in: areas[index]))
         }
-        latest = out
+        return out
     }
 
     /// A screen-parameters notification arrived. Only a change of *desk* is acted on.
@@ -168,7 +177,7 @@ final class DisplayLayouts {
     /// undo every window the user had moved since, which is the single worst thing this feature
     /// could do, so the guard is on the desk's identity and nothing else.
     private func deskMayHaveChanged() {
-        let now = Self.signature()
+        let now = MainLoopMonitor.marking("desk signature") { Self.signature() }
         guard now != latestDesk else { return }
         // The last capture was taken while the *old* desk was up, which is what makes it worth
         // keeping: it is the arrangement the user had before macOS rearranged it.
@@ -205,6 +214,10 @@ final class DisplayLayouts {
     /// Puts back what this desk looked like the last time it was up.
     private func restore(desk: String) {
         settle = nil
+        MainLoopMonitor.marking("layout restore") { restoreNow(desk: desk) }
+    }
+
+    private func restoreNow(desk: String) {
         // Re-read rather than trusting the signature from a second ago: a plug-in often posts
         // several notifications in a burst, and the one that scheduled this may not be the last.
         guard Self.signature() == desk else { return }

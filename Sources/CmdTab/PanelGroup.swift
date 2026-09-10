@@ -363,13 +363,16 @@ final class PanelGroup {
                 lastDesk: sessionDeskIDs, lastAim: sessionDisplayIDs)
         else { return }
 
-        let added = rebuildPanels()
-        added.forEach { $0.show() }
-        panels.forEach { $0.layout() }
-        // Paired with the layout, as everywhere else that relayouts: the strip is positioned from a
-        // panel rect captured at hover time, and moving the panel does not re-emit it — so without
-        // this it is left floating at coordinates the old desk had, detached from any tile.
-        refreshPreview()
+        MainLoopMonitor.marking("panel retarget") {
+            let added = rebuildPanels()
+            added.forEach { $0.show() }
+            panels.forEach { $0.layout() }
+            // Paired with the layout, as everywhere else that relayouts: the strip is positioned
+            // from a panel rect captured at hover time, and moving the panel does not re-emit it —
+            // so without this it is left floating at coordinates the old desk had, detached from
+            // any tile.
+            refreshPreview()
+        }
         // The badges are numbered against `NSScreen.screens` as it was when the targets were built,
         // and `TargetProvider` does not watch for screen changes.
         onDisplaysChanged?()

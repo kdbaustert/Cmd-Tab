@@ -262,7 +262,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.watchForRevokedTrust()
                     return
                 }
-                guard !Permissions.isTrusted else { return }
+                // Labelled for the same reason `DisplayLayouts.capture` is: this fires while the
+                // app is idle, and first thing after a wake, when the daemon answering
+                // `AXIsProcessTrusted` may itself still be coming back.
+                let trusted = MainLoopMonitor.marking("trust poll") { Permissions.isTrusted }
+                guard !trusted else { return }
                 Log.general.error("accessibility trust revoked; stopping until it is granted again")
                 self.trustWatch?.invalidate()
                 self.trustWatch = nil

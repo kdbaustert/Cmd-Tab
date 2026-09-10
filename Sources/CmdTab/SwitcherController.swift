@@ -1811,7 +1811,9 @@ final class SwitcherController {
             return
         }
         model.selection = index
-        Log.tap.notice("cmd-\(number): -> \(self.model.targets[index].title)")
+        // The id rather than the title: titles are deliberately left redacted (see `Log`), and
+        // a line reading "cmd-4: -> <private>" said nothing the commit line after it did not.
+        Log.tap.notice("cmd-\(number): -> \(self.model.targets[index].id, privacy: .public)")
         commit()
     }
 
