@@ -104,7 +104,13 @@ struct AboutSettings: View {
                     title: "Install automatically",
                     subtitle: "Download and install without asking, applying it the next time "
                         + "Cmd-Tab starts. Off keeps the decision yours — this app owns ⌘-Tab for "
-                        + "the whole machine, so replacing itself mid-session is worth a prompt.",
+                        + "the whole machine, so replacing itself mid-session is worth a prompt."
+                        // The feed being absent is already explained by the section footer; this
+                        // covers the other half, which nothing else accounts for.
+                        + (Updater.isConfigured && !updater.automaticallyChecks
+                            ? " Needs the automatic check above — nothing installs on its own if "
+                                + "nothing is looking for it."
+                            : ""),
                     isOn: Binding(
                         get: { updater.automaticallyDownloads },
                         set: { updater.automaticallyDownloads = $0 }))

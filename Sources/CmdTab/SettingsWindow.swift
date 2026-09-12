@@ -186,6 +186,19 @@ enum SettingsIndex {
              "Focus window by direction",
              ["focus", "focus left", "focus right", "directional", "navigate", "move focus",
               "keyboard", "between windows", "next window", "vim", "yabai", "amethyst"]),
+        // Both of these were unindexed, and the Desktops one mattered: "desktop" and "space"
+        // matched only `windowSpaceScope` over in Behavior — which decides which Desktops the
+        // switcher *lists* — so a search for the feature that moves a window between Desktops
+        // answered confidently with a different setting.
+        item("desktopMoves", .windows, anchorDesktops, "Desktops",
+             "Move windows between desktops",
+             ["desktop", "desktops", "space", "spaces", "mission control", "move window",
+              "move between desktops", "send to desktop", "next desktop", "previous desktop",
+              "throw", "follow the window", "arrive with it"]),
+        item("sendToDisplay", .windows, anchorSendToDisplay, "Send to a display",
+             "Send to a display",
+             ["display", "displays", "monitor", "monitors", "screen", "screens",
+              "send to display", "move to display", "second monitor", "external", "by number"]),
         item("pointerFollows", .windows, anchorDisplays, "Displays",
              "Take the pointer along",
              ["pointer", "cursor", "warp", "mouse", "follow", "display", "monitor", "move"]),
@@ -325,11 +338,14 @@ enum SettingsIndex {
              ["source", "github", "repository", "code", "issues"]),
     ]
 
-    // The two Windows-tab cards whose anchors are built from a group title rather than declared in
+    // The Windows-tab cards whose anchors are built from a group title rather than declared in
     // `SettingsAnchor` — see `WindowSettings.anchor(for:)`, whose spelling these have to match
-    // exactly or the search result scrolls to nothing.
+    // exactly or the search result scrolls to nothing. That includes the spaces and the lower case
+    // in "send to a display", which is why it is not written the way a constant usually would be.
     private static let anchorFocus = "\(SettingsAnchor.tiling).focus"
     private static let anchorDisplays = "\(SettingsAnchor.tiling).displays"
+    private static let anchorDesktops = "\(SettingsAnchor.tiling).desktops"
+    private static let anchorSendToDisplay = "\(SettingsAnchor.tiling).send to a display"
 
     private static func item(
         _ id: String, _ tab: SettingsTab, _ anchor: String, _ section: String, _ title: String,
@@ -567,7 +583,10 @@ struct GeneralSettings: View {
                 // convenience, and which glyph you want is a thing you decide by looking at it.
                 SettingsPicker(
                     title: "Menu-bar glyph",
-                    subtitle: "Which icon the menu-bar item shows.",
+                    subtitle: behavior.showMenuBarIcon
+                        ? "Which icon the menu-bar item shows."
+                        : "Which icon the menu-bar item shows — nothing to pick while the icon is "
+                            + "switched off above.",
                     selection: $behavior.menuBarIcon,
                     width: 175
                 ) {
@@ -622,7 +641,16 @@ struct GeneralSettings: View {
                         get: { config.isICloudSyncEnabled },
                         set: { config.setICloudSyncEnabled($0) }))
                 .disabled(!ConfigFile.isICloudAvailable)
-                SettingsRow(title: "Show the file", subtitle: ConfigFile.displayPath) {
+                // Verbatim only on the branch that *is* a path: the other is ordinary interface
+                // copy and should still be looked up and translated like the rest.
+                SettingsRow(
+                    title: "Show the file",
+                    subtitle: config.isEnabled
+                        ? ConfigFile.displayPath
+                        : "Nothing to reveal — neither switch above is on, so no file has been "
+                            + "written yet.",
+                    isSubtitleVerbatim: config.isEnabled
+                ) {
                     Button("Reveal in Finder", action: config.revealInFinder)
                         .disabled(!config.isEnabled)
                 }

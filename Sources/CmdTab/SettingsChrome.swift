@@ -165,6 +165,14 @@ struct SettingsRow<Control: View>: View {
     /// Declared after `subtitle` because Swift's memberwise initialiser fixes argument order, and
     /// the call sites that need it also pass a subtitle.
     var isTitleVerbatim = false
+    /// The same, for a subtitle that is *data* — a file path, a name, a version.
+    ///
+    /// Not just a localisation concern like the title's: `SettingsChrome.text` renders through
+    /// `LocalizedStringKey`, which parses Markdown, and that is deliberate — footnotes here use
+    /// backticks for code. A path pays for it. `~/Library/Mobile Documents/com~apple~CloudDocs/…`
+    /// contains two tildes, Markdown reads them as a strikethrough pair, and the iCloud config path
+    /// rendered with its first half struck through and its leading `~` eaten.
+    var isSubtitleVerbatim = false
     /// Lets a row give its control more of the width — sliders and recorders need it, a checkbox
     /// does not.
     var controlWidth: CGFloat?
@@ -176,7 +184,8 @@ struct SettingsRow<Control: View>: View {
                 (isTitleVerbatim ? SettingsChrome.verbatim(title) : SettingsChrome.text(title))
                     .font(.system(size: 13))
                 if let subtitle {
-                    SettingsChrome.text(subtitle)
+                    (isSubtitleVerbatim
+                        ? SettingsChrome.verbatim(subtitle) : SettingsChrome.text(subtitle))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -196,7 +205,10 @@ struct SettingsRow<Control: View>: View {
                 // already-labelled things — a label on a non-element is ignored.
                 .accessibilityLabel(
                     isTitleVerbatim ? SettingsChrome.verbatim(title) : SettingsChrome.text(title))
-                .accessibilityHint(SettingsChrome.text(subtitle ?? ""))
+                .accessibilityHint(
+                    isSubtitleVerbatim
+                        ? SettingsChrome.verbatim(subtitle ?? "")
+                        : SettingsChrome.text(subtitle ?? ""))
         }
         .padding(.horizontal, SettingsChrome.rowInset)
         .padding(.vertical, 9)
