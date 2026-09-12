@@ -3,17 +3,27 @@
 #
 # `build.sh` signs with a self-signed certificate, which is right for this machine and useless
 # anywhere else: Gatekeeper refuses it, and the first launch on someone else's Mac is a dialog
-# saying the app is damaged. A release needs a Developer ID Application certificate, the hardened
-# runtime, a secure timestamp, and a trip through Apple's Notary Service.
+# saying the app is damaged. Fixing that properly needs a Developer ID Application certificate, the
+# hardened runtime, a secure timestamp, and a trip through Apple's Notary Service — which in turn
+# needs a paid Apple Developer Program membership.
+#
+# `--adhoc` is the path that needs none of that: it produces a real, versioned, appcast-published
+# release, ad-hoc signed rather than Developer-ID signed and never submitted to Apple. Gatekeeper
+# still flags the download (an ad-hoc signature carries no team identity for it to trust), so the
+# first launch needs right-click → Open, or `xattr -cr` on the .app — that one extra step is the
+# entire cost of skipping notarisation. Sparkle's own update signing (the EdDSA key below) is
+# unrelated to Apple's program and works identically either way.
 #
 # Usage:
-#   ./release.sh                          build + sign
+#   ./release.sh                          build + Developer ID sign + verify
 #   ./release.sh --notarize               ... and submit to Apple, then staple
+#   ./release.sh --adhoc                  build + ad-hoc sign, no Developer ID, no notarisation
 #   VERSION=1.2.0 BUILD=34 ./release.sh   stamp a version into the built bundle
 #
 # Environment:
 #   CODESIGN_IDENTITY  Signing identity. Defaults to the sole "Developer ID Application" in the
-#                      keychain; set this when several teams' certificates are installed.
+#                      keychain; set this when several teams' certificates are installed. Ignored
+#                      with --adhoc, which always signs ad-hoc.
 #   NOTARY_PROFILE     Name of a stored notarytool credential profile. Create once with:
 #                        xcrun notarytool store-credentials "Cmd-Tab" \
 #                          --apple-id you@example.com --team-id TEAMID --password <app-specific>
@@ -23,9 +33,24 @@ cd "$(dirname "$0")"
 APP="build/Cmd-Tab.app"
 ZIP="build/Cmd-Tab.zip"
 NOTARIZE=0
-[[ "${1:-}" == "--notarize" ]] && NOTARIZE=1
+ADHOC=0
+case "${1:-}" in
+    --notarize) NOTARIZE=1 ;;
+    --adhoc) ADHOC=1 ;;
+    "") ;;
+    *)
+        echo "==> ERROR: unknown argument '$1' (expected --notarize, --adhoc, or nothing)" >&2
+        exit 1
+        ;;
+esac
 
 # ---------------------------------------------------------------- identity
+
+if [[ "$ADHOC" == "1" ]]; then
+    IDENTITY="-"
+    echo "==> Ad-hoc release: no Developer ID, no notarisation. Gatekeeper will flag the download —"
+    echo "    the README's 'Ad-hoc releases' section has the one-line workaround for users."
+else
 
 # Matched on the certificate's common name rather than a hash, so the script keeps working when the
 # certificate is renewed — the name is stable, the hash is not.
@@ -59,23 +84,34 @@ if [[ -z "$IDENTITY" ]]; then
     Until then, ./build.sh --install is the way to run this app on this machine: it signs with the
     local "Cmd-Tab Local" certificate, which keeps the Accessibility grant stable across rebuilds
     but is trusted by nothing else.
+
+    To publish a release anyway, without a Developer ID: ./release.sh --adhoc
 EOF
     exit 1
 fi
+
+fi # ADHOC
 
 echo "==> Release identity: $IDENTITY"
 
 # ---------------------------------------------------------------- build + sign
 
 # Hardened runtime and timestamp come from HARDENED=1; UNIVERSAL=1 builds both slices so the
-# download runs on Intel as well as Apple Silicon. Both see build.sh.
-CODESIGN_IDENTITY="$IDENTITY" HARDENED=1 UNIVERSAL=1 ./build.sh
+# download runs on Intel as well as Apple Silicon. Both see build.sh. The hardened runtime and a
+# secure timestamp are notarisation requirements, not signing requirements — an ad-hoc signature
+# gains nothing from either, and a timestamp specifically needs a signing service ad-hoc has none
+# of, so --adhoc skips both.
+HARDENED=1
+[[ "$ADHOC" == "1" ]] && HARDENED=0
+CODESIGN_IDENTITY="$IDENTITY" HARDENED="$HARDENED" UNIVERSAL=1 ./build.sh
 
 # ---------------------------------------------------------------- verify
 
 echo "==> Verifying signature"
 # --strict is what catches the mistakes that pass a plain verify and fail notarisation: a nested
-# item signed by someone else, a resource added after signing, a broken seal.
+# item signed by someone else, a resource added after signing, a broken seal. Still worth running
+# ad-hoc — it catches the same nested-signature ordering mistakes, just with nothing to submit
+# afterwards.
 codesign --verify --strict --verbose=2 "$APP"
 codesign --display --verbose=4 "$APP" 2>&1 \
     | grep -E "Authority|TeamIdentifier|Timestamp|Runtime Version|Identifier" || true
@@ -88,12 +124,24 @@ codesign --display --requirements - "$APP" 2>&1 | tail -n +2
 
 # ---------------------------------------------------------------- notarise
 
-if [[ "$NOTARIZE" != "1" ]]; then
+if [[ "$ADHOC" == "1" ]]; then
+    echo "==> Built and ad-hoc signed: $APP"
+    echo "    Not notarised — there is no Developer ID account to submit under. Gatekeeper will"
+    echo "    quarantine the download; the workaround for users is right-click → Open, or"
+    echo "    xattr -cr on the .app. See README § 'Ad-hoc releases'."
+    # ditto, not zip: keeps symlinks and extended attributes intact, same reason as the notarised
+    # path — and it means a later Developer ID release can reuse the same packaging step.
+    echo "==> Packaging"
+    rm -f "$ZIP"
+    ditto -c -k --keepParent "$APP" "$ZIP"
+elif [[ "$NOTARIZE" != "1" ]]; then
     echo "==> Built and signed: $APP"
     echo "    Not notarised. Gatekeeper will refuse it on another Mac until it is —"
     echo "    re-run as: ./release.sh --notarize   (needs NOTARY_PROFILE)"
     exit 0
 fi
+
+if [[ "$ADHOC" != "1" ]] && [[ "$NOTARIZE" == "1" ]]; then
 
 if [[ -z "${NOTARY_PROFILE:-}" ]]; then
     echo "==> ERROR: NOTARY_PROFILE is not set; store credentials once with:" >&2
@@ -127,11 +175,13 @@ rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 echo "==> Notarised and stapled: $ZIP"
 
+fi # notarize
+
 # ---------------------------------------------------------------- appcast
 
-# The step that turns a notarised zip into an update anyone receives. Without it a release is a file
-# on GitHub that existing installs know nothing about, which is exactly the state this app was in
-# before Sparkle.
+# The step that turns a built zip — notarised or ad-hoc — into an update anyone receives. Without
+# it a release is a file on GitHub that existing installs know nothing about, which is exactly the
+# state this app was in before Sparkle.
 #
 # `generate_appcast` reads every archive in the releases directory, signs each with the EdDSA
 # private key from the login keychain, and writes an appcast.xml listing them. The key is the same
@@ -143,7 +193,7 @@ GENERATE_APPCAST="$(find .build/artifacts -type f -name generate_appcast -perm -
 
 if [[ -z "$GENERATE_APPCAST" ]]; then
     echo "==> WARNING: generate_appcast not found; run 'swift package resolve'." >&2
-    echo "    The zip is notarised, but no appcast entry was produced for it." >&2
+    echo "    The zip is built, but no appcast entry was produced for it." >&2
     exit 0
 fi
 

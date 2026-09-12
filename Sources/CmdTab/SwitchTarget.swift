@@ -261,6 +261,13 @@ extension SwitchTarget {
             // beside it, and picking one of those is a pick that fronts the app and raises nothing.
             let real = realWindows(pid: pid)
 
+            // Shared by `frontWindow` and `raiseGroupHere` below, which used to each take their own
+            // read with the identical options — one more `CGWindowListCopyWindowInfo` walk of every
+            // window on the machine for the same answer, on the one pick shape that already pays
+            // for `placement` and `real` up front for the same reason.
+            let onScreenOwned = ownedWindows(
+                pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements])
+
             // Something of this app's is already in front of us, which is the case nearly every pick
             // takes. What it does *not* license is `activate`: that call is app-level, and an app
             // whose front window lives on another Desktop has that window dragged onto this one as
@@ -280,7 +287,7 @@ extension SwitchTarget {
             // happened to: nothing else owns the desktop. `.excludeDesktopElements` drops the
             // desktop by request, minimized windows are absent from the on-screen list by
             // definition, and layer 0 keeps panels and menus from counting.
-            if let here = frontWindowHere(pid: pid, placement: placement, real: real) {
+            if let here = frontWindow(onScreen: onScreenOwned, placement: placement, real: real) {
                 Log.general.notice(
                     """
                     app pick: pid \(pid, privacy: .public) fronting window \
@@ -289,7 +296,8 @@ extension SwitchTarget {
                 // The siblings first, so the app arrives as a group rather than as one window with
                 // the rest still buried — see `raiseGroupHere`. Ordered before the pick's own front
                 // so the picked window finishes on top of them.
-                raiseGroupHere(pid: pid, except: here, placement: placement, real: real)
+                raiseGroupHere(
+                    pid: pid, onScreen: onScreenOwned, except: here, placement: placement, real: real)
                 focusAndActivate(window: here, pid: pid, generation: generation)
                 return
             }
@@ -432,18 +440,9 @@ extension SwitchTarget {
     /// `real` is a third half neither of those two covers: both ask *where* a window is, and neither
     /// asks whether it is a window at all. See `realWindows` — an app's helper surfaces pass the
     /// on-screen test and the Space test alike, and fronting one is a pick that does nothing.
-    private static func frontWindowHere(
-        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState], real: Set<CGWindowID>
-    ) -> CGWindowID? {
-        // In z-order, so the first match is the one the app considers in front.
-        frontWindow(
-            onScreen: ownedWindows(
-                pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]),
-            placement: placement, real: real)
-    }
-
-    /// The rule above, over values rather than the window server, so the three inputs that decide it
-    /// can be pinned by a test. `onScreen` is front-to-back.
+    ///
+    /// Over values rather than the window server, so the three inputs that decide it can be pinned
+    /// by a test. `onScreen` is front-to-back.
     static func frontWindow(
         onScreen: [CGWindowID], placement: [CGWindowID: SpaceMover.SpaceState],
         real: Set<CGWindowID>
@@ -462,7 +461,7 @@ extension SwitchTarget {
     /// apply is not enough to make it one: an app's helper surfaces are layer 0, on screen, and
     /// placed on a Space exactly like its real windows. Measured on Alfred Preferences, which owns a
     /// 500×500 surface and one 2056×39 menu-bar backing per display alongside its one real window;
-    /// when one of those sorts ahead of the real window in z-order, `frontWindowHere` returns it and
+    /// when one of those sorts ahead of the real window in z-order, `frontWindow` returns it and
     /// the pick fronts a window that does not exist. `_SLPSSetFrontProcessWithOptions` accepts the id
     /// and marks the process front — the menu bar swaps, `frontmostApplication` reports success —
     /// while ordering nothing, so the app's real window stays buried under whatever the user was
@@ -504,13 +503,10 @@ extension SwitchTarget {
     /// the picked window, left out because `focusAndActivate` fronts it immediately afterwards and
     /// it has to finish on top.
     private static func raiseGroupHere(
-        pid: pid_t, except target: CGWindowID, placement: [CGWindowID: SpaceMover.SpaceState],
-        real: Set<CGWindowID>
+        pid: pid_t, onScreen: [CGWindowID], except target: CGWindowID,
+        placement: [CGWindowID: SpaceMover.SpaceState], real: Set<CGWindowID>
     ) {
-        let siblings = ownedWindows(
-            pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements]
-        )
-        .filter { window in
+        let siblings = onScreen.filter { window in
             guard window != target, isReal(window, real), let state = placement[window] else {
                 return false
             }
@@ -788,7 +784,11 @@ extension SwitchTarget {
             // app's off-Desktop window to the restore path would skip the Space switch it needs,
             // while routing a docked window through the reveal path merely takes the slower way to
             // the same raise. So anything hidden goes below and unhides first.
-            let isHidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
+            // `NSRunningApplication` is main-thread work — see `activate(pid:)` above — and this
+            // runs on `focusQueue`, so the read has to hop rather than happen inline.
+            let isHidden = DispatchQueue.main.sync {
+                NSRunningApplication(processIdentifier: pid)?.isHidden == true
+            }
             // `var` because the system-switch attempt below can move the window and hand back a
             // fresher reading; everything after that point must use the new one.
             var placed = known ?? SpaceMover.windowSpaces()
@@ -1270,16 +1270,27 @@ extension SwitchTarget {
     /// How long after a Space switch is issued before anything may touch the window.
     ///
     /// A measured number standing in for a signal macOS does not offer. There is no "the transition
-    /// has finished" call — `CGSGetSpaceTransitionState` and its siblings do not exist on macOS 26 —
-    /// and every cheap proxy was measured lying:
+    /// has finished" call — `CGSGetSpaceTransitionState` and its siblings still do not exist as of
+    /// macOS 27 — and every cheap proxy was measured lying:
     ///
     /// * the window server's `Current Space` field flips **0.2ms** after the switch is issued, long
-    ///   before anything moves on screen;
+    ///   before anything moves on screen. Re-measured on macOS 27: 0.03–0.05ms, so if anything the
+    ///   field is quicker to lie than it was;
     /// * `activeSpaceDidChange` posts within the first frame or two;
     /// * on-screen membership does not track Spaces at all. Sampled every 25ms across a switch, the
     ///   count of the *outgoing* Desktop's windows in `.optionOnScreenOnly` never changed — 16 of 18
     ///   before, 16 of 18 a second later, with the incoming Desktop's windows listed the whole time.
-    ///   That is why `isOnScreen` opened the gate on the first poll of every pick ever logged.
+    ///   That is why `isOnScreen` opened the gate on the first poll of every pick ever logged;
+    /// * `CGSManagedDisplayIsAnimating` **does** exist on macOS 27, alongside `SLSInvokeTransition`
+    ///   and `SLSEventRecordGetTransitionProgress`, and reads exactly like the call this comment
+    ///   says is missing. It is not that call. Polled every 2ms across two real switches issued by
+    ///   `SpaceMover.reveal`, it reported `true` in **0 of 1046 samples** — it appears to track the
+    ///   animated Mission Control/gesture transition rather than the show/hide/set path used here,
+    ///   so it answers "not animating" throughout and adopting it would silently collapse this wait
+    ///   to nothing. One trap if it is ever revisited: the second argument is a CFString that must
+    ///   *parse as a UUID*. SkyLight runs `CFUUIDCreateFromString` on it and hands the result
+    ///   straight to `CFUUIDGetUUIDBytes`, so a malformed `Display Identifier` crashes the calling
+    ///   process rather than returning false.
     ///
     /// So the gate that was meant to keep a raise out of the transition never closed once, and the
     /// window-relocation it exists to prevent had a clear run. Waiting a fixed interval is the only
@@ -1328,18 +1339,19 @@ extension SwitchTarget {
             // switch is even issued. Kept because a pick that misbehaves is worth knowing the
             // on-screen reading for — just never again worth trusting.
             //
-            // Read inside the branch rather than above it, which is the whole reason the two
-            // comments were merged. `isOnScreen` is a `CGWindowListCopyWindowInfo` call, and reading
-            // it eagerly charged every same-Desktop pick a window-server round trip for a value
-            // that path never interpolates — the one pick shape in this file that is otherwise
-            // measured in single-digit milliseconds.
+            // Gated on the switched path only, which is the whole reason the two comments were
+            // merged: this used to read unconditionally above the branch, charging every
+            // same-Desktop pick a window-server round trip for a line that path never logs. The
+            // cross-Desktop path still polls here up to `attempts` times, so even gated this stays
+            // log-only — `onScreen` was dropped from the line entirely rather than merely gated
+            // further, since it played no part in `guard arrived, waited` below and cost one more
+            // `CGWindowListCopyWindowInfo` call per poll for a value nothing downstream reads.
             if awaitingSpaceChange != nil {
                 Log.general.notice(
                     """
                     focus window \(id, privacy: .public): \
                     transition=\(arrived ? "landed" : "in flight", privacy: .public) \
-                    waited=\(waited, privacy: .public) \
-                    onScreen=\(isOnScreen(window: id), privacy: .public), \
+                    waited=\(waited, privacy: .public), \
                     \(attempts, privacy: .public) attempts left
                     """)
             }

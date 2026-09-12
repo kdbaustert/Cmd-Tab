@@ -168,6 +168,13 @@ actor WindowCapture {
     private var contentFetchedAt: Date?
     private var axCache: [pid_t: (windows: AXWindows, at: Date)] = [:]
 
+    /// The Dock-membership read, reused for `ttl` like `shareableContent` — it's the same shape of
+    /// cost (a system-wide window-server walk) paid on the same hover-sweep path, and until now was
+    /// the one sibling of `shareableContent`/`axCache`/`menuCache` that re-ran on every call.
+    private var dockedCache: (
+        result: (docked: Set<CGWindowID>, placed: [CGWindowID: SpaceMover.SpaceState]), at: Date
+    )?
+
     /// The most recent answer an app gave that was good enough to veto with, per app.
     ///
     /// Separate from `axCache`, which is a sub-second read-coalescer, and kept for a great deal
@@ -276,7 +283,7 @@ actor WindowCapture {
         // A window in the Dock is on no Space and on no screen; a window on another Desktop is off
         // screen but still has a Space. Both reads are one window-server call each for the whole
         // strip, rather than a question per tile.
-        let (dockedIDs, placed) = await Task.detached { Self.dockedWindowIDs() }.value
+        let (dockedIDs, placed) = await cachedDockedWindowIDs()
 
         // Asked once for the app, not once per window: it decides reachability for *every* thumbnail
         // in the strip, and it walks the whole system window list to answer. See `SwitchTarget.canReach`.
@@ -414,6 +421,7 @@ actor WindowCapture {
     func clearCaches() {
         content = nil
         contentFetchedAt = nil
+        dockedCache = nil
         axCache.removeAll()
         // `lastUsableAX` deliberately survives. This runs at the end of *every* session, and the gap
         // it exists to bridge is far longer than one — an app that answers nothing for half a minute
@@ -472,6 +480,19 @@ actor WindowCapture {
         else { return nil }
         content = fresh
         contentFetchedAt = Date()
+        return fresh
+    }
+
+    /// `dockedWindowIDs`, reused for `ttl`. Still run detached — it's a syscall-heavy static read,
+    /// and the point of caching it is to skip *that* work, not to force it onto the actor.
+    private func cachedDockedWindowIDs() async -> (
+        docked: Set<CGWindowID>, placed: [CGWindowID: SpaceMover.SpaceState]
+    ) {
+        if let dockedCache, Date().timeIntervalSince(dockedCache.at) < ttl {
+            return dockedCache.result
+        }
+        let fresh = await Task.detached { Self.dockedWindowIDs() }.value
+        dockedCache = (fresh, Date())
         return fresh
     }
 

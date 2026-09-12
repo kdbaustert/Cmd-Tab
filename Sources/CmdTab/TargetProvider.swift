@@ -98,6 +98,17 @@ final class TargetProvider {
     /// and the cache can never outgrow the app list.
     private var iconCache: [String: NSImage] = [:]
 
+    /// Window titles, keyed by `CGWindowID`, with the refresh they're still good through.
+    ///
+    /// `AX.copyString(_:kAXTitleAttribute)` is IPC to the owning app, once per window, on every
+    /// refresh — the single biggest recurring cost in `windowTargets`, since almost every refresh
+    /// re-asks a question whose answer hasn't changed. There's no per-window "title changed"
+    /// notification to invalidate on, so a short TTL stands in: it bounds a stale tab title or
+    /// document rename to a few seconds rather than leaving it wrong until the window closes.
+    /// Pruned to the ids `windowTargets` actually saw each pass, the same way `iconCache` is.
+    private var titleCache: [CGWindowID: (title: String, expiry: Date)] = [:]
+    private nonisolated static let titleCacheTTL: TimeInterval = 2
+
     /// Upper bound on both MRU lists.
     ///
     /// Nothing past the switcher's own list length affects ordering, so the tail is dead weight —
@@ -367,6 +378,7 @@ final class TargetProvider {
         let screenFrames = needsFrames && NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
         let launchTargets = launchFavorites()
+        let titleCache = self.titleCache
         // Pinning has to put each favourite's tiles where the favourite sits, and a tile knows its
         // pid but not its bundle id — so the mapping is carried over from the app list.
         let pinning = pinFavoritesFirst && mode == .apps && !favoriteBundleIDs.isEmpty
@@ -388,6 +400,7 @@ final class TargetProvider {
             // On the background queue: reading the Dock is Accessibility IPC to another process.
             let badges = wantsBadges ? DockBadges.current() : [:]
             var targets: [SwitchTarget]
+            var freshTitles = titleCache
             switch mode {
             case .apps:
                 targets = Self.appTargets(
@@ -405,10 +418,12 @@ final class TargetProvider {
                 // Splice each expanded app's windows in where its single tile was, so the list keeps
                 // the order the sort produced rather than gathering them at one end.
                 if !expanding.isEmpty {
-                    let windows = Self.withSpaceBadges(
-                        Self.windowTargets(
-                            expanding, order: order, sortOrder: sortOrder,
-                            windowMRU: windowMRU, screenFrames: screenFrames, badges: badges))
+                    let built = Self.windowTargets(
+                        expanding, order: order, sortOrder: sortOrder,
+                        windowMRU: windowMRU, screenFrames: screenFrames, badges: badges,
+                        titleCache: freshTitles)
+                    freshTitles = built.titleCache
+                    let windows = Self.withSpaceBadges(built.targets)
                     let byPID = Dictionary(grouping: windows, by: \.pid)
                     targets = targets.flatMap { target -> [SwitchTarget] in
                         // An expanded app with no windows keeps its app tile: dropping it would make
@@ -423,11 +438,12 @@ final class TargetProvider {
                 // The same walk the same-app cycle does, over every switchable app rather than one.
                 // `hideEmptyApps` is skipped: an app with no windows contributes no tiles here
                 // anyway, so it has nothing left to hide.
-                targets = Self.withSpaceBadges(
-                    Self.windowTargets(
-                        apps, order: order, sortOrder: sortOrder,
-                        windowMRU: windowMRU, screenFrames: screenFrames, badges: badges,
-                        grouped: grouped))
+                let built = Self.windowTargets(
+                    apps, order: order, sortOrder: sortOrder,
+                    windowMRU: windowMRU, screenFrames: screenFrames, badges: badges,
+                    grouped: grouped, titleCache: freshTitles)
+                freshTitles = built.titleCache
+                targets = Self.withSpaceBadges(built.targets)
             }
             if pinning {
                 // The favourites take the front of the list, each running one bringing its own
@@ -451,6 +467,7 @@ final class TargetProvider {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.cache = targets
+                    self.titleCache = freshTitles
                     self.isRefreshing = false
                     handlers.forEach { $0(targets) }
                     if self.wantsAnotherRefresh {
@@ -502,13 +519,18 @@ final class TargetProvider {
                 // resolved to index 0 — a "1" on every tile in a scoped session, on a machine
                 // where the main switcher shows none.
                 let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
+                let titleCache = self.titleCache
 
                 self.axQueue.async {
-                    let targets = Self.windowTargets(
+                    let built = Self.windowTargets(
                         apps, order: order, sortOrder: sortOrder,
-                        windowMRU: windowMRU, screenFrames: screenFrames, grouped: grouped)
-                    let badged = Self.withSpaceBadges(targets)
-                    DispatchQueue.main.async { handler(badged) }
+                        windowMRU: windowMRU, screenFrames: screenFrames, grouped: grouped,
+                        titleCache: titleCache)
+                    let badged = Self.withSpaceBadges(built.targets)
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { self.titleCache = built.titleCache }
+                        handler(badged)
+                    }
                 }
             }
         }
@@ -522,16 +544,20 @@ final class TargetProvider {
         let sortOrder = self.sortOrder
         let windowMRU = self.windowMRU.entries
         let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
+        let titleCache = self.titleCache
 
         axQueue.async {
-            let targets = Self.windowTargets(
+            let built = Self.windowTargets(
                 [app], order: [pid], sortOrder: sortOrder,
-                windowMRU: windowMRU, screenFrames: screenFrames)
+                windowMRU: windowMRU, screenFrames: screenFrames, titleCache: titleCache)
             // Badged here, not in the hop below: `SpaceMover.placement` is a CGS round trip, and
             // evaluating it inside the `main.async` body put that IPC on the thread that services
             // the event tap.
-            let badged = Self.withSpaceBadges(targets)
-            DispatchQueue.main.async { handler(badged) }
+            let badged = Self.withSpaceBadges(built.targets)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self.titleCache = built.titleCache }
+                handler(badged)
+            }
         }
     }
 
@@ -851,9 +877,14 @@ final class TargetProvider {
     private nonisolated static func windowTargets(
         _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder,
         windowMRU: [CGWindowID], screenFrames: [CGRect], badges: [String: String] = [:],
-        grouped: Bool = true
-    ) -> [SwitchTarget] {
+        grouped: Bool = true, titleCache: [CGWindowID: (title: String, expiry: Date)] = [:]
+    ) -> (targets: [SwitchTarget], titleCache: [CGWindowID: (title: String, expiry: Date)]) {
         let mruRank = RecencyList<CGWindowID>.ranks(of: windowMRU)
+        let now = Date()
+        // Mutated in place across the walk below, then pruned to what this pass actually saw —
+        // the same shape as `iconCache`'s own pruning, so a window that closed can't linger here.
+        var freshTitles = titleCache
+        var seenIDs = Set<CGWindowID>()
         // The rank is carried out of the per-app walk rather than dropped at its end, which is the
         // one structural change the flat order needed: grouped, a rank only has to order windows
         // within one app and can be discarded as each app finishes.
@@ -868,9 +899,18 @@ final class TargetProvider {
             for (index, window) in windows.enumerated() {
                 guard AX.isSwitchableWindow(window) else { continue }
 
-                let title = AX.copyString(window, kAXTitleAttribute) ?? ""
-                let minimized = AX.isMinimized(window)
                 let wid = windowID(window)
+                let title: String
+                if let wid, let cached = freshTitles[wid], cached.expiry > now {
+                    title = cached.title
+                } else {
+                    title = AX.copyString(window, kAXTitleAttribute) ?? ""
+                    if let wid {
+                        freshTitles[wid] = (title, now.addingTimeInterval(titleCacheTTL))
+                    }
+                }
+                if let wid { seenIDs.insert(wid) }
+                let minimized = AX.isMinimized(window)
                 let id = wid.map { "win:\($0)" } ?? "win:\(app.pid):\(index)"
                 let display = screenFrames.isEmpty ? nil : displayIndex(of: window, in: screenFrames)
 
@@ -893,7 +933,10 @@ final class TargetProvider {
             }
             return rows
         }
-        guard !grouped, sortOrder == .recentlyUsed else { return built.map { $0.target } }
+        freshTitles = freshTitles.filter { seenIDs.contains($0.key) }
+        guard !grouped, sortOrder == .recentlyUsed else {
+            return (built.map { $0.target }, freshTitles)
+        }
         // One sort over the whole list rather than one per app. The grouped position rides along as
         // the tiebreak, so windows the recency list has never seen — anything not focused since
         // launch, which all share `Int.max` — keep the order they already had instead of being
@@ -903,7 +946,7 @@ final class TargetProvider {
         flat.sort { a, b in
             a.row.rank == b.row.rank ? a.position < b.position : a.row.rank < b.row.rank
         }
-        return flat.map { $0.row.target }
+        return (flat.map { $0.row.target }, freshTitles)
     }
 
     /// Tags each window with the Space it lives on. A no-op with a single Space, which is what keeps

@@ -74,12 +74,7 @@ struct ModifierChord: Equatable {
     /// Menu order, the same one macOS shows: ⌃⌥⇧⌘.
     var displayString: String {
         guard isUsable else { return "Not set" }
-        var out = ""
-        if flags.contains(.maskControl) { out += "⌃" }
-        if flags.contains(.maskAlternate) { out += "⌥" }
-        if flags.contains(.maskShift) { out += "⇧" }
-        if flags.contains(.maskCommand) { out += "⌘" }
-        return out
+        return CGEventFlags.symbols(for: flags)
     }
 }
 
@@ -676,11 +671,14 @@ final class MouseWindowDrag: @unchecked Sendable {
     ) {
         queue.async { [weak self] in
             guard let self else { return }
-            // An app the user has told us never to tile drags exactly as it always did. Checked on
-            // this queue rather than the tap thread: it reaches `NSRunningApplication` for the
-            // bundle id, which is not work the callback may do.
-            if let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier,
-                self.appRules[id]?.neverTile == true {
+            // An app the user has told us never to tile drags exactly as it always did. Checked off
+            // the tap thread, which is the callback's own requirement, but `NSRunningApplication` is
+            // main-thread work regardless of that — see `ModifierTargetHighlight`'s identical check,
+            // which reads it on the main actor — so this still has to hop rather than read inline.
+            let bundleID = DispatchQueue.main.sync {
+                NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+            }
+            if let id = bundleID, self.appRules[id]?.neverTile == true {
                 self.end()
                 return
             }
@@ -814,9 +812,12 @@ final class MouseWindowDrag: @unchecked Sendable {
     private func updatePreview(at point: CGPoint) {
         let match = snapZone(at: point)
         let changed: Bool = lock.withLock {
-            zoneArea = match?.area
-            guard zone != match?.zone else { return false }
+            // Compare both the zone kind and the display area: the same zone kind (e.g. `.leftHalf`)
+            // recurring on a different, adjacent display must still count as a change, or the drop
+            // destination silently follows the cursor to the new display with no preview update.
+            guard zone != match?.zone || zoneArea != match?.area else { return false }
             zone = match?.zone
+            zoneArea = match?.area
             return true
         }
         guard changed else { return }
@@ -850,6 +851,10 @@ final class MouseWindowDrag: @unchecked Sendable {
                 let pid = window[kCGWindowOwnerPID as String] as? pid_t,
                 let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
                 let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
+                // A zero-area surface is not a window a click can land on — see
+                // `WindowNavigator.onScreen`, which drops the same Electron/Catalyst phantom backing
+                // windows for the identical reason.
+                bounds.width > 1, bounds.height > 1,
                 bounds.contains(point)
             else { continue }
             // Front-most match wins — the list is in z-order — so a window behind another cannot
@@ -1072,14 +1077,17 @@ final class ModifierTargetHighlight {
     /// exactly `maxY`, the one value `contains` rejects.
     private func showPreview(_ zone: WindowArrangement, near point: CGPoint) {
         area = nil
+        // One read of the display list, not two paired by index — see `MouseWindowDrag.refreshDisplays`,
+        // which fixed the same fragility for the drag gesture after a screen reconfiguration could
+        // desync a separate `NSScreen.screens` walk from `visibleAreas()`.
         guard
-            let index = NSScreen.screens.firstIndex(where: { NSMouseInRect(point, $0.frame, false) })
+            let display = WindowTiler.visibleDisplays().first(where: {
+                NSMouseInRect(point, $0.frame, false)
+            })
         else {
             return
         }
-        let areas = WindowTiler.visibleAreas()
-        guard index < areas.count else { return }
-        let area = areas[index]
+        let area = display.area
         self.area = area
         guard let frame = zone.frame(in: area, current: area, fraction: 0.5) else { return }
         SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
@@ -1123,7 +1131,7 @@ final class ModifierTargetHighlight {
     /// The chord came up: snap to whatever was being offered.
     private func complete() {
         defer { cancel() }
-        guard let zone, let target else { return }
+        guard let zone, let target, let area else { return }
         Log.general.notice(
             """
             point gesture: snapping pid \(target.pid, privacy: .public) to \

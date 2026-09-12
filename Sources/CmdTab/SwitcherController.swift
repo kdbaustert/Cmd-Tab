@@ -724,12 +724,13 @@ final class SwitcherController {
             // release `flagsChanged` had rightly ignored — quick-switched to the previous app
             // instead of showing the panel.
             if !staysOpenOnRelease, !stillHeld(flags, activeHeld) { releaseTrigger(); return true }
+            // Only a repeat of the trigger key shows early — any other key while armed is not the
+            // "second press" the comment above means, and must not be silently dropped.
+            guard code == hotkey.keyCode else { return false }
             showFromArm()
             // `advance` rather than a bare `layout()`: this runs on the tap callback, where a full
             // NSHostingView rebuild is the one thing that must not happen inline.
-            if code == hotkey.keyCode {
-                advance(flags.contains(.maskShift) ? -1 : 1)
-            }
+            advance(flags.contains(.maskShift) ? -1 : 1)
             return true
         }
 

@@ -19,10 +19,15 @@ concurrency:
 jobs:
   test:
     name: Build and test
-    # Matched to the OS the app is developed and shipped against. `macos-latest` drifts, and this
-    # project reaches for private SkyLight symbols and a `#available(macOS 26.0, *)` branch whose
-    # behaviour is version-dependent — a runner a major version behind would be testing something
-    # subtly different from what ships.
+    # Pinned to the OS this app ships against, not the one it is developed on — those have come
+    # apart, and the pin deliberately follows the former. `macos-latest` drifts, and this project
+    # reaches for private SkyLight symbols and a `#available(macOS 26.0, *)` branch whose behaviour
+    # is version-dependent, so a runner chosen by anything other than the shipping floor is testing
+    # an OS nobody has decided to support.
+    #
+    # That development now happens a major version ahead costs this job nothing: everything it runs
+    # is OS-independent — the pure-logic suite, plus assembling the bundle. The version-dependent
+    # layer is the Accessibility harness, which is opt-in and never runs here (see README).
     runs-on: macos-26
     timeout-minutes: 20
 

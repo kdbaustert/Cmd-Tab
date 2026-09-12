@@ -14,7 +14,8 @@ A ⌘-Tab replacement for macOS, in the spirit of Command-Tab Plus 2. Switches b
 ./build.sh --install  # also copies to /Applications and launches it
 ```
 
-Requires Xcode. Built and tested against macOS 26.5 with Swift 6.3.
+Requires Xcode. Built against the macOS 26.5 SDK with Swift 6.3; verified running on macOS 27.0.
+Deployment floor is macOS 14 (`Package.swift`).
 
 ## First run
 
@@ -191,6 +192,30 @@ Notes that cost time if missed:
   nested code now, and signing it outside-in produces something that passes a local `codesign
   --verify` and fails notarisation.
 
+### Ad-hoc releases (no Apple Developer Program membership)
+
+`./release.sh --adhoc` is the path that needs neither a Developer ID certificate nor a paid
+membership: it builds the same universal, versioned bundle, signs it ad-hoc, packages it, and
+writes an appcast entry — it just never touches Apple's Notary Service. `release.yml` picks this
+mode automatically: with no `DEVELOPER_ID_P12_BASE64` secret configured, a pushed tag runs
+`--adhoc` instead of `--notarize` and nothing else about the workflow changes.
+
+```sh
+./release.sh --adhoc
+```
+
+The cost is entirely on the download side. Gatekeeper trusts a Developer ID signature's team
+identity; an ad-hoc signature carries none, so the first launch of a downloaded (quarantined)
+`Cmd-Tab.app` says it's damaged or from an unidentified developer. Either of these clears it:
+
+- Right-click `Cmd-Tab.app` → **Open** → **Open** in the dialog (once; not needed again after).
+- `xattr -cr /path/to/Cmd-Tab.app` in Terminal, which strips the quarantine flag directly.
+
+Sparkle's own update signing (the EdDSA key, `SPARKLE_PRIVATE_KEY`) is unrelated to Apple's program
+and is required either way — ad-hoc releases still get real, verified auto-updates. Switching to
+notarised releases later needs no changes here beyond adding the Developer ID secrets: `release.yml`
+reads their presence, not a mode flag, to decide.
+
 ## Updates
 
 Cmd-Tab updates itself with [Sparkle](https://sparkle-project.org). Before that, a release was a
@@ -258,8 +283,15 @@ take. Set `APPCAST_URL` to have it fetch the live feed first.
 ## Continuous integration
 
 Two workflows, both on `macos-26` — pinned rather than `macos-latest`, since this project reaches
-for private SkyLight symbols and has a `#available(macOS 26.0, *)` branch, and a runner a major
-version behind would be testing something subtly different from what ships.
+for private SkyLight symbols and has a `#available(macOS 26.0, *)` branch, so a runner picked by
+anything other than the OS this app ships against is testing a version nobody decided to support.
+
+The pin tracks that shipping floor, **not** the machine development happens on; those have come
+apart, and deliberately. Nothing either workflow runs is version-dependent — the pure-logic suite
+and the bundle-assembly check both hold on any recent macOS — so a dev machine running ahead of the
+runner costs CI nothing. The version-dependent layer is the [Accessibility
+harness](#the-accessibility-harness), which is opt-in and runs by hand, against whatever macOS is in
+front of you. That is the point of it: a new OS is exactly when it earns its keep.
 
 **`ci.yml`** — on every push and pull request. Builds, runs the suite, then assembles the app bundle
 and checks it came out whole. That last step is not redundant with the build: the `Info.plist` copy,
@@ -307,26 +339,32 @@ server as part of launching and XCTest never calls `NSApplication.run()`, so wit
 `AXWindows` read against our own pid returns `kAXErrorNotImplemented` (-25208). Measured with an
 identical probe one line apart: -25208 and zero windows against 0 and one window.
 
-**`release.yml`** — on a `v*` tag. Imports the Developer ID certificate into a throwaway keychain,
-imports the Sparkle key and checks it against `SUPublicEDKey`, stores notarisation credentials, runs
-`./release.sh --notarize`, publishes the GitHub release, and only then pushes the appcast to
-`gh-pages`. Ordering is deliberate: an appcast entry pointing at a release that failed to upload is
-an update every client tries and every client fails.
+**`release.yml`** — on a `v*` tag. First decides its mode: **notarize** if
+`DEVELOPER_ID_P12_BASE64` is configured as a repo secret, **adhoc** otherwise. In notarize mode it
+imports the Developer ID certificate into a throwaway keychain and stores notarisation credentials;
+either way it imports the Sparkle key and checks it against `SUPublicEDKey`, runs `./release.sh
+--notarize` or `./release.sh --adhoc` accordingly, publishes the GitHub release (with a Gatekeeper
+note in the release body for adhoc), and only then pushes the appcast to `gh-pages`. Ordering is
+deliberate: an appcast entry pointing at a release that failed to upload is an update every client
+tries and every client fails.
 
 It runs the same `release.sh` a maintainer runs by hand. A CI-only build path is one that stops
 working without anyone noticing until the day they need it.
 
 ### Secrets it needs
 
-| Secret | What it is |
-| --- | --- |
-| `DEVELOPER_ID_P12_BASE64` | The Developer ID Application certificate and key, as `base64 -i cert.p12`. |
-| `DEVELOPER_ID_P12_PASSWORD` | The password set when exporting that `.p12`. |
-| `KEYCHAIN_PASSWORD` | Any string. Unlocks the temporary keychain the job creates and destroys. |
-| `NOTARY_APPLE_ID` | Apple ID for the Notary Service. |
-| `NOTARY_TEAM_ID` | The 10-character team identifier. |
-| `NOTARY_PASSWORD` | An **app-specific** password, not the account password. |
-| `SPARKLE_PRIVATE_KEY` | The EdDSA private key, as printed by `generate_keys -x`. |
+| Secret | What it is | Needed for |
+| --- | --- | --- |
+| `DEVELOPER_ID_P12_BASE64` | The Developer ID Application certificate and key, as `base64 -i cert.p12`. | notarize mode only — its absence is what selects adhoc mode |
+| `DEVELOPER_ID_P12_PASSWORD` | The password set when exporting that `.p12`. | notarize mode |
+| `KEYCHAIN_PASSWORD` | Any string. Unlocks the temporary keychain the job creates and destroys. | notarize mode |
+| `NOTARY_APPLE_ID` | Apple ID for the Notary Service. | notarize mode |
+| `NOTARY_TEAM_ID` | The 10-character team identifier. | notarize mode |
+| `NOTARY_PASSWORD` | An **app-specific** password, not the account password. | notarize mode |
+| `SPARKLE_PRIVATE_KEY` | The EdDSA private key, as printed by `generate_keys -x`. | both modes — unrelated to Apple's program |
+
+Until the first six exist, every tagged release runs in adhoc mode automatically — see [Ad-hoc
+releases](#ad-hoc-releases-no-apple-developer-program-membership).
 
 GitHub Pages must be serving the `gh-pages` branch for `SUFeedURL` to resolve. The workflow creates
 that branch on the first release and writes a `.nojekyll` alongside the appcast, which stops Pages

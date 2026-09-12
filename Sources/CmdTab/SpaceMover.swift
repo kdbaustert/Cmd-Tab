@@ -7,12 +7,17 @@ import Foundation
 /// graceful no-op rather than a crash. Inherently best-effort and fragile across OS versions.
 ///
 /// Deliberately read-and-reveal only. *Moving* a window to another Space is not here because it
-/// cannot be done through these APIs from an ordinary process on macOS 26:
+/// cannot be done through these APIs from an ordinary process, still true as of macOS 27:
 /// `CGSMoveWindowsToManagedSpace`, `SLSMoveWindowsToManagedSpace` and the remove-then-add pair all
 /// resolve, are all accepted, and all silently do nothing for a window this process does not own.
 /// Re-measured on 26.6.2 with a control that settles what the failure means: the identical call
 /// moves the *calling process's own* window on the first try. They are gated on ownership, not
 /// broken, and the tools that get around it inject into Dock, which requires SIP partially disabled.
+///
+/// Re-checked on macOS 27 against another process's window (a TextEdit document, placed on Space 1,
+/// asked to move to Space 3): all three routes were accepted and all three left it on Space 1. The
+/// gate has not been relaxed, so `DesktopMover`'s gesture remains the only route — worth recording,
+/// because a major-version bump is exactly when this would have been worth re-testing.
 ///
 /// `DesktopMover` does the move instead, by driving the gesture a person would — see its header for
 /// the three cheaper routes that were measured dead first.

@@ -3,6 +3,19 @@ import CoreGraphics
 import Defaults
 import SwiftUI
 
+extension CGEventFlags {
+    /// ⌃⌥⇧⌘, the menu order macOS itself shows. Shared by `Hotkey.displayString` and
+    /// `ModifierChord.displayString`, which each built this run of `contains` checks separately.
+    static func symbols(for flags: CGEventFlags) -> String {
+        var out = ""
+        if flags.contains(.maskControl) { out += "⌃" }
+        if flags.contains(.maskAlternate) { out += "⌥" }
+        if flags.contains(.maskShift) { out += "⇧" }
+        if flags.contains(.maskCommand) { out += "⌘" }
+        return out
+    }
+}
+
 /// How the switcher orders its tiles.
 enum SortOrder: String, CaseIterable {
     case recentlyUsed
@@ -266,13 +279,7 @@ struct Hotkey: Equatable {
     }
 
     var displayString: String {
-        var parts = ""
-        if modifiers.contains(.maskControl) { parts += "⌃" }
-        if modifiers.contains(.maskAlternate) { parts += "⌥" }
-        if modifiers.contains(.maskShift) { parts += "⇧" }
-        if modifiers.contains(.maskCommand) { parts += "⌘" }
-        parts += Hotkey.keyName(for: keyCode)
-        return parts
+        CGEventFlags.symbols(for: modifiers) + Hotkey.keyName(for: keyCode)
     }
 
     static func keyName(for keyCode: Int) -> String {

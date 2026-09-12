@@ -1,8 +1,9 @@
 name: Release
 
 # Tag-driven, because a release is the one thing here that must not be reproducible by accident.
-# Pushing `v0.2.0` builds, signs, notarises, publishes the zip, and appends an entry to the appcast
-# that every existing install will see within a day.
+# Pushing `v0.2.0` builds, signs (notarising too if a Developer ID certificate secret is
+# configured), publishes the zip, and appends an entry to the appcast that every existing install
+# will see within a day. See "Determine release mode" below for how signing mode is chosen.
 on:
   push:
     tags: ['v*']
@@ -23,7 +24,7 @@ permissions:
 
 jobs:
   release:
-    name: Build, notarise and publish
+    name: Build, sign (or notarise) and publish
     runs-on: macos-26
     # Notarisation is a round trip through Apple's service and is usually minutes, occasionally
     # much longer. The default 360 would strand a release mid-flight.
@@ -49,11 +50,26 @@ jobs:
           # the update. The commit count is monotonic by construction and needs no manual bookkeeping.
           echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
 
+      # No Developer ID certificate secret configured yet (no paid Apple Developer Program
+      # membership) means this release is ad-hoc: no signing-identity import, no notarisation, just
+      # a built, versioned, appcast-published zip. Flip to "notarize" the day
+      # DEVELOPER_ID_P12_BASE64 is added as a repo secret — nothing else here needs to change.
+      - name: Determine release mode
+        id: mode
+        run: |
+          if [[ -n "${{ secrets.DEVELOPER_ID_P12_BASE64 }}" ]]; then
+            echo "mode=notarize" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
+          fi
+
       # A dedicated keychain rather than the runner's login one: it is unlocked with a password we
       # know, its timeout is ours to set, and it is destroyed with the runner. Importing a
       # Developer ID certificate into a shared keychain and leaving it there is how signing
-      # identities leak between jobs.
+      # identities leak between jobs. Only needed in "notarize" mode — ad-hoc signing needs no
+      # identity at all.
       - name: Import the Developer ID certificate
+        if: steps.mode.outputs.mode == 'notarize'
         env:
           CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
           CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
@@ -107,6 +123,7 @@ jobs:
           echo "Sparkle key matches Info.plist."
 
       - name: Store notarisation credentials
+        if: steps.mode.outputs.mode == 'notarize'
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
@@ -122,29 +139,41 @@ jobs:
 
       # Everything above is setup; this one line is the release. Deliberately the same script a
       # maintainer runs by hand — a CI-only build path is one that stops working without anyone
-      # noticing until the day they need it.
-      - name: Build, sign, notarise
+      # noticing until the day they need it. `--adhoc` vs `--notarize` is the only thing that
+      # differs between the two modes.
+      - name: Build, sign, (maybe) notarise
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD: ${{ steps.version.outputs.build }}
           NOTARY_PROFILE: Cmd-Tab
           APPCAST_URL: https://kdbaustert.github.io/Cmd-Tab/appcast.xml
           DOWNLOAD_URL_PREFIX: https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/
-        run: ./release.sh --notarize
+        run: |
+          if [[ "${{ steps.mode.outputs.mode }}" == "notarize" ]]; then
+            ./release.sh --notarize
+          else
+            ./release.sh --adhoc
+          fi
 
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -euo pipefail
           ASSET="build/releases/Cmd-Tab-$VERSION.zip"
           [[ -f "$ASSET" ]] || { echo "::error::missing $ASSET"; exit 1; }
+          NOTES=""
+          if [[ "$MODE" == "adhoc" ]]; then
+            NOTES=$'This build is ad-hoc signed, not notarised — there is no Apple Developer Program\nmembership behind it yet. macOS Gatekeeper will call the download damaged or from an\nunidentified developer on first launch. To open it: right-click Cmd-Tab.app → Open, or run\n`xattr -cr /path/to/Cmd-Tab.app` in Terminal.\n\n'
+          fi
           # --generate-notes writes the changelog from the commits since the last tag, which is the
           # same thing a hand-written one would say for a project of this shape.
           gh release create "$TAG" "$ASSET" \
             --title "Cmd-Tab $VERSION" \
+            --notes "$NOTES" \
             --generate-notes
 
       # Last, and only on success. An appcast entry pointing at a release that failed to upload is
