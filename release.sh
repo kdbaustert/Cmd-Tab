@@ -103,7 +103,7 @@ echo "==> Release identity: $IDENTITY"
 # of, so --adhoc skips both.
 HARDENED=1
 [[ "$ADHOC" == "1" ]] && HARDENED=0
-CODESIGN_IDENTITY="$IDENTITY" HARDENED="$HARDENED" UNIVERSAL=1 ./build.sh
+CODESIGN_IDENTITY="$IDENTITY" HARDENED="$HARDENED" RELEASE=1 UNIVERSAL=1 ./build.sh
 
 # ---------------------------------------------------------------- verify
 

@@ -111,7 +111,7 @@ fi
 # than the working tree, download it, and replace the developer's build with it — losing whatever
 # was being tested. Releases keep the feed; everything else has it stripped, which is what
 # `Updater.isConfigured` reads to grey out the update controls and say why.
-if [[ "${HARDENED:-0}" != "1" ]]; then
+if [[ "${RELEASE:-0}" != "1" ]]; then
     /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP/Contents/Info.plist" 2>/dev/null || true
 fi
 
