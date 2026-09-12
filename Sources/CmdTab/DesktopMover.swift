@@ -146,14 +146,16 @@ enum DesktopMover {
         // cannot recover from without clicking something themselves.
         let cursor = CGEvent(source: nil)?.location
         var released = false
-        // Hoisted above the `defer` so the cleanup can see whether the window was ever picked up.
+        // Hoisted above the `defer` so the cleanup can see whether the window was ever picked up,
+        // and where the pointer was last put.
         var grabbed = false
+        var point = plan.grabs[0]
         defer {
             // Only if the gesture did not get as far as its own release. A second `leftMouseUp` is
             // not free — it lands wherever the pointer is, which after a follow is the menu bar —
             // and posting one for tidiness on the path that already released is how a stray click
             // gets into somebody's session.
-            if !released { release(at: CGEvent(source: nil)?.location ?? plan.grab) }
+            if !released { release(at: CGEvent(source: nil)?.location ?? point) }
             closeMissionControlIfOpen()
             awaitMissionControlGone()
             // Every path that picked the window up puts it back, not just the one that finished.
@@ -169,29 +171,38 @@ enum DesktopMover {
             }
         }
 
-        CGWarpMouseCursorPosition(plan.grab)
-        usleep(cursorSettle)
-        post(.leftMouseDown, plan.grab)
-        usleep(pressSettle)
+        // One grab point at a time, in the plan's order, until the window comes along. A point
+        // that does not take is let go of before the next is tried: a button still down across
+        // the warp would turn into a drag of whatever the first press landed on.
+        for grab in plan.grabs {
+            CGWarpMouseCursorPosition(grab)
+            usleep(cursorSettle)
+            post(.leftMouseDown, grab)
+            usleep(pressSettle)
+            point = grab
 
-        // Small drags until the window actually moves. The window server does not treat a bare
-        // mouse-down as a drag in progress, and opening Mission Control without one leaves the
-        // window behind and simply shows Mission Control — so something has to convince it first.
-        //
-        // How many events that takes varies with what the owning app does on its mouse-down, and a
-        // fixed count has to be the worst case for everyone. `didGrab` is the exact signal, so it is
-        // the loop condition rather than a check afterwards.
-        var point = plan.grab
-        for index in 1...engageStepLimit {
-            point = CGPoint(x: plan.grab.x + CGFloat(index) * 5, y: plan.grab.y - CGFloat(index) * 2)
-            post(.leftMouseDragged, point, dx: 5, dy: -2)
-            usleep(stepInterval)
-            if didGrab(window: plan.window, from: plan.bounds) {
-                grabbed = true
-                break
+            // Small drags until the window actually moves. The window server does not treat a bare
+            // mouse-down as a drag in progress, and opening Mission Control without one leaves the
+            // window behind and simply shows Mission Control — so something has to convince it
+            // first.
+            //
+            // How many events that takes varies with what the owning app does on its mouse-down,
+            // and a fixed count has to be the worst case for everyone. `didGrab` is the exact
+            // signal, so it is the loop condition rather than a check afterwards.
+            for index in 1...engageStepLimit {
+                point = CGPoint(x: grab.x + CGFloat(index) * 5, y: grab.y - CGFloat(index) * 2)
+                post(.leftMouseDragged, point, dx: 5, dy: -2)
+                usleep(stepInterval)
+                if didGrab(window: plan.window, from: plan.bounds) {
+                    grabbed = true
+                    break
+                }
             }
+            if grabbed { break }
+            release(at: point)
         }
         guard grabbed else {
+            released = true
             Log.general.notice(
                 "desktop move: window \(plan.window, privacy: .public) did not follow the drag")
             return
@@ -282,8 +293,8 @@ enum DesktopMover {
 
     /// Waits for Mission Control to leave the screen, so the frame write below is not swallowed.
     ///
-    /// Same trade as `awaitLanding`: the Spaces Bar vanishing from the Dock's Accessibility tree is
-    /// the exact signal, where the sleep it replaced was a guess sized for a slow machine.
+    /// Same trade as `awaitLanding`: the Spaces Bar vanishing from Mission Control's Accessibility
+    /// tree is the exact signal, where the sleep it replaced was a guess sized for a slow machine.
     private static func awaitMissionControlGone() {
         for _ in 0..<Int(closeTimeout / pollInterval) {
             if spacesBarFrame() == nil { return }
@@ -323,7 +334,7 @@ enum DesktopMover {
     /// The press is accepted (`AXError` 0) well before it is *acted on*: coming straight off a drop
     /// that has only just landed, the first press is reliably swallowed, and the old code's cover
     /// for that was a fixed 400ms sleep before it — which every move paid whether it needed it or
-    /// not, and which this loop replaces with the signal itself. Mission Control leaving the Dock's
+    /// not, and which this loop replaces with the signal itself. Mission Control leaving its host's
     /// Accessibility tree is that signal.
     ///
     /// Repeating is safe: a press that was acted on takes the Spaces Bar with it, so the loop stops
@@ -384,8 +395,9 @@ enum DesktopMover {
         /// The frame the window had *before* the gesture. Both the reference `didGrab` compares
         /// against and the frame restored at the end.
         let bounds: CGRect
-        /// Where to take hold of the window: the middle of its title bar.
-        let grab: CGPoint
+        /// Where to take hold of the window, in order of preference: points along its title bar
+        /// that are uncovered and not sitting on a control. Never empty — see `grabPoints(for:)`.
+        let grabs: [CGPoint]
         /// 0-based index of the destination Desktop within its display's Spaces Bar.
         let destination: Int
         /// The destination's Space id. The drop is confirmed against this rather than slept
@@ -426,13 +438,23 @@ enum DesktopMover {
             return nil
         }
 
-        // The title bar's midpoint, and then a check that the point really belongs to this window.
-        // Without it a covered window would hand the drag to whatever is on top of it, and the
-        // gesture would move a window the user never selected — much worse than doing nothing.
-        let grab = CGPoint(x: bounds.midX, y: bounds.minY + titlebarInset)
-        guard topWindow(at: grab) == window else {
+        // Points along the title bar, each checked twice before it is worth a press. First that
+        // the point really belongs to this window: without that a covered window would hand the
+        // drag to whatever is on top of it, and the gesture would move a window the user never
+        // selected — much worse than doing nothing. Second that nothing under it is a control,
+        // because a press on one is a click on it rather than a drag: VS Code draws its own title
+        // bar with the Command Center search box dead centre, so the midpoint — which is the
+        // title bar in every native window — opened its quick-open picker and moved nothing,
+        // every time. Accessibility's hit test says what is there without pressing anything.
+        let grabs = grabPoints(for: bounds).filter {
+            topWindow(at: $0) == window && !isControl(at: $0)
+        }
+        guard !grabs.isEmpty else {
             Log.general.notice(
-                "desktop move: window \(window, privacy: .public) is covered at its title bar")
+                """
+                desktop move: window \(window, privacy: .public) has no title bar to grab; \
+                covered, or controls all along it
+                """)
             return nil
         }
 
@@ -456,10 +478,50 @@ enum DesktopMover {
             return nil
         }
         return Plan(
-            window: window, element: element, bounds: bounds, grab: grab,
+            window: window, element: element, bounds: bounds, grabs: grabs,
             destination: destination, destinationSpace: spaces[destination],
             display: displayBounds(containing: bounds))
     }
+
+    /// Where along the title bar to try taking hold, most likely first. Pure, so the order and
+    /// the bounds check can be tested without a window.
+    ///
+    /// The midpoint leads because it is the title bar in every native window and is what shipped.
+    /// The quarter points come next: a centred control — VS Code's Command Center, a browser's
+    /// address field — leaves the title bar free either side of it, and a quarter of the way
+    /// along is clear of the traffic lights on the left and the toolbar's trailing items on the
+    /// right for any window wide enough to have them. Last, just past the traffic lights, which
+    /// is title bar in even the most crowded toolbar. Points a narrow window cannot hold are
+    /// dropped rather than clamped, since a clamped one is a duplicate of its neighbour.
+    static func grabPoints(for bounds: CGRect) -> [CGPoint] {
+        let y = bounds.minY + titlebarInset
+        let xs = [
+            bounds.midX, bounds.minX + bounds.width * 0.25, bounds.minX + bounds.width * 0.75,
+            bounds.minX + leadingGrabInset,
+        ]
+        return xs.filter { $0 > bounds.minX && $0 < bounds.maxX }.map { CGPoint(x: $0, y: y) }
+    }
+
+    /// Whether what is under `point` is a control — something a press would operate rather than
+    /// drag. Anything Accessibility cannot see is taken as title bar, which is what an empty answer
+    /// there has always meant.
+    private static func isControl(at point: CGPoint) -> Bool {
+        var hit: AXUIElement?
+        let result = AXUIElementCopyElementAtPosition(
+            AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit)
+        guard result == .success, let hit,
+            let role = AX.copyString(hit, kAXRoleAttribute as String)
+        else { return false }
+        return controlRoles.contains(role)
+    }
+
+    /// Roles a press operates instead of dragging. Chromium reports its text inputs as
+    /// `AXScrollArea`, which is how VS Code's Command Center shows up; the rest are AppKit's own
+    /// toolbar and title bar controls.
+    private static let controlRoles: Set<String> = [
+        "AXButton", "AXCheckBox", "AXComboBox", "AXIncrementor", "AXMenuButton", "AXPopUpButton",
+        "AXRadioButton", "AXScrollArea", "AXSlider", "AXTextArea", "AXTextField",
+    ]
 
     /// Whether the drag actually took hold, judged by the window having moved.
     ///
@@ -488,12 +550,40 @@ enum DesktopMover {
             let buttons = desktopButtons(on: display, bar: bar)
             guard buttons.indices.contains(index) else { continue }
             // The button's own rectangle is the *label* under the thumbnail, and its reported y sits
-            // outside the Spaces Bar group. The x is right, so take that and aim at the middle of
-            // the bar itself, which is the thumbnail the label belongs to.
+            // outside the Spaces Bar group. The x is usable once corrected — see
+            // `thumbnailCentres` — and the y is the middle of the bar itself, which is the
+            // thumbnail the label belongs to.
             let aim = bar ?? CGRect(x: 0, y: 0, width: 0, height: defaultSpacesBarHeight)
-            return CGPoint(x: buttons[index].frame.midX, y: aim.minY + aim.height / 2)
+            let centres = thumbnailCentres(of: buttons.map(\.frame), in: aim)
+            return CGPoint(x: centres[index], y: aim.minY + aim.height / 2)
         }
         return nil
+    }
+
+    /// The x to drop on for each thumbnail, from the frames Accessibility reports for them.
+    ///
+    /// Not simply each frame's midpoint, because on macOS 27 the frames are wrong by half their
+    /// own width. Measured with a drag held on the bar and a screenshot of the same moment: six
+    /// frames 169 wide, reported at x = 599, 771, 942, 1113, 1284, 1456, against thumbnails whose
+    /// visible centres were at 600, 773, 944, 1114, 1287, 1458. Every frame's *left edge* sat on
+    /// its thumbnail's centre. Aiming at the midpoints put the drop 84 points to the right — on
+    /// the far edge of the destination's slot when moving forward, which happened to land, and
+    /// on the near edge of the *origin's* slot when moving back, which dropped the window on the
+    /// Desktop it was already on and read as "did not land". Same window, same gesture, and only
+    /// the direction of travel decided it.
+    ///
+    /// Corrected by centring rather than by taking `minX`, because that is the invariant with a
+    /// reason behind it: Mission Control centres the row of thumbnails on the bar, so the row of
+    /// frames should be centred there too, and however far it is off is how far every frame is
+    /// off. A row that is already centred — which is what the label frames of earlier macOS were,
+    /// where the midpoint was the right answer and shipped — is left exactly as it is. `minX`
+    /// would have been right for 27 alone and silently wrong for everything before it. Pure, so
+    /// both cases can be pinned down without Mission Control.
+    static func thumbnailCentres(of frames: [CGRect], in bar: CGRect) -> [CGFloat] {
+        guard let first = frames.first else { return [] }
+        let span = frames.dropFirst().reduce(first) { $0.union($1) }
+        let shift = bar.midX - span.midX
+        return frames.map { $0.midX + shift }
     }
 
     // MARK: - Mission Control's Accessibility tree
@@ -501,8 +591,8 @@ enum DesktopMover {
     /// Every "Desktop N" thumbnail in the Spaces Bar, in the order they are shown.
     ///
     /// Matched on the `AXDescription` — "exit to Desktop 3" — rather than the title, because the
-    /// title is localized and the description has proved the stable one. Both come from the Dock,
-    /// which is the process that draws Mission Control.
+    /// title is localized and the description has proved the stable one. Both come from whichever
+    /// process draws Mission Control — see `missionControlHosts`.
     /// The display a frame sits on, by its centre, falling back to the largest overlap.
     ///
     /// `CGDisplayBounds` rather than `NSScreen`, because everything here is already in the window
@@ -533,9 +623,9 @@ enum DesktopMover {
     ///
     /// Mission Control draws a Spaces Bar per display, and `plan.destination` counts Desktops within
     /// the window's *own* display — `SpaceMover.userSpaceIDs(ofDisplay:)` is per display too. Taking
-    /// every "exit to Desktop" button in the Dock's tree and indexing into the concatenation means
-    /// that on two displays the index can name a thumbnail on the other one, and the window lands on
-    /// the wrong Desktop entirely.
+    /// every "exit to Desktop" button in Mission Control's tree and indexing into the concatenation
+    /// means that on two displays the index can name a thumbnail on the other one, and the window
+    /// lands on the wrong Desktop entirely.
     ///
     /// Scoped by the **bar** first and the display second. x alone is not enough: two displays
     /// stacked vertically share an x range entirely, so an x-only filter keeps both bars' buttons
@@ -582,11 +672,13 @@ enum DesktopMover {
 
     private static func desktopButtons() -> [(element: AXUIElement, frame: CGRect)] {
         var out: [(element: AXUIElement, frame: CGRect)] = []
-        walk(dockElement()) { element, role, description in
-            guard role == "AXButton", description.hasPrefix(exitToDesktop),
-                let frame = elementFrame(element)
-            else { return }
-            out.append((element, frame))
+        for host in missionControlHosts() where out.isEmpty {
+            walk(host) { element, role, description in
+                guard role == "AXButton", description.hasPrefix(exitToDesktop),
+                    let frame = elementFrame(element)
+                else { return }
+                out.append((element, frame))
+            }
         }
         return out
     }
@@ -612,12 +704,14 @@ enum DesktopMover {
     /// no bar is a window that does not move at all.
     private static func spacesBarFrame(on display: CGRect? = nil) -> CGRect? {
         var found: [CGRect] = []
-        walk(dockElement()) { element, role, _ in
-            guard role == "AXGroup",
-                AX.copyString(element, kAXTitleAttribute as String) == spacesBarTitle,
-                let frame = elementFrame(element)
-            else { return }
-            found.append(frame)
+        for host in missionControlHosts() where found.isEmpty {
+            walk(host) { element, role, _ in
+                guard role == "AXGroup",
+                    AX.copyString(element, kAXTitleAttribute as String) == spacesBarTitle,
+                    let frame = elementFrame(element)
+                else { return }
+                found.append(frame)
+            }
         }
         return barIndex(in: found, on: display).map { found[$0] }
     }
@@ -645,13 +739,26 @@ enum DesktopMover {
         dockNotify(missionControl as CFString, 0)
     }
 
-    private static func dockElement() -> AXUIElement? {
-        guard
-            let dock = NSRunningApplication.runningApplications(
-                withBundleIdentifier: "com.apple.dock"
-            ).first
-        else { return nil }
-        return AXUIElementCreateApplication(dock.processIdentifier)
+    /// The processes that may be drawing Mission Control, most likely first.
+    ///
+    /// Two of them, because the tree moved house. Up to macOS 26 the Dock drew Mission Control and
+    /// its Accessibility tree — the Spaces Bar group, the "exit to Desktop N" buttons — hung off the
+    /// Dock's process. On macOS 27 (measured on 27.0, build 26A428) the identical tree hangs off
+    /// **WindowManager** instead, and the Dock keeps only an empty, zero-sized "Mission Control"
+    /// group where it used to be. The Dock still *opens* Mission Control on the notification; it
+    /// just no longer owns what appears. Walking the Dock alone therefore found nothing, every
+    /// move logged that the Spaces Bar never appeared, and — because the close guard depends on
+    /// finding the bar — Mission Control was left standing.
+    ///
+    /// Both are returned rather than one picked by OS version: callers stop at the first host that
+    /// yields anything, so on either OS only one tree is walked to completion, and a future macOS
+    /// that moves it again degrades to "not found" rather than to a version table that is wrong.
+    private static func missionControlHosts() -> [AXUIElement] {
+        ["com.apple.WindowManager", "com.apple.dock"].compactMap { bundleID in
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first.map {
+                AXUIElementCreateApplication($0.processIdentifier)
+            }
+        }
     }
 
     /// Depth-first walk of an Accessibility tree, handing each element to `visit` with the two
@@ -807,6 +914,9 @@ enum DesktopMover {
     /// halved; nothing depends on it being exact, only on it landing in the bar rather than in the
     /// content below it.
     private static let titlebarInset: CGFloat = 12
+    /// How far in from the left edge the last-resort grab point sits: past the traffic lights,
+    /// which end around 70 points in, with room to spare.
+    private static let leadingGrabInset: CGFloat = 90
     /// How long to wait for Mission Control, and how often to look. Generous — the open animation
     /// stretches with the number of windows on the Desktop, and the cost of being wrong here is a
     /// move that gives up for no visible reason.

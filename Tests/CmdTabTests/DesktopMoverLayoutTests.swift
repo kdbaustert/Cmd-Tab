@@ -149,4 +149,63 @@ final class DesktopMoverLayoutTests: XCTestCase {
         XCTAssertEqual(DesktopMover.buttonIndices(of: frames, on: display, bar: nil), all)
         XCTAssertEqual(DesktopMover.buttonIndices(of: frames, on: nil, bar: nil), all)
     }
+
+    // MARK: - Aiming at a thumbnail
+
+    /// The measured macOS 27 case: frames whose left edges sit on the thumbnail centres, so the
+    /// row as a whole is half a frame right of centre. Centring it puts each aim on `minX`.
+    func testFramesOffsetByHalfTheirWidthAreAimedAtTheirLeftEdge() {
+        let bar = CGRect(x: 0, y: 0, width: 2056, height: 194)
+        let xs: [CGFloat] = [599, 771, 942, 1113, 1284, 1456]
+        let frames = xs.map { CGRect(x: $0, y: 125, width: 169, height: 129) }
+        let centres = DesktopMover.thumbnailCentres(of: frames, in: bar)
+        for (centre, x) in zip(centres, xs) {
+            XCTAssertEqual(centre, x, accuracy: 2)
+        }
+    }
+
+    /// Label frames already centred on the bar — what earlier macOS reported — are left alone, so
+    /// the midpoint that shipped stays the answer there.
+    func testFramesAlreadyCentredKeepTheirMidpoints() {
+        let bar = CGRect(x: 0, y: 0, width: 2000, height: 78)
+        let frames = [800, 940, 1080].map { CGRect(x: $0, y: 84, width: 120, height: 14) }
+        XCTAssertEqual(
+            DesktopMover.thumbnailCentres(of: frames, in: bar), frames.map(\.midX))
+    }
+
+    /// A bar on a second display corrects against that bar, not the first one's.
+    func testCentringUsesTheBarItWasGiven() {
+        let bar = CGRect(x: 2056, y: 0, width: 1440, height: 194)
+        let frames = [2600, 2770].map { CGRect(x: $0, y: 125, width: 169, height: 129) }
+        let centres = DesktopMover.thumbnailCentres(of: frames, in: bar)
+        XCTAssertEqual((centres[0] + centres[1]) / 2, bar.midX, accuracy: 0.001)
+        XCTAssertEqual(centres[1] - centres[0], 170)
+    }
+
+    func testNoFramesGiveNoCentres() {
+        XCTAssertEqual(DesktopMover.thumbnailCentres(of: [], in: .zero), [])
+    }
+
+    // MARK: - Taking hold
+
+    /// The midpoint leads, because it is what shipped and it is the title bar in every native
+    /// window; the rest sit either side of a centred control, all on the same title-bar row.
+    func testGrabPointsLeadWithTheMidpointAndStayOnTheTitleBar() {
+        let bounds = CGRect(x: 100, y: 50, width: 1200, height: 800)
+        let points = DesktopMover.grabPoints(for: bounds)
+        XCTAssertEqual(points.first?.x, bounds.midX)
+        XCTAssertEqual(points.count, 4)
+        XCTAssertEqual(Set(points.map(\.y)).count, 1)
+        XCTAssertTrue(points.allSatisfy { $0.y > bounds.minY && $0.y < bounds.minY + 30 })
+        XCTAssertTrue(points.allSatisfy { $0.x > bounds.minX && $0.x < bounds.maxX })
+        XCTAssertEqual(Set(points.map(\.x)).count, points.count, "no point is tried twice")
+    }
+
+    /// A window too narrow to hold a point loses it rather than getting a clamped duplicate.
+    func testGrabPointsANarrowWindowCannotHoldAreDropped() {
+        let narrow = CGRect(x: 0, y: 0, width: 80, height: 300)
+        let points = DesktopMover.grabPoints(for: narrow)
+        XCTAssertEqual(points.count, 3)
+        XCTAssertTrue(points.allSatisfy { $0.x > narrow.minX && $0.x < narrow.maxX })
+    }
 }
