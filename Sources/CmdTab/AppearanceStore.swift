@@ -13,6 +13,9 @@ final class AppearanceStore: ObservableObject {
         static let titleSpacing = "titleSpacing"
     }
 
+    /// Every key this store owns, for export/import/reset.
+    static let defaultsKeys = [Key.iconSize, Key.iconSpacing, Key.titleSpacing]
+
     /// Fired after every change so the panel can resize itself.
     var onChange: ((Metrics) -> Void)?
 

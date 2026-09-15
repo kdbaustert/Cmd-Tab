@@ -62,7 +62,10 @@ if [[ -z "$IDENTITY" ]]; then
     COUNT=$(printf '%s' "$FOUND" | grep -c . || true)
     if [[ "$COUNT" -gt 1 ]]; then
         echo "==> ERROR: several Developer ID certificates found; pick one with CODESIGN_IDENTITY:" >&2
-        printf '      %s\n' $FOUND >&2
+        # Indented with `sed` rather than by word-splitting `$FOUND` into `printf`: a common name
+        # contains spaces ("Developer ID Application: Name (TEAMID)"), so splitting on IFS would
+        # print one word per line instead of one certificate per line.
+        printf '%s\n' "$FOUND" | sed 's/^/      /' >&2
         exit 1
     fi
     IDENTITY="$FOUND"

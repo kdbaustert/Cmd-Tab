@@ -1058,24 +1058,36 @@ after that. Remove the identity in Keychain Access to undo it.
 | `FavoritesStore.swift` | Pinned apps, in the user's order, shown as launchable tiles when not running |
 | `EventTap.swift` | Session event tap; swallows keys, self-heals if the system disables it |
 | `SwitcherController.swift` | State machine — decides what to swallow and when to commit |
+| `TapState.swift` | Everything that decision needs, as one value the callback can read without reaching into the controller |
 | `TapRouting.swift` | Which binding claims a keystroke when the switcher is closed, and whether it is swallowed — pure, and tested |
+| `TriggerModifiers.swift` | The modifier arithmetic behind the trigger chord — pure, and tested |
+| `SessionOpen.swift` | When a session begins — pure, and tested |
+| `SessionRelease.swift` | When a session ends, and whether the panel closes or stays — pure, and tested |
 | `SwitcherSettings.swift` | Every preference the switcher reads, as one value applied in a single pass |
 | `RecencyList.swift` | The bounded MRU list behind both "Recently used" orders |
 | `TargetProvider.swift` | Enumerates apps/windows, maintains MRU, caches off-thread |
 | `SwitcherPanel.swift` | Non-activating overlay window |
+| `PanelGroup.swift` | The set of panels — one, or one per display when mirroring — and the cursor poll they share |
 | `SwitcherView.swift` | SwiftUI tile grid and list, and the `Metrics` both are laid out from |
+| `SwitcherModel.swift` | Resolves the chosen title font, so the switcher and the Settings preview agree |
 | `WindowPreview.swift` | Window-preview capture (ScreenCaptureKit), its floating panel, and the three ways it asks an app which of its windows are real — see [Windows that are not there any more](#windows-that-are-not-there-any-more) |
+| `PreviewCoordinator.swift` | Owns the hover preview: the debounce before a capture starts, and the grace period before it goes |
 | `TileThumbnails.swift` | Live window captures drawn as tile artwork in window mode |
 | `SwitchTarget.swift` | An app or window, and how to raise it |
 | `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |
 | `ExclusionStore.swift` | The set of excluded apps, persisted by bundle identifier |
 | `AppearanceStore.swift` | The four appearance values, persisted |
+| `BehaviorStore.swift` | Every tunable that is not an appearance slider, coalescing a batch of writes into one `onChange` |
+| `Theme.swift` | A named bundle of *visual* settings — shareable precisely because it cannot change what a key does |
 | `SettingsWindow.swift` | Settings window shell, the search index, and the General/Shortcuts/Behavior tabs |
 | `SettingsChrome.swift` | The settings window's vocabulary: pages, section cards, rows, sidebar badges |
 | `SettingsAppearance.swift` | The Appearance tab — layout, theme, panel and the metric sliders |
 | `SettingsApps.swift` | The Apps tab — the app list with its favourite and exclude controls |
 | `SettingsAbout.swift` | The About tab — version, permission status, source link |
 | `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
+| `SettingsRecorders.swift` | The one armed key recorder, whichever kind it is — two at once would swallow keys app-wide |
+| `SettingsGlobalRecorder.swift` | Records one global chord, with the keyboard monitor owned by the store rather than the view |
+| `SettingsIO.swift` | Export, import and reset over the owned keys, reloading the live stores so nothing needs a relaunch |
 | `WindowTiling.swift` | Tiling geometry, the binding store, and the Accessibility frame writer |
 | `WindowNavigation.swift` | Which window lies in a direction from another — pure, and tested — and the focus and swap chords built on it |
 | `PowerState.swift` | Whether to poll sparingly, and by how much — see [Two timers](#two-timers-and-what-they-cost-on-battery) |
@@ -1088,12 +1100,22 @@ after that. Remove the identity in Keychain Access to undo it.
 | `FuzzyMatch.swift` | Subsequence matching with scoring, for type-to-filter |
 | `InstalledApps.swift` | The installed-app catalogue behind launch-from-search |
 | `AppRules.swift` | Per-app overrides (expand windows, never tile) |
+| `LaunchArrangement.swift` | Snaps an app's first window to a chosen arrangement as it opens |
 | `GlobalActions.swift` | Direct-activation and hide/show-all chords, and what they do |
+| `SwitcherShortcuts.swift` | The window actions available while the switcher is open, and their extra-modifier bindings |
 | `ScopedTriggers.swift` | Extra triggers that open a narrowed window list |
 | `ConfigFile.swift` | The `~/.config` mirror: file watching, write-back, live apply |
 | `WindowClassification.swift` | Whether an Accessibility window belongs in the switcher — pure, and tested |
 | `Updater.swift` | Sparkle, and the update preferences surfaced in Settings → About |
 | `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
+| `FrontProcess.swift` | Brings one window forward without dragging its siblings off the Desktops they live on |
+| `DockBadges.swift` | Reads other apps' Dock badges out of the Dock's Accessibility tree |
+| `Permissions.swift` | The Accessibility and Screen Recording grants, and how each is asked for |
+| `LoginItemStore.swift` | Launch at login, backed by `SMAppService` so the system's list stays the truth |
+| `MainLoopMonitor.swift` | Measures how long the main run loop stays busy — the number the tap's survival turns on |
+| `Log.swift` | The loggers, and the verbose tap tracing that exists only in a live stream |
+| `AppDelegate.swift` | Wires every store to the controller at launch, and owns the menu bar item |
+| `main.swift` | Entry point, and the recovery path for a ⌘-Tab takeover that outlived its process |
 
 ## Design notes
 

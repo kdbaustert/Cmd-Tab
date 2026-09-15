@@ -11,6 +11,9 @@ final class ExclusionStore: ObservableObject {
 
     private static let defaultsKey = "excludedBundleIDs"
 
+    /// Every key this store owns, for export/import/reset.
+    static let defaultsKeys = [defaultsKey]
+
     @Published private(set) var excluded: Set<String> = []
 
     /// Fired after every change so the switcher can rebuild its list. The provider is handed the

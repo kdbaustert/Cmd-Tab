@@ -146,7 +146,9 @@ final class TileThumbnails: ObservableObject {
             if Task.isCancelled || generation != self.generation { break }
             // Published per batch rather than per image: each assignment redraws every tile bound to
             // this object, and a thirty-window list would otherwise lay the panel out thirty times.
-            for (id, image) in captured { images[id] = image }
+            // One `merge` rather than a loop of subscript assignments, because `images` is
+            // `@Published` and every one of those is its own `objectWillChange`.
+            images.merge(captured) { _, new in new }
         }
         release(ids, generation: generation)
     }
@@ -163,16 +165,9 @@ final class TileThumbnails: ObservableObject {
     }
 
     private nonisolated static func image(of window: SCWindow) async -> CGImage? {
-        let filter = SCContentFilter(desktopIndependentWindow: window)
-        let config = SCStreamConfiguration()
-        // Rendered straight to thumbnail size rather than captured full-res and scaled after.
-        let scale = min(1, maxHeight / max(window.frame.height, 1))
-        config.width = max(Int(window.frame.width * scale), 1)
-        config.height = max(Int(window.frame.height * scale), 1)
-        config.showsCursor = false
-        guard
-            let image = try? await SCScreenshotManager.captureImage(
-                contentFilter: filter, configuration: config)
+        // The hover preview's capture, which renders straight to thumbnail size rather than
+        // capturing full-res and scaling after. Shared so the downscale policy has one home.
+        guard let image = try? await WindowCapture.capture(window, maxHeight: maxHeight)
         else { return nil }
         // The same blank check the hover preview applies, and for the same reason: Electron and
         // Catalyst apps expose phantom backing windows with no content, and a tile showing an empty

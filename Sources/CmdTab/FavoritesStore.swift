@@ -12,6 +12,9 @@ final class FavoritesStore: ObservableObject {
 
     private static let defaultsKey = "favoriteBundleIDs"
 
+    /// Every key this store owns, for export/import/reset.
+    static let defaultsKeys = [defaultsKey]
+
     @Published private(set) var favorites: [String] = []
 
     /// Fired after every change so the switcher can rebuild its list with the launchable tiles.

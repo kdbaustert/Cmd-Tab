@@ -331,9 +331,7 @@ struct AppsSettings: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, SettingsChrome.rowInset)
         .padding(.vertical, 5)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 0.5)
-        }
+        .settingsRowDivider()
     }
 
     private var summary: String {
@@ -563,12 +561,7 @@ private struct FavoriteOrderRow: View {
         } isTargeted: { targeted in
             isTargeted = targeted
         }
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.07))
-                .frame(height: SettingsChrome.hairline)
-                .padding(.leading, 44)
-        }
+        .settingsRowDivider(leadingInset: 44)
     }
 }
 
@@ -627,12 +620,7 @@ private struct AppRow: View {
         .contentShape(Rectangle())
         // Rows sit directly in the section card, so each carries the hairline that separates it
         // from the one above — the same treatment `SettingsRow` gives itself.
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.07))
-                .frame(height: SettingsChrome.hairline)
-                .padding(.leading, 44)
-        }
+        .settingsRowDivider(leadingInset: 44)
     }
 }
 

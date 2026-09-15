@@ -701,10 +701,15 @@ struct GeneralSettings: View {
 
     private func resetSettings() {
         let alert = NSAlert()
+        alert.alertStyle = .warning
         alert.messageText = "Reset all settings to defaults?"
         alert.informativeText = "This clears every Cmd-Tab preference, including excluded apps."
-        alert.addButton(withTitle: "Reset")
+        let reset = alert.addButton(withTitle: "Reset")
         alert.addButton(withTitle: "Cancel")
+        reset.hasDestructiveAction = true
+        // The same guard `AppsSettings.clearAll()` carries, and this alert has the wider blast
+        // radius of the two: Return should not be what discards every preference in the app.
+        reset.keyEquivalent = ""
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         SettingsIO.reset()
     }

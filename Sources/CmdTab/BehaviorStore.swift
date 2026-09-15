@@ -478,13 +478,12 @@ final class BehaviorStore: ObservableObject {
         .verboseLogging,
     ]
 
-    /// Keys belonging to the *other* stores, which export/import/reset also cover. Listed by name
-    /// because those stores still reach `UserDefaults` directly.
+    /// Keys belonging to the *other* stores, which export/import/reset also cover. Each store names
+    /// its own, so renaming a key there cannot quietly drop it out of export and reset.
     private static let otherStoreKeys =
-        [
-            "iconSize", "iconSpacing", "titleSpacing",
-            "excludedBundleIDs", "favoriteBundleIDs",
-        ] + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
+        AppearanceStore.defaultsKeys + ExclusionStore.defaultsKeys + FavoritesStore.defaultsKeys
+        + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys
+        + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
         + SwitcherShortcutsStore.defaultsKeys + Updater.exportedDefaultsKeys
 
     /// The keys export/import/reset operate on.

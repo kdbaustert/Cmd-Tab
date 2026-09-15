@@ -732,7 +732,11 @@ actor WindowCapture {
     /// The AppKit action every windows-menu item carries. Not localized, unlike the menu's title.
     private static let raiseWindowAction = "makeKeyAndOrderFront:"
 
-    private static func capture(_ window: SCWindow, maxHeight: CGFloat) async throws -> CGImage? {
+    /// Shared with `TileThumbnails`, for the same reason `isBlankImage` is: both features want a
+    /// window rendered straight to thumbnail size, and a downscale policy that lived in two places
+    /// would be retuned in one of them.
+    nonisolated static func capture(_ window: SCWindow, maxHeight: CGFloat) async throws -> CGImage?
+    {
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
         // Rendered straight to thumbnail size rather than captured full-res and scaled after.

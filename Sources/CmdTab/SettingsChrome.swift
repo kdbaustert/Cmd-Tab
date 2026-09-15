@@ -310,11 +310,16 @@ struct SettingsWideRow<Content: View>: View {
 extension View {
     /// The hairline above a row. Drawn on every row rather than every row but the first: the first
     /// one lands on the card's own top edge, under the border stroke, so it costs nothing.
-    fileprivate func settingsRowDivider() -> some View {
+    ///
+    /// `leadingInset` starts the line past a row's leading column. The Apps tab's rows open with a
+    /// 44pt icon well and want the rule to begin at the name, which is why this is not `fileprivate`
+    /// — two rows over there were drawing their own copy of it to get that.
+    func settingsRowDivider(leadingInset: CGFloat = 0) -> some View {
         overlay(alignment: .top) {
             Rectangle()
                 .fill(SettingsChrome.divider)
                 .frame(height: SettingsChrome.hairline)
+                .padding(.leading, leadingInset)
         }
     }
 }
