@@ -70,6 +70,9 @@ final class DragSnap {
     /// nudged right puts those on different monitors, so the user was shown one and given the
     /// other.
     private var currentArea: CGRect?
+    /// The index in `NSScreen.screens` of the display the cursor was last seen on — the cheap half
+    /// of the zone-change guard in `mouseDragged`.
+    private var currentScreen: Int?
     /// How long after the press this drag may keep asking whether its window has moved yet.
     ///
     /// The check is a window-server round trip, it runs on the main thread — the one servicing the
@@ -160,16 +163,24 @@ final class DragSnap {
         }
         // The screen resolved once and both answers taken from it, rather than `zone(for:)` and
         // `visibleArea(containing:)` each doing their own `NSScreen` lookup. That also removes the
-        // question of whether the two could disagree — and keeps `currentArea` honest across a
-        // cursor that crosses displays without changing which zone it is in, which the zone-change
-        // guard below would otherwise skip right over.
-        let index = NSScreen.screens.firstIndex { NSMouseInRect(point, $0.frame, false) }
-        let zone = index.flatMap { Self.zone(for: point, in: NSScreen.screens[$0].frame) }
-        let area = zone == nil ? nil : index.flatMap(Self.visibleArea(atScreen:))
-        currentArea = area
-        guard zone != currentZone else { return }
+        // question of whether the two could disagree.
+        //
+        // The guard compares the screen as well as the zone. The same zone recurring on an adjacent
+        // display — the left edge of one monitor, then the left edge of the next — is a change:
+        // `currentArea` used to follow the cursor there while the preview, gated on the zone alone,
+        // stayed drawn on the display it had left, so the user was shown one monitor and given the
+        // other. The screen *index* rather than the area, because the index is already in hand from
+        // the lookup above, where the area is a walk of every display's visible frame — which ran
+        // on every drag event near an edge, ahead of the guard, and now runs only when something
+        // the preview shows has changed.
+        let screens = NSScreen.screens
+        let index = screens.firstIndex { NSMouseInRect(point, $0.frame, false) }
+        let zone = index.flatMap { Self.zone(for: point, in: screens[$0].frame) }
+        guard zone != currentZone || index != currentScreen else { return }
         currentZone = zone
-        if let zone, let area,
+        currentScreen = index
+        currentArea = zone == nil ? nil : index.flatMap(Self.visibleArea(atScreen:))
+        if let zone, let area = currentArea,
             let frame = zone.frame(in: area, current: area, fraction: 0.5) {
             preview.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
         } else {
@@ -218,6 +229,7 @@ final class DragSnap {
         initialBounds = nil
         currentZone = nil
         currentArea = nil
+        currentScreen = nil
         moveCheckDeadline = nil
         preview.hide()
     }

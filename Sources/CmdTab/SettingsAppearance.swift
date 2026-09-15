@@ -5,7 +5,7 @@ struct AppearanceSettings: View {
     @ObservedObject var appearance: AppearanceStore
     @ObservedObject var behavior: BehaviorStore
     @ObservedObject private var themes = ThemeStore.shared
-    @StateObject private var apps = AppListModel()
+    @ObservedObject var apps: AppListModel
 
     private var metrics: Metrics { appearance.metrics }
     private static let customLabel = "Custom…"

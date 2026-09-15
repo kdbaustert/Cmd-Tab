@@ -92,7 +92,13 @@ cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/"
 
 # @executable_path/../Frameworks — the standard place, and the reason this works from /Applications
 # as readily as from build/.
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/CmdTab" 2>/dev/null || true
+# Only when it is missing. `-add_rpath` refuses a duplicate, and the `|| true` that used to absorb
+# that absorbed every other failure with it — leaving a binary with no rpath to crash on its first
+# Sparkle call, past a `codesign --verify` that checks nothing about rpaths. `grep` without `-q` so
+# it reads otool to the end: under `pipefail` an early exit would fail the pipeline instead.
+if ! otool -l "$APP/Contents/MacOS/CmdTab" | grep -F -- '@executable_path/../Frameworks' >/dev/null; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/CmdTab"
+fi
 # install_name_tool invalidates whatever ad-hoc signature the linker left behind. Harmless, since
 # the real signing happens below, but it means the binary is unsigned between here and there.
 

@@ -42,8 +42,8 @@ enum DockBadges {
         // The Dock nests its items one list down; take every list so a future rearrangement does not
         // silently return nothing.
         var badges: [String: String] = [:]
-        for list in children(of: app) {
-            for item in children(of: list) {
+        for list in AX.children(of: app) {
+            for item in AX.children(of: list) {
                 guard let label = AX.copyString(item, "AXStatusLabel"),
                     !label.isEmpty,
                     let id = bundleID(of: item)
@@ -65,15 +65,5 @@ enum DockBadges {
             let url = value as? URL
         else { return nil }
         return Bundle(url: url)?.bundleIdentifier
-    }
-
-    private static func children(of element: AXUIElement) -> [AXUIElement] {
-        var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value)
-                == .success,
-            let children = value as? [AXUIElement]
-        else { return [] }
-        return children
     }
 }

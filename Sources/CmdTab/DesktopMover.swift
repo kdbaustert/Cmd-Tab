@@ -553,9 +553,13 @@ enum DesktopMover {
             // outside the Spaces Bar group. The x is usable once corrected — see
             // `thumbnailCentres` — and the y is the middle of the bar itself, which is the
             // thumbnail the label belongs to.
-            let aim = bar ?? CGRect(x: 0, y: 0, width: 0, height: defaultSpacesBarHeight)
-            let centres = thumbnailCentres(of: buttons.map(\.frame), in: aim)
-            return CGPoint(x: centres[index], y: aim.minY + aim.height / 2)
+            //
+            // The x correction needs the bar. Without one it is the label's own midpoint, not a
+            // centring against a placeholder: a zero-width stand-in at the origin has a midX of 0,
+            // and centring the row on it dragged every centre there.
+            let frames = buttons.map(\.frame)
+            let x = bar.map { thumbnailCentres(of: frames, in: $0)[index] } ?? frames[index].midX
+            return CGPoint(x: x, y: bar?.midY ?? defaultSpacesBarHeight / 2)
         }
         return nil
     }

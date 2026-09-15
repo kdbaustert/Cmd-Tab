@@ -231,9 +231,10 @@ final class SwitcherModel: ObservableObject {
         query = new
         // Keep all targets visible, track which indices match
         targets = composed
-        matchingIndices = Self.matchingIndices(targets, query: query)
+        let matches = Self.matches(targets, query: query)
+        matchingIndices = Self.matchingIndices(matches)
         // The *best* match, not the first one in list order — see `bestMatch`.
-        if let best = Self.bestMatch(targets, query: query) {
+        if let best = Self.bestMatch(matches) {
             selection = best
         }
     }
@@ -248,11 +249,12 @@ final class SwitcherModel: ObservableObject {
 
     private func reapply(anchor: String?) {
         targets = composed
-        matchingIndices = Self.matchingIndices(targets, query: query)
+        let matches = Self.matches(targets, query: query)
+        matchingIndices = Self.matchingIndices(matches)
         if let anchor, let index = targets.firstIndex(where: { $0.id == anchor }),
            (matchingIndices.isEmpty || matchingIndices.contains(index)) {
             selection = index
-        } else if let best = Self.bestMatch(targets, query: query) {
+        } else if let best = Self.bestMatch(matches) {
             selection = best
         } else {
             selection = targets.isEmpty ? 0 : min(selection, targets.count - 1)
@@ -271,8 +273,31 @@ final class SwitcherModel: ObservableObject {
     /// An empty set is how "no filter" is spelled, which is why an empty or whitespace-only query
     /// answers with one rather than with everything.
     static func matchingIndices(_ list: [SwitchTarget], query: String) -> Set<Int> {
+        matchingIndices(matches(list, query: query))
+    }
+
+    private static func matchingIndices(_ matches: [Match]) -> Set<Int> {
+        Set(matches.map(\.index))
+    }
+
+    /// A target that answers the query, and what it scored.
+    ///
+    /// One pass feeds both `matchingIndices` and `bestMatch`. Each used to score the whole list for
+    /// itself, and a keystroke asks for both — so type-to-filter fuzzy-matched every target twice
+    /// per key, on the path the tap callback is waiting on.
+    private struct Match {
+        let index: Int
+        let score: Int
+        let running: Bool
+    }
+
+    private static func matches(_ list: [SwitchTarget], query: String) -> [Match] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return Set(list.indices.filter { score(list[$0], query: query) != nil })
+        return list.indices.compactMap { index in
+            score(list[index], query: query).map {
+                Match(index: index, score: $0, running: !list[index].isLaunchable)
+            }
+        }
     }
 
     /// The best index to select for a query: the highest-scoring match rather than the first one in
@@ -291,20 +316,22 @@ final class SwitcherModel: ObservableObject {
     /// *there* — one arrow key away, and selected the moment nothing running answers the query —
     /// which is the whole difference between offering a launcher and displacing the switcher.
     static func bestMatch(_ list: [SwitchTarget], query: String) -> Int? {
-        var best: (index: Int, score: Int, running: Bool)?
-        for index in list.indices {
-            guard let score = score(list[index], query: query) else { continue }
-            let running = !list[index].isLaunchable
+        bestMatch(matches(list, query: query))
+    }
+
+    private static func bestMatch(_ matches: [Match]) -> Int? {
+        var best: Match?
+        for match in matches {
             guard let current = best else {
-                best = (index, score, running)
+                best = match
                 continue
             }
             // Running beats launchable outright; within a group, the higher score wins and ties
             // break towards the earlier index.
-            if running != current.running {
-                if running { best = (index, score, running) }
-            } else if score > current.score {
-                best = (index, score, running)
+            if match.running != current.running {
+                if match.running { best = match }
+            } else if match.score > current.score {
+                best = match
             }
         }
         return best?.index

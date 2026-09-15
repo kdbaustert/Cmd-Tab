@@ -256,6 +256,7 @@ final class SwitcherController {
     var actionsEnabled = false {
         didSet {
             publishTapState()
+            warnAboutShadowedActions()
             // The pointer's one action. Mirrored onto the model rather than read from here, because
             // the view has no route back to the controller — and mirrored from the *same* switch the
             // keys answer to, so the button can never appear on a session where ⌥W would do nothing.

@@ -137,6 +137,12 @@ jobs:
             --password "$NOTARY_PASSWORD" \
             --keychain "$RUNNER_TEMP/build.keychain-db"
 
+      # The same suite CI runs, run again here rather than trusted: a tag is its own trigger, so
+      # nothing ties it to a green run on the commit it points at, and a release cut from one whose
+      # tests failed would build, sign and publish all the same.
+      - name: Test
+        run: swift test
+
       # Everything above is setup; this one line is the release. Deliberately the same script a
       # maintainer runs by hand — a CI-only build path is one that stops working without anyone
       # noticing until the day they need it. `--adhoc` vs `--notarize` is the only thing that

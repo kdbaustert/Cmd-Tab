@@ -114,7 +114,7 @@ final class AppListModel: ObservableObject {
 struct AppsSettings: View {
     @ObservedObject var store: ExclusionStore
     @ObservedObject var favorites: FavoritesStore
-    @StateObject private var apps = AppListModel()
+    @ObservedObject var apps: AppListModel
     @ObservedObject private var globals = GlobalActionsStore.shared
     @ObservedObject private var rules = AppRulesStore.shared
     @ObservedObject private var behavior = BehaviorStore.shared

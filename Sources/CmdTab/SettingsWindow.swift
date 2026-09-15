@@ -366,6 +366,11 @@ struct SettingsRootView: View {
     @State private var jump: String?
     /// Anchor currently outlined. See `SettingsChrome`'s `settingsFlash`.
     @State private var flash: String?
+    /// The app list both the Apps and Appearance tabs draw from, owned here so it outlives a tab
+    /// switch. Each tab used to build its own: a full walk of the running apps, a LaunchServices
+    /// lookup per favourite or exclusion that is not running, and a pair of workspace observers —
+    /// paid again on every visit, and paid in full by Appearance for the four icons in its preview.
+    @StateObject private var apps = AppListModel()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -515,9 +520,9 @@ struct SettingsRootView: View {
         case .behavior:
             BehaviorSettings(behavior: .shared)
         case .appearance:
-            AppearanceSettings(appearance: .shared, behavior: .shared)
+            AppearanceSettings(appearance: .shared, behavior: .shared, apps: apps)
         case .apps:
-            AppsSettings(store: .shared, favorites: .shared)
+            AppsSettings(store: .shared, favorites: .shared, apps: apps)
         case .about:
             AboutSettings()
         }
