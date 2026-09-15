@@ -49,7 +49,9 @@ struct WindowThumb: Identifiable {
     /// False for a window on a Desktop macOS will not travel to, which is decided by the app rather
     /// than by the window: an app with anything on screen anywhere is one macOS declines to travel
     /// for, and a second display holding a single Space makes that permanent for every app with a
-    /// window on it. See `SwitchTarget.canReach`, which is the same call the pick itself makes.
+    /// window on it. See `SwitchTarget.canReach`, which is the same call the pick itself makes —
+    /// unless the app's Window menu lists the window, in which case the pick presses that entry
+    /// and gets there, so the thumbnail is offered as reachable.
     ///
     /// Carried on the thumbnail rather than resolved at click time because the point is to say so
     /// *before* the click — the failure is silent and there is nothing to show afterwards.
@@ -317,7 +319,13 @@ actor WindowCapture {
         // The app's Window menu, read only when there is something a veto could act on. Most apps
         // most of the time have no docked window at all, and this walks every menu in the bar.
         let hasDocked = live.contains { dockedIDs.contains($0.windowID) }
-        let menuTitles = hasDocked ? await menuWindowTitles(for: pid) : []
+        // Also read when a window is one macOS will not travel to: the pick reaches those through
+        // the app's own Window menu (see `SwitchTarget.pressWindowMenuItem`), so a window with an
+        // entry there is reachable after all and must not be badged as if the click were dead.
+        let hasUnreachable = live.contains {
+            !SwitchTarget.canReach(state: placed[$0.windowID], appHasWindowOnScreen: appOnScreen)
+        }
+        let menuTitles = hasDocked || hasUnreachable ? await menuWindowTitles(for: pid) : []
         let claim = Self.claim(
             fresh: ax, menuTitles: menuTitles, remembered: lastUsableAX[pid], now: Date(),
             lifetime: usableAXLifetime)
@@ -377,7 +385,8 @@ actor WindowCapture {
                 displayIndex: isDocked
                     ? nil : WindowTiler.homeDisplay(of: window.frame, in: screenFrames),
                 isReachable: SwitchTarget.canReach(
-                    state: placed[window.windowID], appHasWindowOnScreen: appOnScreen))
+                    state: placed[window.windowID], appHasWindowOnScreen: appOnScreen)
+                    || menuTitles.contains(Self.normalizedTitle(window.title ?? "")))
         }
         entries += minimized.map {
             Entry(
@@ -688,25 +697,36 @@ actor WindowCapture {
         if let entry = menuCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.titles }
         menuCache = menuCache.filter { now.timeIntervalSince($0.value.at) < ttl }
         let titles = await Task.detached { () -> Set<String> in
-            guard let bar = AX.copyElement(AX.application(pid), kAXMenuBarAttribute as String)
-            else { return [] }
-            var out: Set<String> = []
-            for top in AX.children(of: bar) {
-                for menu in AX.children(of: top) {
-                    for item in AX.children(of: menu) {
-                        guard AX.copyString(item, kAXIdentifierAttribute as String)
-                            == Self.raiseWindowAction,
-                            let title = AX.copyString(item, kAXTitleAttribute as String)
-                        else { continue }
-                        let normalized = Self.normalizedTitle(title)
-                        if !normalized.isEmpty { out.insert(normalized) }
-                    }
-                }
-            }
-            return out
+            Set(Self.windowMenuItems(for: pid).map(\.title))
         }.value
         menuCache[pid] = (titles, now)
         return titles
+    }
+
+    /// The entries in `pid`'s menu bar that raise a window, each with its title normalized.
+    ///
+    /// The walk behind `menuWindowTitles`, split out because the pick path presses one of these:
+    /// an item's action is the app calling `makeKeyAndOrderFront:` on its own window, which is the
+    /// one way to reach a Desktop macOS will not travel to on activation — see
+    /// `SwitchTarget.pressWindowMenuItem`. Synchronous Accessibility calls into another process, so
+    /// callers keep it off the main thread.
+    nonisolated static func windowMenuItems(for pid: pid_t) -> [(item: AXUIElement, title: String)]
+    {
+        guard let bar = AX.copyElement(AX.application(pid), kAXMenuBarAttribute as String)
+        else { return [] }
+        var out: [(item: AXUIElement, title: String)] = []
+        for top in AX.children(of: bar) {
+            for menu in AX.children(of: top) {
+                for item in AX.children(of: menu) {
+                    guard AX.copyString(item, kAXIdentifierAttribute as String) == raiseWindowAction,
+                        let title = AX.copyString(item, kAXTitleAttribute as String)
+                    else { continue }
+                    let normalized = normalizedTitle(title)
+                    if !normalized.isEmpty { out.append((item, normalized)) }
+                }
+            }
+        }
+        return out
     }
 
     /// The AppKit action every windows-menu item carries. Not localized, unlike the menu's title.

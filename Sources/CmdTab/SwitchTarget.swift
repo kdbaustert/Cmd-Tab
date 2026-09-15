@@ -642,6 +642,91 @@ extension SwitchTarget {
             .first(where: { TargetProvider.windowID($0) == id })
     }
 
+    /// Presses the entry for `window` in its app's own Window menu. False when no entry matched,
+    /// which leaves the pick where it was: declined, with nothing touched.
+    ///
+    /// Matched by title, because a menu item names its window by nothing else. The caller's title
+    /// is preferred — a preview pick carries the one ScreenCaptureKit gave the strip — and the
+    /// lookups in `windowTitle` are the fallback. Measured on the first real pick: both lookups
+    /// came back empty for a Chrome window on another Desktop, the window server's name included,
+    /// while the strip had been showing that very title a moment earlier. Two windows with one
+    /// title match the first item, which is also what the menu itself would do for a person; a
+    /// wrong twin is still a window of the right app on the right Desktop.
+    private static func pressWindowMenuItem(window id: CGWindowID, pid: pid_t, title: String?)
+        -> Bool
+    {
+        guard let title = title ?? windowTitle(id, pid: pid) else {
+            Log.general.notice(
+                "focus window \(id, privacy: .public): no title to match against the Window menu")
+            return false
+        }
+        let wanted = WindowCapture.normalizedTitle(title)
+        let items = WindowCapture.windowMenuItems(for: pid)
+        guard let match = items.first(where: { $0.title == wanted }) else {
+            Log.general.notice(
+                """
+                focus window \(id, privacy: .public): the Window menu of pid \(pid, privacy: .public) \
+                lists \(items.count, privacy: .public) window(s), none with this title
+                """)
+            return false
+        }
+        let result = AXUIElementPerformAction(match.item, kAXPressAction as CFString)
+        Log.general.notice(
+            """
+            focus window \(id, privacy: .public): pressed its Window menu item, \
+            result \(result.rawValue, privacy: .public)
+            """)
+        return result == .success
+    }
+
+    /// Brings `pid` forward by a window it already has on screen, and waits — briefly — for it to
+    /// become the active app. Nothing is touched when it has no such window, which cannot happen on
+    /// the one path that calls this: it is reached *because* the app has a window on screen.
+    ///
+    /// The wait is bounded and blocking, on the terms `settleBySystemSwitch` sets out: the front is
+    /// accepted by the window server at once, but the app learns it is active a few event-loop
+    /// turns later, and the press that follows only works once it has.
+    private static func frontOnScreenWindow(
+        pid: pid_t, placement: [CGWindowID: SpaceMover.SpaceState]
+    ) {
+        let onScreen = ownedWindows(pid: pid, options: [.optionOnScreenOnly, .excludeDesktopElements])
+            .first { window in
+                guard let state = placement[window] else { return false }
+                return state.windowSpace == state.currentSpace
+            }
+        guard let onScreen, FrontProcess.focus(window: onScreen, pid: pid) else {
+            Log.general.notice(
+                "front pid \(pid, privacy: .public): no on-screen window to front it by")
+            return
+        }
+        for turn in 0..<15 {
+            let front = DispatchQueue.main.sync {
+                NSWorkspace.shared.frontmostApplication?.processIdentifier
+            }
+            if front == pid {
+                Log.general.notice(
+                    """
+                    front pid \(pid, privacy: .public): active after \
+                    \(turn * 20, privacy: .public)ms via window \(onScreen, privacy: .public)
+                    """)
+                return
+            }
+            usleep(20_000)
+        }
+        Log.general.notice(
+            "front pid \(pid, privacy: .public): not active after 300ms, pressing anyway")
+    }
+
+    /// The window's title as the window server reports it, falling back to Accessibility.
+    private static func windowTitle(_ id: CGWindowID, pid: pid_t) -> String? {
+        if let info = CGWindowListCreateDescriptionFromArray([id] as CFArray) as? [[String: Any]],
+            let name = info.first?[kCGWindowName as String] as? String, !name.isEmpty
+        {
+            return name
+        }
+        return axWindow(id: id, pid: pid).flatMap { AX.copyString($0, kAXTitleAttribute as String) }
+    }
+
     /// Whether an app pick may raise the app's *whole* window group rather than just bringing it
     /// forward.
     ///
@@ -757,7 +842,8 @@ extension SwitchTarget {
     /// travels to this one or drags it here. It is the same single enumeration either way — `spaceState`
     /// builds the map, answers for one window and throws the rest away.
     static func focusWindow(
-        id: CGWindowID, pid: pid_t, placement known: [CGWindowID: SpaceMover.SpaceState]? = nil
+        id: CGWindowID, pid: pid_t, placement known: [CGWindowID: SpaceMover.SpaceState]? = nil,
+        title: String? = nil
     ) {
         focusQueue.async {
             let generation = beginFocus()
@@ -940,8 +1026,11 @@ extension SwitchTarget {
             // is skipped with it, which costs nothing — off-Space it is measured inert, and it is
             // only in company with the half-switch above that it paints anything.
             //
-            // The preview strip asks `canReach` the same question before it draws, so a thumbnail
-            // that would land here is badged as unreachable rather than left looking clickable.
+            // Or rather, doing nothing *was* the only option — the branch now tries the app's own
+            // Window menu first, and only does nothing when the window has no entry there. The
+            // preview strip asks `canReach` the same question before it draws, and reads the same
+            // menu, so a thumbnail that would end here with nothing pressed is badged as
+            // unreachable rather than left looking clickable.
             if let state = placement,
                 !canReach(
                     state: state,
@@ -951,8 +1040,33 @@ extension SwitchTarget {
                     """
                     focus window \(id, privacy: .public): pid \(pid, privacy: .public) has a window \
                     on screen, so macOS will not travel to space \
-                    \(state.windowSpace, privacy: .public); leaving the Desktop alone
+                    \(state.windowSpace, privacy: .public); trying its Window menu
                     """)
+                // The one route not in the list above: the app's own Window menu. Picking a window
+                // there is the user-level action that does reach it in this configuration, and it
+                // works because the *app* calls `makeKeyAndOrderFront:` on the window, which the
+                // system answers with a genuine Desktop transition rather than a gather. Pressing
+                // the menu item over Accessibility is the same call from the same process.
+                //
+                // Only while the app is frontmost. Measured through Apple Events on Chrome, with
+                // one window on Desktop 5 of display 1 and one on the second display's only
+                // Space, from Desktop 1: the app ordering the Desktop 5 window front from the
+                // background moved nothing in two seconds, and the identical call with Chrome
+                // fronted first switched display 1 to Desktop 5 within 600ms, the window still on
+                // its own Space afterwards. Fronting by the on-screen window is the app-pick path's
+                // own move, and it is what makes this safe: no activation, so nothing to gather.
+                //
+                // Read before the press, for the reason the reveal path reads it before the switch.
+                let changesBefore = spaceChanges.value
+                frontOnScreenWindow(pid: pid, placement: placed)
+                guard pressWindowMenuItem(window: id, pid: pid, title: title) else { return }
+                // The same gate the private switch waits behind, and the same give-up: if the
+                // transition never comes, nothing touches the window, so a press macOS ignores
+                // costs a second and gathers nothing.
+                settle(
+                    window: id, pid: pid, attempts: 14, delay: 0.15, generation: generation,
+                    actWhenUnreached: false, awaitingSpaceChange: changesBefore,
+                    notBefore: .now() + spaceSettleDelay)
                 return
             }
 

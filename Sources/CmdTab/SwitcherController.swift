@@ -578,7 +578,10 @@ final class SwitcherController {
             // Off the click, for the same reason `commit()` defers: raising a window is an AX
             // round-trip against a process that may not answer promptly.
             DispatchQueue.main.async {
-                SwitchTarget.focusWindow(id: thumb.windowID, pid: thumb.pid)
+                // The title rides along for the Window-menu route, which matches on nothing else
+                // and cannot always read one back from a window on another Desktop.
+                SwitchTarget.focusWindow(
+                    id: thumb.windowID, pid: thumb.pid, title: thumb.title)
             }
         }
         // Only wrestle ⌘-Tab away from the system when that is actually our trigger; a custom
