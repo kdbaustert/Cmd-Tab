@@ -222,13 +222,17 @@ struct AppsSettings: View {
             ) {
                 SettingsRow(
                     title: "Pin favorites to the front",
-                    subtitle: "Application mode only — a window list has as many tiles per app as "
-                        + "the app has windows, so no app can hold a slot in it."
+                    subtitle: behavior.sortOrder == .byDesktop
+                        ? "Off while the order is By desktop: a pinned block would put the "
+                            + "favorites ahead of the Desktop order that setting exists to show."
+                        : "Application mode only — a window list has as many tiles per app as "
+                            + "the app has windows, so no app can hold a slot in it."
                 ) {
                     Toggle("", isOn: $behavior.pinFavoritesFirst)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
+                        .disabled(behavior.sortOrder == .byDesktop)
                 }
                 favoriteOrderList
             }
@@ -283,7 +287,7 @@ struct AppsSettings: View {
     /// the two it is rather than describing a behaviour that is currently off.
     private var favoriteFooter: String {
         let common = "Drag a row onto another to put it in that place."
-        guard behavior.pinFavoritesFirst else {
+        guard behavior.pinFavoritesFirst, behavior.sortOrder != .byDesktop else {
             return "Favourites that aren't running appear as launch tiles at the end of the "
                 + "switcher, in this order. \(common)"
         }

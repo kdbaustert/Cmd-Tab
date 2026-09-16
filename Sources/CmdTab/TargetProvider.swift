@@ -70,6 +70,13 @@ final class TargetProvider {
     /// hold a slot in it.
     var pinFavoritesFirst: Bool = true
 
+    /// Whether a refresh actually hoists the favourites. Never under `.byDesktop`: a pinned block
+    /// puts the favourites ahead of the Desktop order that sort exists to show, and the result reads
+    /// as no order at all. `tapIndex` keys off the same answer so a plain tap and the list agree.
+    private var pinsFavoritesFirst: Bool {
+        pinFavoritesFirst && mode == .apps && !favoriteBundleIDs.isEmpty && sortOrder != .byDesktop
+    }
+
     /// Resolved metadata for launchable favourites, keyed by bundle id.
     ///
     /// `FavoritesStore.appInfo` is a LaunchServices lookup plus two disk reads (display name, icon),
@@ -381,7 +388,7 @@ final class TargetProvider {
         let titleCache = self.titleCache
         // Pinning has to put each favourite's tiles where the favourite sits, and a tile knows its
         // pid but not its bundle id — so the mapping is carried over from the app list.
-        let pinning = pinFavoritesFirst && mode == .apps && !favoriteBundleIDs.isEmpty
+        let pinning = pinsFavoritesFirst
         let favoriteOrder = pinning ? favoriteBundleIDs : []
         let bundleIDsByPID = pinning
             ? Dictionary(
@@ -772,7 +779,7 @@ final class TargetProvider {
     func tapIndex(in targets: [SwitchTarget], mode: SwitcherMode) -> Int {
         guard !targets.isEmpty else { return 0 }
         let natural = min(1, targets.count - 1)
-        guard pinFavoritesFirst, mode == .apps, !favoriteBundleIDs.isEmpty else { return natural }
+        guard pinsFavoritesFirst else { return natural }
         return Self.previousAppIndex(in: targets, mru: mru.entries) ?? natural
     }
 
@@ -830,12 +837,51 @@ final class TargetProvider {
             }
         }
         let rank = RecencyList<pid_t>.ranks(of: order)
+        if sortOrder == .byDesktop {
+            // An app isn't on a Desktop — only its windows are — so an app tile sorts by the
+            // leftmost Desktop any of its windows sits on; MRU rank breaks ties.
+            let spaceIndex = appSpaceIndices(pids: apps.map(\.pid))
+            return apps.enumerated().sorted { a, b in
+                let ia = spaceIndex[a.element.pid] ?? Int.max
+                let ib = spaceIndex[b.element.pid] ?? Int.max
+                if ia != ib { return ia < ib }
+                let ra = rank[a.element.pid] ?? Int.max
+                let rb = rank[b.element.pid] ?? Int.max
+                return ra == rb ? a.offset < b.offset : ra < rb
+            }.map(\.element)
+        }
         return apps.enumerated().sorted { a, b in
             let ra = rank[a.element.pid] ?? Int.max
             let rb = rank[b.element.pid] ?? Int.max
             // Fall back to the workspace's own ordering so the sort stays stable.
             return ra == rb ? a.offset < b.offset : ra < rb
         }.map(\.element)
+    }
+
+    /// Each app's leftmost occupied Desktop, keyed by pid — what `.byDesktop` sorts app tiles by.
+    /// An app with windows on several Desktops sorts by whichever it also owns first.
+    private nonisolated static func appSpaceIndices(pids: [pid_t]) -> [pid_t: Int] {
+        guard
+            let info = CGWindowListCopyWindowInfo([.excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]]
+        else { return [:] }
+        let wanted = Set(pids)
+        var windowPIDs: [CGWindowID: pid_t] = [:]
+        for window in info {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                let pid = window[kCGWindowOwnerPID as String] as? pid_t, wanted.contains(pid),
+                let number = window[kCGWindowNumber as String] as? CGWindowID
+            else { continue }
+            windowPIDs[number] = pid
+        }
+        guard !windowPIDs.isEmpty else { return [:] }
+        let placement = SpaceMover.placement(of: Array(windowPIDs.keys))
+        var out: [pid_t: Int] = [:]
+        for (window, pid) in windowPIDs {
+            guard let index = placement.indices[window] else { continue }
+            out[pid] = min(out[pid] ?? Int.max, index)
+        }
+        return out
     }
 
     // MARK: - Target construction
@@ -934,6 +980,22 @@ final class TargetProvider {
             return rows
         }
         freshTitles = freshTitles.filter { seenIDs.contains($0.key) }
+        if sortOrder == .byDesktop {
+            // Primary key is the window's position in the system's left-to-right Desktop order;
+            // MRU rank (falling back to the stable build position) breaks ties within a Desktop.
+            let placement = SpaceMover.placement(
+                of: built.compactMap { windowID(fromTargetID: $0.target.id) })
+            var flat: [(row: Row, spaceIndex: Int, position: Int)] = []
+            for (position, row) in built.enumerated() {
+                let index = windowID(fromTargetID: row.target.id).flatMap { placement.indices[$0] }
+                flat.append((row, index ?? Int.max, position))
+            }
+            flat.sort { a, b in
+                if a.spaceIndex != b.spaceIndex { return a.spaceIndex < b.spaceIndex }
+                return a.row.rank == b.row.rank ? a.position < b.position : a.row.rank < b.row.rank
+            }
+            return (flat.map { $0.row.target }, freshTitles)
+        }
         guard !grouped, sortOrder == .recentlyUsed else {
             return (built.map { $0.target }, freshTitles)
         }

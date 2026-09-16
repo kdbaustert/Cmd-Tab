@@ -20,11 +20,13 @@ extension CGEventFlags {
 enum SortOrder: String, CaseIterable {
     case recentlyUsed
     case alphabetical
+    case byDesktop
 
     var title: String {
         switch self {
         case .recentlyUsed: return "Recently used"
         case .alphabetical: return "Alphabetical"
+        case .byDesktop: return "By desktop"
         }
     }
 }
