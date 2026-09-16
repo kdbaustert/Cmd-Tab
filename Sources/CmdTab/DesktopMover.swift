@@ -91,8 +91,11 @@ enum DesktopMover {
     /// Returns immediately; everything happens on `queue`. The caller is the event-tap callback,
     /// where a stall costs the user every keystroke on the machine, and this gesture takes seconds.
     /// `follow` switches the display to the destination once the window lands, so you arrive with
-    /// the window instead of watching it leave.
-    static func move(pid: pid_t, step: Int, follow: Bool) {
+    /// the window instead of watching it leave. `completion` runs on `queue` once the gesture is
+    /// over and Mission Control is gone, landed or not.
+    static func move(
+        pid: pid_t, step: Int, follow: Bool, completion: (@Sendable () -> Void)? = nil
+    ) {
         guard step != 0 else { return }
         guard beginIfIdle() else {
             Log.general.notice("desktop move: already moving a window; ignoring")
@@ -100,7 +103,14 @@ enum DesktopMover {
         }
         queue.async {
             defer { end() }
-            perform(pid: pid, step: step, follow: follow)
+            let landed = perform(pid: pid, step: step, follow: follow)
+            // Dropped on a Desktop, the window sits behind whatever was already there. Raised here
+            // rather than inside `perform`: its `defer` has to close Mission Control and put the
+            // frame back first, and a raise while the overlay is up goes nowhere. Follow only —
+            // the user is then looking at the destination, where a raise on a Desktop they are
+            // not is exactly the travel `follow: false` was chosen to avoid.
+            if follow, let landed { SwitchTarget.focusWindow(id: landed, pid: pid) }
+            completion?()
         }
     }
 
@@ -126,19 +136,20 @@ enum DesktopMover {
 
     // MARK: - The gesture
 
-    private static func perform(pid: pid_t, step: Int, follow: Bool) {
+    /// The window that landed on the destination, or nil for every other way this can end.
+    private static func perform(pid: pid_t, step: Int, follow: Bool) -> CGWindowID? {
         guard let dockNotify else {
             Log.general.notice("desktop move: CoreDockSendNotification unavailable")
-            return
+            return nil
         }
         // Not while the user is holding the button themselves. The gesture posts its own press and
         // release, and interleaving those with a real drag in progress leaves the window server with
         // a press it never sees released — and drops whatever the user was actually dragging.
         guard !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
             Log.general.notice("desktop move: the mouse button is already down; ignoring")
-            return
+            return nil
         }
-        guard let plan = plan(pid: pid, step: step) else { return }
+        guard let plan = plan(pid: pid, step: step) else { return nil }
 
         // From here the mouse button is down and Mission Control is on its way up, so every exit
         // has to put both back. A `defer` rather than a tidy path at the bottom: the middle of this
@@ -205,7 +216,7 @@ enum DesktopMover {
             released = true
             Log.general.notice(
                 "desktop move: window \(plan.window, privacy: .public) did not follow the drag")
-            return
+            return nil
         }
 
         dockNotify(missionControl as CFString, 0)
@@ -217,7 +228,7 @@ enum DesktopMover {
             holdingAt: point, index: plan.destination, on: plan.display)
         else {
             Log.general.notice("desktop move: Mission Control's Spaces Bar never appeared")
-            return
+            return nil
         }
 
         // Ease onto the thumbnail rather than jumping. A single event at the destination is a
@@ -265,6 +276,7 @@ enum DesktopMover {
         // machine can be a move that did land slightly late. Staying put is the better of the two
         // wrong answers — the window is where the log says it is.
         if follow, landed { followTo(plan.destination, on: plan.display) }
+        return landed ? plan.window : nil
     }
 
     /// Waits for the window to actually arrive on the destination Desktop.

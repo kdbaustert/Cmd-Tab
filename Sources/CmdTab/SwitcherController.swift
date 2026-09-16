@@ -873,7 +873,15 @@ final class SwitcherController {
             if let step = arrangement.desktopStep {
                 Log.tap.notice(
                     "desktop move: pid \(pid, privacy: .public), step \(step, privacy: .public)")
-                DesktopMover.move(pid: pid, step: step, follow: follows)
+                DesktopMover.move(pid: pid, step: step, follow: follows) { [weak self] in
+                    // The gesture activates Mission Control, so the activation notifications it
+                    // fires rebuild the list while the window is between Desktops — and nothing
+                    // rebuilds it again once the window has landed. Under a Desktop order that
+                    // leaves the moved app sorted by wherever it was mid-flight.
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { self?.provider.refresh() }
+                    }
+                }
                 return
             }
             Log.tap.notice(
