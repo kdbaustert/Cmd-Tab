@@ -66,8 +66,14 @@ struct SwitchTarget: Identifiable {
     enum Kind: @unchecked Sendable {
         case app(pid_t)
         case window(pid_t, AXUIElement)
+        /// A tab of a browser or terminal, found by `TabEnumeration` for the `.tabs` scoped trigger.
+        /// Picking it activates the app, raises the window, then presses the tab's own element.
+        case tab(TabEnumeration.TabRef)
         /// A favourited app that isn't running: picking it launches the app at this URL.
         case launch(URL)
+        /// A tile built from the query itself, offered when nothing running and nothing installed
+        /// answered it — see `SwitcherFallbacks`.
+        case fallback(FallbackAction)
     }
 
     let id: String
@@ -101,14 +107,28 @@ struct SwitchTarget: Identifiable {
         switch kind {
         case .app(let pid): return pid
         case .window(let pid, _): return pid
+        case .tab(let ref): return ref.pid
         case .launch: return -1
+        case .fallback: return -1
         }
     }
 
-    /// A not-yet-running favourite. Its tile launches rather than switches, and the window actions
-    /// (quit/close/minimize…) don't apply — they no-op safely on its absent pid.
+    /// A not-yet-running favourite, or a fallback tile. Neither has a real window: the actions
+    /// window mode offers (quit/close/minimize…) don't apply — they no-op safely on the absent
+    /// pid — and both dim and badge the same way, since both mean "not something already open".
     var isLaunchable: Bool {
-        if case .launch = kind { return true }
+        switch kind {
+        case .launch, .fallback: return true
+        case .app, .window, .tab: return false
+        }
+    }
+
+    /// A tile built from the query rather than from anything on the machine. Distinct from
+    /// `isLaunchable`, which groups it with the launch tiles for ranking and dimming purposes; this
+    /// is for the one place that has to tell the two apart — the VoiceOver text, since "not
+    /// running" describes a favourite and says nothing sensible about "Search the web".
+    var isFallback: Bool {
+        if case .fallback = kind { return true }
         return false
     }
 
@@ -180,6 +200,10 @@ extension SwitchTarget {
             NSWorkspace.shared.openApplication(at: url, configuration: config)
             return
         }
+        if case .fallback(let action) = kind {
+            action.perform()
+            return
+        }
 
         guard let app = NSRunningApplication(processIdentifier: pid) else { return }
 
@@ -230,7 +254,31 @@ extension SwitchTarget {
                 Self.focusWindow(id: id, pid: pid)
             }
 
-        case .launch:
+        case .tab(let ref):
+            if app.isHidden { app.unhide() }
+            // Same window-raise path a window tile takes, plus the one extra step: pressing the
+            // tab's own element. Pressed unconditionally after issuing the raise rather than waited
+            // on — `AXPress` on a tab acts on the app directly and does not need the window's Desktop
+            // travel (if any) to have landed first, and a failed press is meant to leave the window
+            // raised with no fallback (see the file-header note on `TabEnumeration`).
+            let parsed = windowID
+            let wasMinimized = isMinimized
+            let pid = self.pid
+            nonisolated(unsafe) let window = ref.window
+            nonisolated(unsafe) let tabElement = ref.element
+            Self.focusQueue.async {
+                let resolved = Self.windowID(of: window, parsed: parsed, pid: pid)
+                if let id = resolved, !wasMinimized {
+                    Self.focusWindow(id: id, pid: pid)
+                } else {
+                    Self.beginFocus()
+                    Self.raise(element: window)
+                    Self.activate(pid: pid)
+                }
+                AX.performPress(tabElement)
+            }
+
+        case .launch, .fallback:
             break  // handled above
         }
     }
@@ -1775,6 +1823,7 @@ extension SwitchTarget {
     private static func resolveWindow(_ kind: Kind) -> AXUIElement? {
         switch kind {
         case .window(_, let element): return element
+        case .tab(let ref): return ref.window
         case .app(let pid):
             let app = AX.application(pid)
             // The focused window is the one the user sees frontmost; fall back to main, then to the
@@ -1783,7 +1832,7 @@ extension SwitchTarget {
             return AX.copyElement(app, kAXFocusedWindowAttribute as String)
                 ?? AX.copyElement(app, kAXMainWindowAttribute as String)
                 ?? AX.windows(of: app).first(where: AX.isWindow)
-        case .launch: return nil
+        case .launch, .fallback: return nil
         }
     }
 
@@ -1831,10 +1880,12 @@ extension SwitchTarget {
         let target: WindowTiler.Target?
         switch kind {
         case .window(_, let element): target = .element(element)
+        case .tab(let ref): target = .element(ref.window)
         case .app: target = nil
-        // A favourite that isn't running has no window to tile. `SwitcherController.perform`
-        // already refuses these, and this keeps the refusal true of the method itself.
-        case .launch: return
+        // A favourite that isn't running, or a fallback tile, has no window to tile.
+        // `SwitcherController.perform` already refuses these, and this keeps the refusal true of
+        // the method itself.
+        case .launch, .fallback: return
         }
         WindowTiler.apply(
             arrangement, pid: pid, areas: frames, cycleWidths: cycleWidths, gap: gap,

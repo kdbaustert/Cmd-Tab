@@ -15,6 +15,7 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
     case currentDisplay
     case currentDesktop
     case minimized
+    case tabs
 
     var id: String { rawValue }
 
@@ -25,6 +26,7 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
         case .currentDisplay: return "Windows on this display"
         case .currentDesktop: return "Windows on this desktop"
         case .minimized: return "Minimized windows"
+        case .tabs: return "Browser and terminal tabs"
         }
     }
 
@@ -41,6 +43,11 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
                 + "each has its own front Desktop and both count as here."
         case .minimized:
             return "Only windows currently in the Dock."
+        case .tabs:
+            return "One tile per tab of the frontmost window of every running app that exposes "
+                + "tabs — browsers and terminals, mostly. Gathered fresh each time this opens, "
+                + "since keeping the list warm would mean walking every app's tabs on every "
+                + "refresh."
         }
     }
 }

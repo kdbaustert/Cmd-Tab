@@ -204,6 +204,11 @@ extension View {
 struct SwitcherView: View {
     @ObservedObject var model: SwitcherModel
     let columns: Int
+    /// This panel's own metrics — resolved per display by `SwitcherPanel.layout()` via
+    /// `DisplayLayout`, rather than read straight off `model.metrics`. The model is shared by every
+    /// mirrored panel at once, so a single stored metrics value on it could never differ between a
+    /// laptop screen and a 6K one; this parameter is what lets it.
+    let metrics: Metrics
     /// Where this instance reports its tile geometry.
     ///
     /// Per-instance rather than written onto the shared model, because mirroring puts one of these
@@ -219,7 +224,6 @@ struct SwitcherView: View {
     /// point maps straight onto them after flipping.
     static let space = "switcherContent"
 
-    private var metrics: Metrics { model.metrics }
     private var tile: CGSize { metrics.tile(for: model.mode, showsTitle: model.showsTitle) }
     private var row: CGSize { metrics.listRow(for: model.mode) }
     private var isList: Bool { model.layout == .list }
@@ -283,6 +287,7 @@ struct SwitcherView: View {
                     number: number(for: index),
                     showsDisplayBadges: model.showDisplayBadges,
                     showsSpaceBadges: model.showSpaceBadges,
+                    isMarked: model.isMarked(at: index),
                     thumbnail: thumbnail(for: target))
                     .closeButton(at: index, model: model, target: target)
                     .reportingFrame(at: index)
@@ -322,7 +327,12 @@ struct SwitcherView: View {
                             number: number(for: index),
                             showsDisplayBadges: model.showDisplayBadges,
                             showsSpaceBadges: model.showSpaceBadges,
-                            thumbnail: thumbnail(for: model.targets[index]))
+                            isMarked: model.isMarked(at: index),
+                            // No thumbnail in the list row regardless of the thumbnail settings: a
+                            // capture scaled into a `listIconSize`-tall row is too small to read as
+                            // anything but a smear, and it would still cost the ScreenCaptureKit call
+                            // that the list mode exists partly to avoid on a long window list.
+                            thumbnail: nil)
                             .closeButton(at: index, model: model, target: model.targets[index])
                             .reportingFrame(at: index)
                     }
@@ -418,15 +428,17 @@ enum TileDescription {
     /// with — so the announcement is the half that makes the labels useful, and both halves have to
     /// say the same thing.
     static func text(
-        for target: SwitchTarget, number: Int?, showsDisplayBadges: Bool, showsSpaceBadges: Bool
+        for target: SwitchTarget, number: Int?, showsDisplayBadges: Bool, showsSpaceBadges: Bool,
+        isMarked: Bool = false
     ) -> String {
         var parts = [target.title]
         // In window mode the title is the window's, and the app name is the other half of the
         // identity.
         if target.appName != target.title { parts.append(target.appName) }
+        if isMarked { parts.append("marked") }
         if target.isMinimized { parts.append("minimized") }
         if target.isHidden { parts.append("hidden") }
-        if target.isLaunchable { parts.append("not running") }
+        if target.isLaunchable, !target.isFallback { parts.append("not running") }
         if let badge = target.badge { parts.append("\(badge) notifications") }
         if showsDisplayBadges, let display = target.displayIndex {
             parts.append("display \(display + 1)")
@@ -457,6 +469,8 @@ private struct TargetTile: View {
     /// Whether the display and Space badges may be drawn at all.
     let showsDisplayBadges: Bool
     let showsSpaceBadges: Bool
+    /// Whether this tile is in the marked set — see `SwitcherModel.markedIDs`.
+    let isMarked: Bool
     /// This window's live capture, when thumbnail tiles are on and one has landed.
     var thumbnail: CGImage?
 
@@ -465,7 +479,7 @@ private struct TargetTile: View {
             TargetIcon(
                 target: target, iconSize: iconSize, number: number,
                 showsDisplayBadges: showsDisplayBadges, showsSpaceBadges: showsSpaceBadges,
-                thumbnail: thumbnail)
+                isMarked: isMarked, thumbnail: thumbnail)
             if showsTitle {
                 Text(target.title)
                     .font(titleFont)
@@ -481,7 +495,7 @@ private struct TargetTile: View {
         .accessibilityLabel(
             TileDescription.text(
                 for: target, number: number, showsDisplayBadges: showsDisplayBadges,
-                showsSpaceBadges: showsSpaceBadges))
+                showsSpaceBadges: showsSpaceBadges, isMarked: isMarked))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .background {
             // The tint alone cannot carry the selection: `highlightColor` is a fixed sRGB value —
@@ -517,13 +531,16 @@ private struct TargetRow: View {
     let number: Int?
     let showsDisplayBadges: Bool
     let showsSpaceBadges: Bool
+    /// Whether this tile is in the marked set — see `SwitcherModel.markedIDs`.
+    let isMarked: Bool
     var thumbnail: CGImage?
 
     var body: some View {
         HStack(spacing: 8) {
             TargetIcon(
                 target: target, iconSize: iconSize, number: nil,
-                showsDisplayBadges: false, showsSpaceBadges: false, thumbnail: thumbnail)
+                showsDisplayBadges: false, showsSpaceBadges: false, isMarked: isMarked,
+                thumbnail: thumbnail)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(target.title)
@@ -559,7 +576,7 @@ private struct TargetRow: View {
         .accessibilityLabel(
             TileDescription.text(
                 for: target, number: number, showsDisplayBadges: showsDisplayBadges,
-                showsSpaceBadges: showsSpaceBadges))
+                showsSpaceBadges: showsSpaceBadges, isMarked: isMarked))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .background {
             // Same treatment as `TargetTile` — see the reasoning there.
@@ -606,6 +623,10 @@ private struct TargetIcon: View {
     let number: Int?
     let showsDisplayBadges: Bool
     let showsSpaceBadges: Bool
+    /// Whether this tile is in the marked set. Drawn opposite the ⌘-number badge — bottom-trailing
+    /// is taken, so the mark takes top-leading, stacked above the Dock notification badge when a
+    /// tile happens to carry both.
+    let isMarked: Bool
     /// A live capture of this window, when thumbnail tiles are on and one has landed. nil is the
     /// ordinary case — the feature is off by default, and even with it on a tile draws its icon
     /// until its capture arrives.
@@ -655,10 +676,17 @@ private struct TargetIcon: View {
         .overlay(alignment: .topLeading) {
             // Top-leading keeps it clear of the ⌘-number badge (bottom-trailing) and the
             // display/Space badges (top-trailing), so a tile can carry all three without collision.
-            if let badge = target.badge {
-                NotificationBadge(text: badge)
-                    .offset(x: 1, y: 1)
+            // The mark stacks below the notification badge rather than fighting it for the corner —
+            // a tile can be both marked and badged at once, and each still needs to read on its own.
+            VStack(alignment: .leading, spacing: 1) {
+                if let badge = target.badge {
+                    NotificationBadge(text: badge)
+                }
+                if isMarked {
+                    Badge(symbol: "checkmark")
+                }
             }
+            .offset(x: 1, y: 1)
         }
         .overlay(alignment: .bottomTrailing) {
             if let number {

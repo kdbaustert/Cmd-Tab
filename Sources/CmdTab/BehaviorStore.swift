@@ -445,6 +445,16 @@ extension Defaults.Keys {
     /// Offer installed apps when a query matches nothing running. On by default: it only ever
     /// appears in place of "No matches", so it costs nothing when it is not wanted.
     static let launchFromSearch = Key<Bool>("launchFromSearch", default: true)
+    /// The fallback tier below `launchFromSearch`: it leaves the machine's own apps behind, so each
+    /// of the three is its own key and every one defaults off — see `FallbackAction`.
+    static let offerURLFallback = Key<Bool>("offerURLFallback", default: false)
+    static let offerSearchFallback = Key<Bool>("offerSearchFallback", default: false)
+    /// Runs the query as a shell command with no confirmation and no visible output — the one
+    /// fallback that can do real damage, which is why it is off by default even among defaults that
+    /// already default off.
+    static let offerShellFallback = Key<Bool>("offerShellFallback", default: false)
+    static let fallbackSearchTemplate = Key<String>(
+        "fallbackSearchTemplate", default: SwitcherFallbacks.defaultSearchTemplate)
 
     /// Promotes the per-event tracing from `.debug` to `.default` so it survives in the system log.
     /// Off by default — see `Log.traceLevel` for what it costs and why it is worth having at all.
@@ -477,6 +487,7 @@ final class BehaviorStore: ObservableObject {
         .tileCorner, .titleFontSize, .titleFontName,
         .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview, .windowThumbnailTiles,
         .launchFromSearch,
+        .offerURLFallback, .offerSearchFallback, .offerShellFallback, .fallbackSearchTemplate,
         .verboseLogging,
     ]
 
@@ -485,7 +496,7 @@ final class BehaviorStore: ObservableObject {
     private static let otherStoreKeys =
         AppearanceStore.defaultsKeys + ExclusionStore.defaultsKeys + FavoritesStore.defaultsKeys
         + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys
-        + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys
+        + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys + TitleRulesStore.defaultsKeys
         + SwitcherShortcutsStore.defaultsKeys + Updater.exportedDefaultsKeys
 
     /// The keys export/import/reset operate on.
@@ -633,6 +644,24 @@ final class BehaviorStore: ObservableObject {
     @Published var launchFromSearch: Bool = Defaults[.launchFromSearch] {
         didSet { persist(launchFromSearch, oldValue, to: .launchFromSearch) }
     }
+    /// Offers "Open <query>" as a URL when it looks like one. Off by default — see
+    /// `FallbackAction`.
+    @Published var offerURLFallback: Bool = Defaults[.offerURLFallback] {
+        didSet { persist(offerURLFallback, oldValue, to: .offerURLFallback) }
+    }
+    /// Offers "Search for <query>" through `fallbackSearchTemplate`. Off by default.
+    @Published var offerSearchFallback: Bool = Defaults[.offerSearchFallback] {
+        didSet { persist(offerSearchFallback, oldValue, to: .offerSearchFallback) }
+    }
+    /// Offers "Run <query>" as a shell command, with no confirmation and no visible output. Off by
+    /// default, and the one fallback `cmdtab://` is not allowed to reach.
+    @Published var offerShellFallback: Bool = Defaults[.offerShellFallback] {
+        didSet { persist(offerShellFallback, oldValue, to: .offerShellFallback) }
+    }
+    /// The search engine's URL template; `%s` is replaced with the percent-encoded query.
+    @Published var fallbackSearchTemplate: String = Defaults[.fallbackSearchTemplate] {
+        didSet { persist(fallbackSearchTemplate, oldValue, to: .fallbackSearchTemplate) }
+    }
     /// Writes the per-keystroke tracing to the system log instead of a live stream only. A
     /// troubleshooting switch, not a preference — but it persists like one so it survives the
     /// relaunch that reproducing a problem usually involves.
@@ -694,6 +723,10 @@ final class BehaviorStore: ObservableObject {
         windowPreview = Defaults[.windowPreview]
         windowThumbnailTiles = Defaults[.windowThumbnailTiles]
         launchFromSearch = Defaults[.launchFromSearch]
+        offerURLFallback = Defaults[.offerURLFallback]
+        offerSearchFallback = Defaults[.offerSearchFallback]
+        offerShellFallback = Defaults[.offerShellFallback]
+        fallbackSearchTemplate = Defaults[.fallbackSearchTemplate]
         verboseLogging = Defaults[.verboseLogging]
     }
 

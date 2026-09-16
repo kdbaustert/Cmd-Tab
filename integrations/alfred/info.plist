@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>bundleid</key>
+	<string>dev.kennyb.cmdtab.alfred</string>
+	<key>category</key>
+	<string>Productivity</string>
+	<key>createdby</key>
+	<string>Kenny B</string>
+	<key>description</key>
+	<string>Drive Cmd-Tab's tiling, activation and window-hiding commands over its cmdtab:// URL scheme.</string>
+	<key>name</key>
+	<string>Cmd-Tab</string>
+	<key>version</key>
+	<string>1.0</string>
+	<key>webaddress</key>
+	<string></string>
+	<key>connections</key>
+	<dict>
+		<key>DFAE78F9-425F-4EDF-A755-13C34A682C0D</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>AA9B2F3A-D843-45D8-8CDD-31A78A3AAFB5</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>EAC36CA6-2084-4BDB-BD29-3735C3A3DA25</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>B95A1341-AEC0-4188-886B-067C7EBCAA9F</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>A54850EC-D734-469E-841A-E291B6F983DB</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>004D77F7-31A0-48BD-A67F-FCCC4A85AF3E</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+	</dict>
+	<key>objects</key>
+	<array>
+		<dict>
+			<key>uid</key>
+			<string>DFAE78F9-425F-4EDF-A755-13C34A682C0D</string>
+			<key>type</key>
+			<string>alfred.workflow.input.scriptfilter</string>
+			<key>config</key>
+			<dict>
+				<key>keyword</key>
+				<string>tile</string>
+				<key>scriptfile</key>
+				<string>tile.sh</string>
+				<key>script</key>
+				<string>./tile.sh "{query}"</string>
+				<key>type</key>
+				<integer>0</integer>
+				<key>withspace</key>
+				<true/>
+				<key>argumenttype</key>
+				<integer>0</integer>
+				<key>alfredfiltersresults</key>
+				<false/>
+				<key>runningsubtext</key>
+				<string>Looking up arrangements…</string>
+				<key>subtext</key>
+				<string>Apply a Cmd-Tab window arrangement</string>
+				<key>title</key>
+				<string>Tile Window</string>
+			</dict>
+			<key>version</key>
+			<integer>3</integer>
+		</dict>
+		<dict>
+			<key>uid</key>
+			<string>AA9B2F3A-D843-45D8-8CDD-31A78A3AAFB5</string>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>config</key>
+			<dict>
+				<key>script</key>
+				<string>open "cmdtab://tile/{query}"</string>
+				<key>type</key>
+				<integer>0</integer>
+				<key>concurrently</key>
+				<false/>
+			</dict>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+		<dict>
+			<key>uid</key>
+			<string>EAC36CA6-2084-4BDB-BD29-3735C3A3DA25</string>
+			<key>type</key>
+			<string>alfred.workflow.input.keyword</string>
+			<key>config</key>
+			<dict>
+				<key>keyword</key>
+				<string>hideall</string>
+				<key>argumenttype</key>
+				<integer>2</integer>
+				<key>subtext</key>
+				<string>Hide every app's windows through Cmd-Tab</string>
+				<key>text</key>
+				<string>Hide All Windows</string>
+				<key>withspace</key>
+				<false/>
+			</dict>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>uid</key>
+			<string>B95A1341-AEC0-4188-886B-067C7EBCAA9F</string>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>config</key>
+			<dict>
+				<key>script</key>
+				<string>open "cmdtab://windows/hideAll"</string>
+				<key>type</key>
+				<integer>0</integer>
+				<key>concurrently</key>
+				<false/>
+			</dict>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+		<dict>
+			<key>uid</key>
+			<string>A54850EC-D734-469E-841A-E291B6F983DB</string>
+			<key>type</key>
+			<string>alfred.workflow.input.keyword</string>
+			<key>config</key>
+			<dict>
+				<key>keyword</key>
+				<string>showall</string>
+				<key>argumenttype</key>
+				<integer>2</integer>
+				<key>subtext</key>
+				<string>Show every app's windows through Cmd-Tab</string>
+				<key>text</key>
+				<string>Show All Windows</string>
+				<key>withspace</key>
+				<false/>
+			</dict>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>uid</key>
+			<string>004D77F7-31A0-48BD-A67F-FCCC4A85AF3E</string>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>config</key>
+			<dict>
+				<key>script</key>
+				<string>open "cmdtab://windows/showAll"</string>
+				<key>type</key>
+				<integer>0</integer>
+				<key>concurrently</key>
+				<false/>
+			</dict>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+	</array>
+	<key>uidata</key>
+	<dict/>
+	<key>disabled</key>
+	<false/>
+</dict>
+</plist>

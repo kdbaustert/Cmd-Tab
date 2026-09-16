@@ -32,6 +32,10 @@ final class AppRuleTests: XCTestCase {
         var arranged = AppRule()
         arranged.launchArrangement = .rightHalf
         XCTAssertFalse(arranged.isDefault)
+
+        var displayed = AppRule()
+        displayed.launchDisplay = 2
+        XCTAssertFalse(displayed.isDefault)
     }
 
     // MARK: - Display name

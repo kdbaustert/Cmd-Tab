@@ -88,6 +88,7 @@ enum SettingsAnchor {
     static let allWindows = "windows.allWindows"
 
     static let session = "behavior.session"
+    static let fallback = "behavior.fallback"
     static let contents = "behavior.contents"
     static let placement = "behavior.placement"
 
@@ -102,6 +103,7 @@ enum SettingsAnchor {
     static let favorites = "apps.favorites"
     static let directActivation = "apps.directActivation"
     static let overrides = "apps.overrides"
+    static let titleRules = "apps.titleRules"
 
     static let permissions = "about.permissions"
     static let diagnostics = "about.diagnostics"
@@ -226,9 +228,21 @@ enum SettingsIndex {
         item("overrides", .apps, SettingsAnchor.overrides, "Per-app overrides",
              "Per-app overrides",
              ["per app", "override", "rule", "expand windows", "never tile", "exception"]),
+        item("titleRules", .apps, SettingsAnchor.titleRules, "Window title rules",
+             "Window title rules",
+             ["title", "window rule", "regex", "regular expression", "hide window", "expand",
+              "never tile", "per window", "pattern"]),
         item("launchFromSearch", .behavior, SettingsAnchor.session, "Session",
              "Launch apps from search",
              ["launch", "launcher", "open app", "search", "not running", "no matches"]),
+
+        item("openAsURL", .behavior, SettingsAnchor.fallback, "Fallback", "Open as URL",
+             ["url", "address", "website", "browser", "open", "fallback", "no matches"]),
+        item("searchTheWeb", .behavior, SettingsAnchor.fallback, "Fallback", "Search the web",
+             ["search", "web", "google", "duckduckgo", "template", "fallback", "no matches"]),
+        item("runAsShellCommand", .behavior, SettingsAnchor.fallback, "Fallback",
+             "Run as shell command",
+             ["shell", "command", "terminal", "run", "zsh", "fallback", "no matches", "dangerous"]),
 
         item("showDelay", .behavior, SettingsAnchor.session, "Session", "Show delay",
              ["delay", "wait", "flash", "quick tap", "reveal"]),
@@ -356,9 +370,22 @@ enum SettingsIndex {
     }
 }
 
+/// A section jump asked for before `SettingsRootView` exists to receive it — see
+/// `SettingsPresenter.show(anchor:)`. A plain `ObservableObject` rather than a notification: the
+/// view already has a `.onChange`-driven jump path for search results, and this is the same
+/// mechanism, fed from a second source.
+@MainActor
+final class SettingsNavigator: ObservableObject {
+    @Published var pendingAnchor: String?
+}
+
 // MARK: - Root
 
 struct SettingsRootView: View {
+    /// A jump asked for from outside the SwiftUI tree — see `SettingsPresenter.show(anchor:)`.
+    /// `@ObservedObject` rather than `@StateObject`: the presenter owns this and it has to outlive
+    /// any one `SettingsRootView` instance, in the same way `window` outlives being closed.
+    @ObservedObject var navigator: SettingsNavigator
     @State private var tab: SettingsTab = .general
     @State private var query = ""
     /// Anchor a search result asked for. Cleared once the scroll has happened, so picking the same
@@ -385,6 +412,23 @@ struct SettingsRootView: View {
         }
         .frame(minWidth: 700, idealWidth: 760, minHeight: 500, idealHeight: 580)
         .environment(\.settingsFlash, flash)
+        // `.onAppear` catches an anchor already pending when the window is built for the first
+        // time — `.onChange` alone never fires for a value a view already held at its first
+        // render — and `.onChange` catches every jump asked for while the window stays open.
+        .onAppear { consumePendingAnchor(navigator.pendingAnchor) }
+        .onChange(of: navigator.pendingAnchor) { _, anchor in consumePendingAnchor(anchor) }
+    }
+
+    /// Resolves an anchor the same way a search hit does — `SettingsIndex` is the one table that
+    /// already maps an anchor to the tab it lives on, so this reuses it rather than inventing a
+    /// second lookup.
+    private func consumePendingAnchor(_ anchor: String?) {
+        guard let anchor, let hit = SettingsIndex.items.first(where: { $0.anchor == anchor })
+        else { return }
+        tab = hit.tab
+        query = ""
+        jump = hit.anchor
+        navigator.pendingAnchor = nil
     }
 
     // MARK: Sidebar
@@ -616,6 +660,13 @@ struct GeneralSettings: View {
                         Button("Export…", action: SettingsIO.export)
                         Button("Import…", action: SettingsIO.importSettings)
                     }
+                }
+                SettingsRow(
+                    title: "Import from another switcher",
+                    subtitle: "Brings in shortcuts already set up in Rectangle, Rectangle Pro or "
+                        + "AltTab. Always asks before changing anything."
+                ) {
+                    Button("Import shortcuts…", action: ShortcutImport.presentImport)
                 }
                 SettingsRow(
                     title: "Reset to defaults",
@@ -1003,6 +1054,34 @@ struct BehaviorSettings: View {
                     isOn: $behavior.stickyMode)
             }
 
+            SettingsSection(title: "Fallback", anchor: SettingsAnchor.fallback) {
+                SettingsToggle(
+                    title: "Open as URL",
+                    subtitle: "When a query matches nothing running or installed and looks like an "
+                        + "address, offer to open it in your browser.",
+                    isOn: $behavior.offerURLFallback)
+                SettingsToggle(
+                    title: "Search the web",
+                    subtitle: "Offer to search for the query, using the address below.",
+                    isOn: $behavior.offerSearchFallback)
+                SettingsRow(
+                    title: "Search template",
+                    subtitle: "%s is replaced with the query.",
+                    isSubtitleVerbatim: true, controlWidth: 220
+                ) {
+                    TextField("", text: $behavior.fallbackSearchTemplate)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                        .disabled(!behavior.offerSearchFallback)
+                }
+                SettingsToggle(
+                    title: "Run as shell command",
+                    subtitle: "Runs whatever you typed as a shell command, with no confirmation "
+                        + "and no visible output. Leave this off unless you understand what that "
+                        + "means.",
+                    isOn: $behavior.offerShellFallback)
+            }
+
             SettingsSection(title: "Contents", anchor: SettingsAnchor.contents) {
                 SettingsChoice(
                     title: "Switch between",
@@ -1159,9 +1238,18 @@ private struct ScreenRecordingWarning: View {
 @MainActor
 final class SettingsPresenter: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    /// Carries a section jump into `SettingsRootView` from outside the SwiftUI tree — the same
+    /// scroll-and-outline machinery the in-window search field drives, just fed from a second
+    /// place. Owned here rather than by the window because it has to exist before the window does:
+    /// the first `show(anchor:)` call has to set it before `SettingsRootView` is even built, so the
+    /// view's first appearance already has an anchor to jump to.
+    private let navigator = SettingsNavigator()
 
-    func show() {
-        let window = self.window ?? Self.makeWindow()
+    /// - Parameter anchor: A section anchor from `SettingsAnchor` to jump to and outline, the same
+    ///   way picking a search result does. Nil just opens the window on whatever tab it was left on.
+    func show(anchor: String? = nil) {
+        if let anchor { navigator.pendingAnchor = anchor }
+        let window = self.window ?? Self.makeWindow(navigator: navigator)
         self.window = window
         window.delegate = self
         // A Dock tile needs a menu bar to go with it — see `makeMainMenu`. Installed before the
@@ -1249,7 +1337,7 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
     /// Built on first show rather than at launch. `AppsSettings` constructs an `AppListModel`, which
     /// registers workspace observers and does a LaunchServices lookup plus two disk reads per
     /// installed app — real work for a window most sessions never open.
-    private static func makeWindow() -> NSWindow {
+    private static func makeWindow(navigator: SettingsNavigator) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 760, height: 580),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -1273,7 +1361,7 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
         window.isMovableByWindowBackground = false
         // The presenter owns the window across closes, so AppKit must not free it out from under us.
         window.isReleasedWhenClosed = false
-        window.contentView = glassContent()
+        window.contentView = glassContent(navigator: navigator)
         window.center()
         // Suffixed deliberately. Setting an autosave name applies the frame saved under it, so an
         // install that has opened Settings before would come back at the old size and never see a
@@ -1289,13 +1377,13 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
     /// The material goes on an `NSView` under the hosting view rather than into the SwiftUI tree so
     /// that it covers the titlebar region too — a `.fullSizeContentView` window whose glass stops at
     /// the content's top edge shows a bare strip behind the traffic lights.
-    private static func glassContent() -> NSView {
+    private static func glassContent(navigator: SettingsNavigator) -> NSView {
         let backdrop = NSVisualEffectView()
         backdrop.material = .underWindowBackground
         backdrop.blendingMode = .behindWindow
         backdrop.state = .active
 
-        let host = NSHostingView(rootView: SettingsRootView())
+        let host = NSHostingView(rootView: SettingsRootView(navigator: navigator))
         host.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addSubview(host)
         NSLayoutConstraint.activate([

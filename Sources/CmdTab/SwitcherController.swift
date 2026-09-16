@@ -124,6 +124,18 @@ final class SwitcherController {
     /// invalidation path.
     private var launchIcons: [String: NSImage] = [:]
 
+    /// The default browser's icon, resolved once and reused for every fallback tile — a URL/search
+    /// fallback opens through the browser, so its icon is the honest answer to "what will this
+    /// tile do", the same argument `launchIcons` makes for a launch suggestion's own app icon.
+    /// Resolved against a throwaway `https://` URL because `urlForApplication(toOpen:)` answers
+    /// for a URL's *handler*, and there is no API that just asks "what is the default browser".
+    private lazy var browserIcon: NSImage? = {
+        guard let placeholder = URL(string: "https://example.com"),
+            let app = NSWorkspace.shared.urlForApplication(toOpen: placeholder)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: app.path)
+    }()
+
     /// Whether this session is *allowed* to stay up after the trigger is released.
     private var isSticky = false { didSet { publishTapState() } }
 
@@ -281,6 +293,20 @@ final class SwitcherController {
         }
     }
 
+    /// Per-window rules, compiled once by `TitleRulesStore` and pushed here on every change —
+    /// unioned everywhere `appRules` is, rather than replacing it. Rebuilds the list for the same
+    /// reason `appRules` does: `.hide` and `.expand` change what the targets are.
+    var titleRules: [CompiledTitleRule] = [] {
+        didSet {
+            provider.titleRules = titleRules
+            preview.titleRules = titleRules
+            dragSnap.titleRules = titleRules
+            mouseWindowDrag.titleRules = titleRules
+            targetHighlight.titleRules = titleRules
+            provider.refresh()
+        }
+    }
+
     /// Snaps an app's first window as it opens, for the apps that ask for it.
     private let launchArrangements = LaunchArrangementWatcher()
 
@@ -371,6 +397,11 @@ final class SwitcherController {
         showDelay = settings.showDelay
         windowSpaceScope = settings.windowSpaceScope
         launchFromSearch = settings.launchFromSearch
+        fallbackSettings = SwitcherFallbacks.Settings(
+            offerURL: settings.offerURLFallback,
+            offerSearch: settings.offerSearchFallback,
+            offerShell: settings.offerShellFallback,
+            searchTemplate: settings.fallbackSearchTemplate)
         stickyMode = settings.stickyMode
         sameAppHotkey = settings.sameAppHotkey
         // Last, and a plain assignment so its `didSet` still re-syncs the system ⌘-Tab.
@@ -536,6 +567,7 @@ final class SwitcherController {
         startActiveMirror()
         panels.onPick = { [weak self] index in self?.pick(index) }
         panels.onClose = { [weak self] index in self?.closeTile(index) }
+        panels.onToggleMark = { [weak self] index in self?.toggleMarkedTile(index) }
         panels.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
             // Scroll and hover are the advertised way to move the selection in a stay-open session,
@@ -992,11 +1024,6 @@ final class SwitcherController {
         // Navigation and editing keys.
         switch code {
         case Key.escape:
-            // Unconditional, deliberately. While the panel is up this handler swallows every key on
-            // the system, so Escape is the user's last-resort way out and must never depend on any
-            // other state. Backspace already backs out of a query character by character, so making
-            // Escape search-field-like ("first press clears the query") bought very little and cost
-            // the one exit that is supposed to always work.
             cancel()
             return true
         case Key.rightArrow: advance(1); return true
@@ -1042,6 +1069,15 @@ final class SwitcherController {
     /// Whether a query that matches nothing running may offer installed apps to launch.
     var launchFromSearch = true
 
+    /// The fallback tier: whether, and how, a query that matches nothing running *and* nothing
+    /// installed may offer to open it as a URL, search for it, or run it as a shell command. Each
+    /// case is checked here rather than baked into `FallbackAction` because building the action is
+    /// the one place that already knows the query, and settings on a `SwitchTarget` would mean
+    /// carrying them past the point where they are decided.
+    var fallbackSettings = SwitcherFallbacks.Settings(
+        offerURL: false, offerSearch: false, offerShell: false,
+        searchTemplate: SwitcherFallbacks.defaultSearchTemplate)
+
     /// Offers installed apps alongside whatever the query found running.
     ///
     /// This used to fire *only* on an empty result, on the argument that padding a list which
@@ -1064,7 +1100,9 @@ final class SwitcherController {
     /// keystroke is disk-backed LaunchServices work inline on the key path — the one thing the
     /// class comment's invariant says must never go there.
     private func updateLaunchSuggestions(for query: String) {
-        guard launchFromSearch, !query.isEmpty else {
+        let anyFallback =
+            fallbackSettings.offerURL || fallbackSettings.offerSearch || fallbackSettings.offerShell
+        guard (launchFromSearch || anyFallback), !query.isEmpty else {
             model.setLaunchSuggestions([])
             return
         }
@@ -1096,27 +1134,70 @@ final class SwitcherController {
         // is precisely what lets a query hit one and miss the other.
         // Against the provider's tiles, not `model.targets` — see `providerTargetIDs`.
         let alreadyTiled = model.providerTargetIDs
-        let suggestions = InstalledApps.matches(query, excluding: excluded)
-            .filter { !alreadyTiled.contains("launch:\($0.bundleID)") }
-            .map { entry -> SwitchTarget in
-                let icon: NSImage?
-                if let cached = launchIcons[entry.bundleID] {
-                    icon = cached
-                } else {
-                    let resolved = NSWorkspace.shared.icon(forFile: entry.url.path)
-                    launchIcons[entry.bundleID] = resolved
-                    icon = resolved
-                }
-                return SwitchTarget(
-                    id: "launch:\(entry.bundleID)", kind: .launch(entry.url), title: entry.name,
-                    appName: entry.name, icon: icon, isMinimized: false, isHidden: false)
-            }
-        model.setLaunchSuggestions(suggestions)
+        let suggestions: [SwitchTarget] =
+            launchFromSearch
+            ? InstalledApps.matches(query, excluding: excluded)
+                .filter { !alreadyTiled.contains("launch:\($0.bundleID)") }
+                .map { entry -> SwitchTarget in
+                    let icon: NSImage?
+                    if let cached = launchIcons[entry.bundleID] {
+                        icon = cached
+                    } else {
+                        let resolved = NSWorkspace.shared.icon(forFile: entry.url.path)
+                        launchIcons[entry.bundleID] = resolved
+                        icon = resolved
+                    }
+                    return SwitchTarget(
+                        id: "launch:\(entry.bundleID)", kind: .launch(entry.url), title: entry.name,
+                        appName: entry.name, icon: icon, isMinimized: false, isHidden: false)
+                } : []
+        // The fallback tier, one rung below: only reached when this tier came up empty *and*
+        // nothing already running answers the query either. `model.targets` still carries whatever
+        // the previous keystroke put there, so the running check is against a purpose-filtered
+        // slice of it rather than the composed list — see `isFallback`.
+        var tiles = suggestions
+        if anyFallback {
+            let runningTargets = model.targets.filter { !$0.isLaunchable && !$0.isFallback }
+            let hasRunningMatch = !SwitcherModel.matchingIndices(runningTargets, query: query).isEmpty
+            let fallbacks = SwitcherFallbacks.tier(
+                runningMatches: hasRunningMatch, installedMatches: !suggestions.isEmpty,
+                query: query, settings: fallbackSettings)
+            if !fallbacks.isEmpty { tiles = fallbackTargets(fallbacks) }
+        }
+        model.setLaunchSuggestions(tiles)
         // Re-run the query so the freshly added tiles are matched and the highlight is settled
         // against the whole list; without it the panel would show suggestions the filter had never
         // been applied to. Where the highlight lands is `bestMatch`'s rule — a running match keeps
-        // it, and a suggestion only takes it when nothing running answered.
-        if !suggestions.isEmpty { model.setQuery(query) }
+        // it, a launch suggestion only takes it when nothing running answered, and a fallback tile
+        // always takes it, being the last resort rather than a competing answer.
+        if !tiles.isEmpty { model.setQuery(query) }
+    }
+
+    /// Turns already-decided fallback actions into tiles, in the order they were given.
+    /// `browserIcon` fits `.openURL` and `.search` — both open through the browser — but says
+    /// nothing true about `.shellCommand`, which draws the plain placeholder instead.
+    private func fallbackTargets(_ actions: [FallbackAction]) -> [SwitchTarget] {
+        actions.map { action in
+            let icon: NSImage?
+            switch action {
+            case .openURL, .search: icon = browserIcon
+            case .shellCommand: icon = nil
+            }
+            return SwitchTarget(
+                id: Self.fallbackID(action), kind: .fallback(action), title: action.title,
+                appName: action.title, icon: icon, isMinimized: false, isHidden: false)
+        }
+    }
+
+    /// A stable id per fallback *kind* rather than per value: there is at most one of each on screen
+    /// at a time, and the value itself (a `URL`, a raw command string) is not the identity — the
+    /// slot in the tier is.
+    private static func fallbackID(_ action: FallbackAction) -> String {
+        switch action {
+        case .openURL: return "fallback:url"
+        case .search: return "fallback:search"
+        case .shellCommand: return "fallback:shell"
+        }
     }
 
     /// Set while a relayout is already queued for the next main-loop turn.
@@ -1405,17 +1486,19 @@ final class SwitcherController {
 
         if scope == .frontApp {
             provider.frontAppWindowTargets(then: receive)
+        } else if scope == .tabs {
+            provider.tabTargets(then: receive)
         } else {
             provider.allWindowTargets(then: receive)
         }
         return true
     }
 
-    /// Narrows a window list to a scope. `.frontApp` and `.allWindows` are already exactly what was
-    /// fetched, so only the three filtering scopes do anything here.
+    /// Narrows a window list to a scope. `.frontApp`, `.allWindows` and `.tabs` are already exactly
+    /// what was fetched, so only the three filtering scopes do anything here.
     private static func filter(_ targets: [SwitchTarget], to scope: SwitcherScope) -> [SwitchTarget] {
         switch scope {
-        case .frontApp, .allWindows:
+        case .frontApp, .allWindows, .tabs:
             return targets
         case .minimized:
             return targets.filter(\.isMinimized)
@@ -1580,6 +1663,9 @@ final class SwitcherController {
         // two sessions can genuinely start on the same app, which is exactly when that would be
         // wrong — a ⌘-Tab that says nothing reads as one the machine ignored.
         announcedTarget = nil
+        // The marked set is session-scoped — every dismissal path funnels through here, which is
+        // what makes this the one place that has to remember to clear it.
+        model.clearMarks()
         // Anything still in flight belongs to the session just ended.
         beginSession()
         stopWatchdog()
@@ -1878,24 +1964,46 @@ final class SwitcherController {
         }
     }
 
+    /// The targets a set-capable action acts on: the marked set when one exists, else the
+    /// highlighted tile alone — see `SwitcherAction` cases excluded from this by `execute`, which
+    /// call their single-target handler directly instead of going through this resolver.
+    private func actionTargets() -> [SwitchTarget] {
+        let marked = model.markedTargets
+        if !marked.isEmpty { return marked }
+        return model.selected.map { [$0] } ?? []
+    }
+
     /// Asks before quitting. The panel is torn down first: it sits above every other window at a
     /// level an `NSAlert` cannot clear, so the sheet would otherwise open *behind* the switcher with
     /// the keyboard still swallowed by the tap — an app that appears wedged.
     ///
     /// The target is captured before the dismissal, since dismissing clears the selection.
     private func confirmThenExecute(_ action: SwitcherAction) {
-        guard let target = model.selected else { return }
-        let name = target.appName
+        let targets = actionTargets()
+        guard !targets.isEmpty else { return }
         cancel()
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText =
-            action == .forceQuit ? "Force-quit \(name)?" : "Quit \(name)?"
-        alert.informativeText =
-            action == .forceQuit
-            ? "\(name) will be terminated immediately. Unsaved changes in every one of its windows "
-                + "are lost."
-            : "Every window \(name) has open will close. Unsaved changes may be lost."
+        let verb = action == .forceQuit ? "Force-quit" : "Quit"
+        if targets.count > 1 {
+            // One confirmation for the whole marked set, naming the count rather than every app —
+            // a dialog listing three to nine names is a wall of text nobody actually reads before
+            // clicking through it.
+            alert.messageText = "\(verb) \(targets.count) apps?"
+            alert.informativeText =
+                action == .forceQuit
+                ? "Each will be terminated immediately. Unsaved changes in any of their windows are "
+                    + "lost."
+                : "Every window each has open will close. Unsaved changes may be lost."
+        } else {
+            let name = targets[0].appName
+            alert.messageText = "\(verb) \(name)?"
+            alert.informativeText =
+                action == .forceQuit
+                ? "\(name) will be terminated immediately. Unsaved changes in every one of its "
+                    + "windows are lost."
+                : "Every window \(name) has open will close. Unsaved changes may be lost."
+        }
         alert.addButton(withTitle: action == .forceQuit ? "Force Quit" : "Quit")
         alert.addButton(withTitle: "Cancel")
         // Activation is taken to put the alert in front and handed straight back, which is the only
@@ -1917,10 +2025,12 @@ final class SwitcherController {
         let response = alert.runModal()
         if !wasActive { NSApp.deactivate() }
         guard response == .alertFirstButtonReturn else { return }
-        // The panel is already down, so this acts on the captured target rather than the selection.
-        if action == .forceQuit { target.forceQuitApp() } else { target.quitApp() }
+        // The panel is already down, so this acts on the captured targets rather than the selection.
+        for target in targets {
+            if action == .forceQuit { target.forceQuitApp() } else { target.quitApp() }
+        }
         Log.tap.notice(
-            "execute \(action.rawValue, privacy: .public) on pid \(target.pid, privacy: .public) (confirmed)")
+            "execute \(action.rawValue, privacy: .public) on \(targets.count, privacy: .public) target(s) (confirmed)")
     }
 
     private func execute(_ action: SwitcherAction) {
@@ -1929,33 +2039,47 @@ final class SwitcherController {
         Log.tap.notice(
             "execute \(action.rawValue, privacy: .public) on pid \(self.model.selected?.pid ?? -1, privacy: .public)")
         switch action {
-        case .quit: quitSelected()
-        case .forceQuit: forceQuitSelected()
-        case .close: closeSelectedWindow()
-        case .hide: hideSelected()
+        case .quit: quitTargets(actionTargets())
+        case .forceQuit: forceQuitTargets(actionTargets())
+        case .close: closeTargets(actionTargets())
+        case .hide: hideTargets(actionTargets())
+        // Always single-target: hiding one app while keeping it up is a statement about *that*
+        // app, and a marked set has no sensible reading of "these stay, everything else hides".
         case .hideOthers: hideOthers()
-        case .minimize: minimizeSelected()
+        case .minimize: minimizeTargets(actionTargets())
+        // Zoom is the green button: there is no "maximize several windows at once" gesture on
+        // macOS for this to echo, so it stays pinned to the highlighted tile regardless of marks.
         case .zoom: zoomSelected()
         case .moveDisplayPrev: moveSelectedWindow(acrossDisplays: -1)
         case .moveDisplayNext: moveSelectedWindow(acrossDisplays: 1)
         case .tileLeftHalf, .tileRightHalf, .tileTopHalf, .tileBottomHalf:
             guard let arrangement = action.arrangement else { return }
             tileSelectedWindow(arrangement)
+        case .mark:
+            model.toggleMark(at: model.selection)
+            scheduleLayout()
+        case .tileMarked: tileMarkedWindows()
         }
     }
 
-    private func quitSelected() {
-        guard let target = model.selected else { return }
-        target.quitApp()
-        model.remove { $0.pid == target.pid }
+    /// Quits every target in the set (the marked set, or the highlighted tile alone), then clears
+    /// the marks and drops each from the list.
+    private func quitTargets(_ targets: [SwitchTarget]) {
+        guard !targets.isEmpty else { return }
+        for target in targets { target.quitApp() }
+        let pids = Set(targets.map(\.pid))
+        model.remove { pids.contains($0.pid) }
+        model.clearMarks()
         finishListMutation()
     }
 
-    /// Force-terminates the selected app.
-    private func forceQuitSelected() {
-        guard let target = model.selected else { return }
-        target.forceQuitApp()
-        model.remove { $0.pid == target.pid }
+    /// Force-terminates every target in the set.
+    private func forceQuitTargets(_ targets: [SwitchTarget]) {
+        guard !targets.isEmpty else { return }
+        for target in targets { target.forceQuitApp() }
+        let pids = Set(targets.map(\.pid))
+        model.remove { pids.contains($0.pid) }
+        model.clearMarks()
         finishListMutation()
     }
 
@@ -1965,27 +2089,36 @@ final class SwitcherController {
     /// Optimistic like `quitSelected`, and deliberately without a refresh: the close is an async AX
     /// call on another queue, so refreshing here can enumerate the window before it is gone and fold
     /// it straight back in.
-    private func closeSelectedWindow() {
-        guard let target = model.selected else { return }
-        target.closeWindow()
-        // Window mode: drop just that tile. App mode: the app stays (it may have other windows).
-        guard case .window = target.kind else { return }
-        model.remove { $0.id == target.id }
+    private func closeTargets(_ targets: [SwitchTarget]) {
+        guard !targets.isEmpty else { return }
+        for target in targets { target.closeWindow() }
+        // Window mode: drop just those tiles. App mode: the app stays (it may have other windows).
+        let windowIDs = Set(
+            targets.compactMap { target -> String? in
+                guard case .window = target.kind else { return nil }
+                return target.id
+            })
+        model.remove { windowIDs.contains($0.id) }
+        model.clearMarks()
         finishListMutation()
     }
 
-    /// Hides the highlighted app and takes it (and any of its windows) out of the list.
-    private func hideSelected() {
-        guard let target = model.selected else { return }
-        target.hideApp()
-        model.remove { $0.pid == target.pid }
+    /// Hides every target in the set and takes each (and any of its windows) out of the list.
+    private func hideTargets(_ targets: [SwitchTarget]) {
+        guard !targets.isEmpty else { return }
+        for target in targets { target.hideApp() }
+        let pids = Set(targets.map(\.pid))
+        model.remove { pids.contains($0.pid) }
+        model.clearMarks()
         finishListMutation()
     }
 
-    /// Minimizes the selected window (or the app's front window). The tile stays — a minimized window
-    /// is still switchable — so the panel just relays out.
-    private func minimizeSelected() {
-        model.selected?.minimizeWindow()
+    /// Minimizes every target in the set. The tiles stay — a minimized window is still switchable —
+    /// so this just clears the marks and relays out.
+    private func minimizeTargets(_ targets: [SwitchTarget]) {
+        guard !targets.isEmpty else { return }
+        for target in targets { target.minimizeWindow() }
+        model.clearMarks()
         scheduleLayout()
     }
 
@@ -2019,14 +2152,54 @@ final class SwitcherController {
     /// which lists them. An app told never to be tiled is left alone from here too.
     private func tileSelectedWindow(_ arrangement: WindowArrangement) {
         guard let target = model.selected else { return }
-        if let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier,
-            appRules[id]?.neverTile == true {
-            Log.tap.notice("tiling: \(id, privacy: .public) is set to never tile")
+        let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+        if id.map({ appRules[$0]?.neverTile == true }) ?? false
+            || CompiledTitleRule.matches(
+                titleRules, bundleID: id, title: target.title, action: .neverTile) {
+            Log.tap.notice("tiling: \(id ?? target.title, privacy: .public) is set to never tile")
             return
         }
         target.tileWindow(
             arrangement, visibleAreas: WindowTiler.visibleAreas(),
             cycleWidths: tiling.cycleWidths, gap: tiling.gap)
+    }
+
+    /// Lays 2-4 marked *window* tiles side by side on the first marked tile's display — the
+    /// leftHalf/rightHalf, thirds or quarters `WindowArrangement` cases already used by the halves
+    /// chords, so gap and never-tile are honoured for free rather than reimplemented here.
+    ///
+    /// Anything outside that shape — 1, 5+ marked, or an app tile among them, which has no single
+    /// window to place in a slot — is a silent no-op, the same tolerance a digit past the end of the
+    /// list gets from `jump(to:)`: doing nothing is far cheaper than guessing what was meant.
+    ///
+    /// Each window is handed the *same* one-display area rather than its own current display, so
+    /// `WindowTiler`'s home-display resolution (which otherwise measures where a window already
+    /// sits) lands every one of them together — which is the entire point of tiling a set instead of
+    /// tiling each window where `⌥T` happened to catch it.
+    private func tileMarkedWindows() {
+        let marked = model.markedTargets
+        guard let arrangement = MarkedTiling.arrangements(for: marked.count),
+            marked.allSatisfy({ if case .window = $0.kind { true } else { false } }),
+            let displayIndex = marked[0].displayIndex
+        else {
+            Log.tap.notice("tileMarked: refusing (\(marked.count, privacy: .public) marked)")
+            return
+        }
+        let areas = WindowTiler.visibleAreas()
+        guard areas.indices.contains(displayIndex) else { return }
+        let area = [areas[displayIndex]]
+        for (target, slot) in zip(marked, arrangement) {
+            let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+            if id.map({ appRules[$0]?.neverTile == true }) ?? false
+                || CompiledTitleRule.matches(
+                    titleRules, bundleID: id, title: target.title, action: .neverTile) {
+                Log.tap.notice("tiling: \(id ?? target.title, privacy: .public) is set to never tile")
+                continue
+            }
+            target.tileWindow(slot, visibleAreas: area, cycleWidths: tiling.cycleWidths, gap: tiling.gap)
+        }
+        model.clearMarks()
+        scheduleLayout()
     }
 
     /// Hides every other regular app, leaving the selected one (and Cmd-Tab) alone.
@@ -2061,6 +2234,15 @@ final class SwitcherController {
         guard isVisible, actionsEnabled, model.targets.indices.contains(index) else { return }
         model.selection = index
         perform(.close)
+    }
+
+    /// A tile was ⌥-clicked: toggle its mark, the mouse's way of doing what ⌥-Space does from the
+    /// keyboard. Gated on `actionsEnabled` like every other in-switcher action — an ⌥-click with the
+    /// feature off is an ordinary click's modifier going unnoticed, not a mark appearing unbidden.
+    private func toggleMarkedTile(_ index: Int) {
+        guard isVisible, actionsEnabled, model.targets.indices.contains(index) else { return }
+        model.toggleMark(at: index)
+        scheduleLayout()
     }
 
 }

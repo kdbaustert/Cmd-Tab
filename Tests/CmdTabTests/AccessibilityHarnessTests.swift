@@ -334,6 +334,45 @@ final class AccessibilityHarnessTests: XCTestCase {
         assertFrame(back, original, "restore returns the frame the window started with")
     }
 
+    /// Restore is a toggle, and only a real window can show it: the table it swaps against lives on
+    /// the tiler's own queue, so there is no pure seam to ask this question at.
+    ///
+    /// The second press has to come back to the tile the first press undid. Consuming the saved
+    /// frame instead left the chord doing nothing at all from the second press onward — an undo
+    /// with no redo, and no way back to a layout undone by accident.
+    func testRestoreTogglesBackToTheTileItUndid() throws {
+        let window = try openWindow(
+            at: NSRect(x: 300, y: 300, width: 520, height: 400), title: "Toggle me")
+        let area = try homeArea(of: window)
+        let original = try XCTUnwrap(AX.frame(window))
+        let pid = ProcessInfo.processInfo.processIdentifier
+
+        WindowTiler.apply(
+            .leftHalf, pid: pid, areas: [area], cycleWidths: false, target: .element(window))
+        let tiled = try waitFor("the tile to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - area.width / 2) <= tolerance
+            else { return nil }
+            return frame
+        }
+
+        WindowTiler.apply(
+            .restore, pid: pid, areas: [area], cycleWidths: false, target: .element(window))
+        _ = try waitFor("the first restore to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - original.width) <= tolerance
+            else { return nil }
+            return frame
+        }
+
+        WindowTiler.apply(
+            .restore, pid: pid, areas: [area], cycleWidths: false, target: .element(window))
+        let again = try waitFor("the second restore to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - tiled.width) <= tolerance
+            else { return nil }
+            return frame
+        }
+        assertFrame(again, tiled, "a second restore goes back to the tile the first one undid")
+    }
+
     // MARK: - Navigation
 
     /// Directional focus against the window server's own list, which is where it gets its answers.
@@ -375,5 +414,38 @@ final class AccessibilityHarnessTests: XCTestCase {
         let mine = listed.filter { $0.pid == ProcessInfo.processInfo.processIdentifier }
         XCTAssertGreaterThanOrEqual(
             mine.count, 3, "the window server should list the three windows just opened")
+    }
+
+    // MARK: - Tab enumeration
+
+    /// `TabEnumeration`'s walk against a real Safari, which is the one thing the fake-tree tests in
+    /// `TabEnumerationTests` cannot cover: whether Safari's *actual* accessibility tree still has
+    /// the shape the file-header comment on `TabEnumeration` records — `AXWindow > AXSplitGroup >
+    /// AXTabGroup > AXGroup > AXOpaqueProviderGroup > AXRadioButton`, active tab on `AXValue == 1`.
+    ///
+    /// Skipped a third way on top of the two `setUp` already applies: this drives an app the
+    /// harness did not launch and has no lease on, so it is also skipped unless Safari happens to
+    /// already be running with at least one window — the harness opens no browser windows of its
+    /// own and asks for no new tabs, since doing either would leave the person who ran this with a
+    /// changed Safari session.
+    func testTabEnumerationFindsSafarisRealTabs() throws {
+        guard let safari = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.Safari"
+        ).first else {
+            throw XCTSkip("Safari is not running; launch it with at least one window to run this")
+        }
+        let pid = safari.processIdentifier
+        guard let window = AX.frontWindow(ofApplication: pid) else {
+            throw XCTSkip("Safari is running but reports no window")
+        }
+        let tabs: [TabEnumeration.TabRef] = try waitFor("Safari's tabs") {
+            let found = TabEnumeration.tabs(pid: pid, frontWindow: window)
+            return found.isEmpty ? nil : found
+        }
+        XCTAssertGreaterThanOrEqual(tabs.count, 1, "Safari should report at least its one open tab")
+        XCTAssertTrue(
+            tabs.allSatisfy { $0.pid == pid }, "every tab should be attributed to Safari's pid")
+        XCTAssertLessThanOrEqual(
+            tabs.filter { $0.isActive }.count, 1, "at most one tab should read back as active")
     }
 }

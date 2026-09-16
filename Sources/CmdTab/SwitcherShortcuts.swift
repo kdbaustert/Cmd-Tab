@@ -14,6 +14,13 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
     case quit, forceQuit, close, hide, hideOthers, minimize, zoom
     case moveDisplayPrev, moveDisplayNext
     case tileLeftHalf, tileRightHalf, tileTopHalf, tileBottomHalf
+    /// Toggles the highlighted tile in or out of the marked set (session-scoped, cleared whenever
+    /// the switcher closes) — see `SwitcherModel.markedIDs`.
+    case mark
+    /// Tiles the marked set of 2-4 window tiles side by side. Its own case, alongside `tileLeftHalf`
+    /// and friends, so it shares their settings row, rebinding and shadow-audit path rather than
+    /// being a special key the rest of that machinery does not know about.
+    case tileMarked
 
     var id: String { rawValue }
 
@@ -32,6 +39,8 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .tileRightHalf: return "Tile to right half"
         case .tileTopHalf: return "Tile to top half"
         case .tileBottomHalf: return "Tile to bottom half"
+        case .mark: return "Mark tile"
+        case .tileMarked: return "Tile marked windows"
         }
     }
 
@@ -51,6 +60,10 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .tileLeftHalf, .tileRightHalf, .tileTopHalf, .tileBottomHalf:
             return "Snaps the highlighted window to that half of its display — the same tile the "
                 + "global ⌃⌘-arrow chord makes, gap and width cycle included."
+        case .mark:
+            return "Toggles a check on the highlighted tile. Marks clear when the switcher closes."
+        case .tileMarked:
+            return "Tiles 2-4 marked windows side by side on the first marked tile's display."
         }
     }
 
@@ -100,6 +113,8 @@ enum SwitcherAction: String, CaseIterable, Identifiable {
         case .tileRightHalf: return ActionShortcut(keyCode: 124, modifierRaw: control)  // →
         case .tileTopHalf: return ActionShortcut(keyCode: 126, modifierRaw: control)  // ↑
         case .tileBottomHalf: return ActionShortcut(keyCode: 125, modifierRaw: control)  // ↓
+        case .mark: return ActionShortcut(keyCode: 49, modifierRaw: option)  // Space
+        case .tileMarked: return ActionShortcut(keyCode: 17, modifierRaw: option)  // T
         }
     }
 }

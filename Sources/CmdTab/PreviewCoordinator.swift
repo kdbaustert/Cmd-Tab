@@ -12,6 +12,11 @@ final class PreviewCoordinator {
     /// Invoked when a thumbnail is clicked, so the controller can focus that window and dismiss.
     var onPick: ((WindowThumb) -> Void)?
 
+    /// Per-window rules, mirrored from the controller's own copy — a window a rule marks `.hide`
+    /// must not appear here either, or the switcher's promise to never list it would be broken the
+    /// moment the cursor hovered its app.
+    var titleRules: [CompiledTitleRule] = []
+
     private let strip = WindowPreviewPanel()
     /// The switcher the strip positions itself against and forwards scrolls to. The group rather
     /// than a single panel: mirrored across displays, the strip has to clear the panel the cursor is
@@ -85,8 +90,9 @@ final class PreviewCoordinator {
         captureWork = nil
         guard isActive() else { return }
         let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
+        let titleRules = self.titleRules
         captureTask = Task { [weak self] in
-            let thumbs = await WindowCapture.shared.thumbnails(for: pid)
+            let thumbs = await WindowCapture.shared.thumbnails(for: pid, titleRules: titleRules)
             guard !Task.isCancelled, let self, self.isActive() else { return }
             // pid and count only. Window titles carry document names, mail subjects and URLs, and
             // `.public` would persist them in the unified log for anything that can run `log show`.

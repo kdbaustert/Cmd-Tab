@@ -113,6 +113,10 @@ final class SwitcherPanel: NSPanel {
     var onPick: ((Int) -> Void)?
     /// Invoked when a tile's close button is clicked, with that tile's index.
     var onClose: ((Int) -> Void)?
+    /// Invoked when a tile is ⌥-clicked, with its index — the mouse's way of toggling the mark that
+    /// ⌥-Space toggles from the keyboard. Checked ahead of `onPick` in `sendEvent`, the same way the
+    /// close button is checked ahead of it: an ⌥-click is never also a pick.
+    var onToggleMark: ((Int) -> Void)?
     /// A scroll that landed on this panel, forwarded up to the group, which owns the accumulator so
     /// a flick spanning two displays still reads as one gesture.
     var onScrollEvent: ((NSEvent) -> Void)?
@@ -154,7 +158,11 @@ final class SwitcherPanel: NSPanel {
                 return
             }
             if let index = tileIndex(at: NSEvent.mouseLocation) {
-                onPick?(index)
+                if event.modifierFlags.contains(.option) {
+                    onToggleMark?(index)
+                } else {
+                    onPick?(index)
+                }
                 return
             }
         case .scrollWheel:
@@ -290,7 +298,11 @@ final class SwitcherPanel: NSPanel {
             Log.general.error("panel layout: no screen available; keeping the current geometry")
             return
         }
-        let columns = Self.columns(for: model, on: screen, cap: maxColumns)
+        // Resolved against *this* screen's own backing scale, not the shared model's raw sliders —
+        // see `DisplayLayout` for why a panel mirrored onto a low-DPI external needs a different tile
+        // size than the one on the laptop lid beside it, even though both read the same settings.
+        let metrics = DisplayLayout.metrics(base: model.metrics, backingScale: screen.backingScaleFactor)
+        let columns = Self.columns(for: model, metrics: metrics, on: screen, cap: maxColumns)
         // Recorded from the value the view is about to be built with, so the arrows and the grid can
         // never disagree about where a row ends. See `rowStride` for why the list's answer is 1.
         rowStride = model.layout == .list ? 1 : max(columns, 1)
@@ -302,7 +314,7 @@ final class SwitcherPanel: NSPanel {
         // missing rect. Letting the callback own the cache is what keeps it in step, and because it
         // assigns the whole map rather than merging, a shorter list drops the extra entries anyway.
         let view = SwitcherView(
-            model: model, columns: columns,
+            model: model, columns: columns, metrics: metrics,
             onTileFrames: { [weak self] frames in
                 guard let self else { return }
                 self.tileFrames = frames
@@ -395,27 +407,14 @@ final class SwitcherPanel: NSPanel {
         return .underCursor
     }
 
-    private static func columns(for model: SwitcherModel, on screen: NSScreen, cap: Int) -> Int {
-        let count = model.targets.count
-        guard count > 0 else { return 1 }
-        let metrics = model.metrics
-        // A list wraps on *height*: rows stack downward, so what runs out first is vertical room,
-        // and a second column is what a long list needs rather than a narrower row.
-        if model.layout == .list {
-            let row = metrics.listRow(for: model.mode)
-            let available = screen.visibleFrame.height * Metrics.maxScreenFraction
-                - Metrics.panelPadding * 2
-            let perColumn = max(Int(available / (row.height + Metrics.rowGap)), 1)
-            var needed = Int((Double(count) / Double(perColumn)).rounded(.up))
-            if cap > 0 { needed = min(needed, cap) }
-            return max(needed, 1)
-        }
-        let tileWidth = metrics.tile(for: model.mode, showsTitle: model.showsTitle).width
-            + Metrics.tileGap
-        let available = screen.visibleFrame.width * Metrics.maxScreenFraction
-            - Metrics.panelPadding * 2
-        var fits = max(Int(available / tileWidth), 1)
-        if cap > 0 { fits = min(fits, cap) }
-        return min(count, fits)
+    /// Delegates to `DisplayLayout.columns`, which holds the arithmetic in a form the tests can
+    /// drive without an `NSScreen`. `metrics` is already this screen's own — see `layout()`.
+    private static func columns(
+        for model: SwitcherModel, metrics: Metrics, on screen: NSScreen, cap: Int
+    ) -> Int {
+        DisplayLayout.columns(
+            targetCount: model.targets.count, mode: model.mode, layout: model.layout,
+            showsTitle: model.showsTitle, metrics: metrics, visibleSize: screen.visibleFrame.size,
+            cap: cap)
     }
 }

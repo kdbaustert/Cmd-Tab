@@ -35,6 +35,8 @@ final class PanelGroup {
     var onPick: ((Int) -> Void)?
     /// Invoked when a tile's close button is clicked, with its index.
     var onClose: ((Int) -> Void)?
+    /// Invoked when a tile is ⌥-clicked, with its index.
+    var onToggleMark: ((Int) -> Void)?
     /// Invoked with a step (+1/-1) when the scroll wheel moves over any panel.
     var onScroll: ((Int) -> Void)?
     /// Fires when what the cursor points at changes. Only while window previews are on.
@@ -386,6 +388,7 @@ final class PanelGroup {
         panel.fade = fade
         panel.onPick = { [weak self] index in self?.onPick?(index) }
         panel.onClose = { [weak self] index in self?.onClose?(index) }
+        panel.onToggleMark = { [weak self] index in self?.onToggleMark?(index) }
         panel.onScrollEvent = { [weak self] event in self?.handleScroll(event) }
         panel.onGeometryChange = { [weak self] in self?.refreshPreview() }
         return panel

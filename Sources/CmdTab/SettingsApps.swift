@@ -117,6 +117,7 @@ struct AppsSettings: View {
     @ObservedObject var apps: AppListModel
     @ObservedObject private var globals = GlobalActionsStore.shared
     @ObservedObject private var rules = AppRulesStore.shared
+    @ObservedObject private var titleRules = TitleRulesStore.shared
     @ObservedObject private var behavior = BehaviorStore.shared
     @State private var query = ""
 
@@ -212,6 +213,37 @@ struct AppsSettings: View {
                         HStack {
                             Spacer()
                             Button("Add App…", action: addOverride)
+                        }
+                    }
+                }
+            }
+
+            SettingsSection(
+                title: "Window title rules", anchor: SettingsAnchor.titleRules,
+                footer: "Matched case-insensitively against the window's title. Anchoring is up to "
+                    + "you — \u{201C}Zoom\u{201D} matches a title containing it anywhere, "
+                    + "\u{201C}^Zoom\u{201D} only one that starts with it. A rule and a per-app "
+                    + "override above are never in conflict: either one is enough to hide a "
+                    + "window, expand it, or protect it from tiling."
+            ) {
+                if titleRules.rules.isEmpty {
+                    SettingsWideRow {
+                        HStack {
+                            Text("No title rules.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Add Rule", action: { titleRules.addRule() })
+                        }
+                    }
+                } else {
+                    ForEach(titleRules.rules) { rule in
+                        TitleRuleRow(rule: rule, apps: apps, store: titleRules)
+                    }
+                    SettingsWideRow {
+                        HStack {
+                            Spacer()
+                            Button("Add Rule", action: { titleRules.addRule() })
                         }
                     }
                 }
@@ -402,8 +434,12 @@ struct AppsSettings: View {
         if rule.neverTile { parts.append("never tiled") }
         if rule.hideWhenFrontmost { parts.append("hidden when already front") }
         if !rule.displayName.isEmpty { parts.append("shown as “\(rule.displayName)”") }
-        if let arrangement = rule.launchArrangement {
+        if let display = rule.launchDisplay, let arrangement = rule.launchArrangement {
+            parts.append("opens on display \(display), \(arrangement.title.lowercased())")
+        } else if let arrangement = rule.launchArrangement {
             parts.append("opens \(arrangement.title.lowercased())")
+        } else if let display = rule.launchDisplay {
+            parts.append("opens on display \(display)")
         }
         // Clear them all and the row deletes itself on the next change, so say so rather than
         // leaving a row that looks like it still does something.
@@ -668,6 +704,19 @@ private struct AppOverrideControls: View {
             set: { rules.setLaunchArrangement($0, for: bundleID) })
     }
 
+    private var launchDisplay: Binding<Int?> {
+        Binding(
+            get: { rules.rule(for: bundleID).launchDisplay },
+            set: { rules.setLaunchDisplay($0, for: bundleID) })
+    }
+
+    /// How many display rows to offer: at least whatever is plugged in right now, and at least the
+    /// number already stored, so a rule set on a two-display desk still reads "Display 2" once that
+    /// monitor is unplugged rather than silently losing its own choice from the list.
+    private var displayChoiceCount: Int {
+        max(NSScreen.screens.count, rules.rule(for: bundleID).launchDisplay ?? 0)
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: 10) {
@@ -688,6 +737,17 @@ private struct AppOverrideControls: View {
                     .frame(width: 120)
                     .help(
                         "Shown on this app's tiles in place of its own name. Empty uses the app's.")
+                Picker("", selection: launchDisplay) {
+                    Text("Any display").tag(Int?.none)
+                    ForEach(1...displayChoiceCount, id: \.self) { number in
+                        Text("Display \(number)").tag(Int?.some(number))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 110)
+                .help(
+                    "Move this app's first window to this display before the arrangement below "
+                    + "is applied.")
                 Picker("", selection: launchArrangement) {
                     Text("Opens anywhere").tag(WindowArrangement?.none)
                     Divider()
@@ -701,5 +761,88 @@ private struct AppOverrideControls: View {
             }
         }
         .font(.system(size: 11))
+    }
+}
+
+/// One row of a title rule: which app it's scoped to, the pattern, and what a match does.
+///
+/// A row of its own for the reason `AppOverrideControls` is one: several bindings built from
+/// closures over the same store are enough to slow the type-checker on the enclosing view.
+private struct TitleRuleRow: View {
+    let rule: TitleRule
+    @ObservedObject var apps: AppListModel
+    @ObservedObject var store: TitleRulesStore
+
+    private var bundleID: Binding<String?> {
+        Binding(
+            get: { rule.bundleID },
+            set: { newValue in store.update(rule.id) { $0.bundleID = newValue } })
+    }
+
+    private var pattern: Binding<String> {
+        Binding(
+            get: { rule.pattern },
+            set: { newValue in store.update(rule.id) { $0.pattern = newValue } })
+    }
+
+    private var action: Binding<TitleRuleAction> {
+        Binding(
+            get: { rule.action },
+            set: { newValue in store.update(rule.id) { $0.action = newValue } })
+    }
+
+    private var isValid: Bool { store.isValid(rule) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Picker("", selection: bundleID) {
+                Text("Any app").tag(String?.none)
+                ForEach(apps.entries) { entry in
+                    Text(entry.name).tag(String?.some(entry.id))
+                }
+            }
+            .labelsHidden()
+            .frame(width: 130)
+
+            VStack(alignment: .leading, spacing: 2) {
+                TextField("Title pattern", text: pattern)
+                    .textFieldStyle(.roundedBorder)
+                    // A red outline is the one thing that reads at a glance across every row —
+                    // the pattern still saves, and is still matched as "nothing" while it fails
+                    // to compile, but nothing else here says so without hovering.
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(isValid ? .clear : Color.red, lineWidth: 1)
+                    )
+                if !isValid {
+                    Text("Invalid pattern — matches nothing until fixed.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                }
+            }
+            .frame(width: 200)
+
+            Picker("", selection: action) {
+                ForEach(TitleRuleAction.allCases) { action in
+                    Text(action.title).tag(action)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 150)
+
+            Button {
+                store.remove(rule.id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Remove this rule")
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, SettingsChrome.rowInset)
+        .padding(.vertical, 6)
+        .settingsRowDivider()
     }
 }

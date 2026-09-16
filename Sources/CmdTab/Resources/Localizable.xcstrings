@@ -324,6 +324,23 @@
         }
       }
     },
+    "Back to where the window was before you first tiled it. Press it again to go back to the tile you just undid.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to where the window was before you first tiled it. Press it again to go back to the tile you just undid."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revient à l'emplacement qu'occupait la fenêtre avant votre premier ajustement. Appuyez à nouveau pour retourner à la disposition que vous venez d'annuler."
+          }
+        }
+      }
+    },
     "Backup": {
       "extractionState": "manual",
       "localizations": {
@@ -456,6 +473,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rétablit exactement ce que « Masquer toutes les fenêtres » avait masqué — les applications que vous avez masquées vous-même le restent."
+          }
+        }
+      }
+    },
+    "Browser and terminal tabs": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Browser and terminal tabs"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Onglets de navigateur et de terminal"
           }
         }
       }
@@ -1816,6 +1850,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Réduire"
+          }
+        }
+      }
+    },
+    "Mark tile": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mark tile"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Marquer la case"
           }
         }
       }
@@ -4132,6 +4183,23 @@
         }
       }
     },
+    "Tile marked windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tile marked windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paver les fenêtres marquées"
+          }
+        }
+      }
+    },
     "Tile to bottom half": {
       "extractionState": "manual",
       "localizations": {
@@ -4217,6 +4285,23 @@
         }
       }
     },
+    "Tiles 2-4 marked windows side by side on the first marked tile's display.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiles 2-4 marked windows side by side on the first marked tile's display."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pave côte à côte de 2 à 4 fenêtres marquées sur l'écran de la première case marquée."
+          }
+        }
+      }
+    },
     "Tint behind the selected tile.": {
       "extractionState": "manual",
       "localizations": {
@@ -4281,6 +4366,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Espacement des titres"
+          }
+        }
+      }
+    },
+    "Toggles a check on the highlighted tile. Marks clear when the switcher closes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toggles a check on the highlighted tile. Marks clear when the switcher closes."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active ou désactive une coche sur la case en surbrillance. Les marques disparaissent à la fermeture du switcher."
           }
         }
       }

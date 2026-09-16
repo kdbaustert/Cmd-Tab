@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let controller = SwitcherController()
     private let settings = SettingsPresenter()
     private var statusItem: NSStatusItem?
@@ -55,6 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.appRules = appRules.rules
         appRules.onChange = { [weak self] rules in
             self?.controller.appRules = rules
+        }
+
+        let titleRules = TitleRulesStore.shared
+        controller.titleRules = titleRules.compiled
+        titleRules.onChange = { [weak self] compiled in
+            self?.controller.titleRules = compiled
         }
 
         let scoped = ScopedTriggersStore.shared
@@ -188,6 +194,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Stored in milliseconds, used in seconds.
                 showDelay: behavior.showDelay / 1000,
                 launchFromSearch: behavior.launchFromSearch,
+                offerURLFallback: behavior.offerURLFallback,
+                offerSearchFallback: behavior.offerSearchFallback,
+                offerShellFallback: behavior.offerShellFallback,
+                fallbackSearchTemplate: behavior.fallbackSearchTemplate,
                 stickyMode: behavior.stickyMode,
                 hotkey: behavior.hotkey,
                 sameAppHotkey: behavior.sameAppCycle ? behavior.sameAppHotkey : nil))
@@ -354,10 +364,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
+        let shortcuts = NSMenuItem(title: "Shortcuts", action: nil, keyEquivalent: "")
+        let shortcutsSubmenu = NSMenu()
+        shortcutsSubmenu.delegate = self
+        shortcuts.submenu = shortcutsSubmenu
+        menu.addItem(shortcuts)
+        menu.addItem(.separator())
+
         // No About item: the version, the permissions and the description all live in Settings →
         // About now, which is one place to look rather than a menu item and a modal panel.
         menu.addItem(action("Settings…", #selector(openSettingsWindow)))
         menu.addItem(action("Quit Cmd-Tab", #selector(quit)))
+    }
+
+    /// Rebuilt every time it is about to open rather than on a timer — nothing pushes a change here
+    /// eagerly, and a submenu that only opens when clicked can afford to read the stores fresh
+    /// instead of subscribing to five of them just to keep a menu nobody is looking at current.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let entries = ShortcutAudit.entries()
+
+        let collisions = ShortcutAudit.collisions(in: entries)
+        if !collisions.isEmpty {
+            let count = collisions.count
+            let title = count == 1 ? "1 shortcut conflict…" : "\(count) shortcut conflicts…"
+            menu.addItem(action(title, #selector(openSettingsOverview)))
+            menu.addItem(.separator())
+        }
+
+        let groups = ShortcutsMenuModel.groups(from: entries)
+        for (index, group) in groups.enumerated() {
+            if index > 0 { menu.addItem(.separator()) }
+            menu.addItem(disabled(group.kind.title))
+            for row in group.rows {
+                menu.addItem(shortcutItem(for: row))
+            }
+        }
+        if groups.isEmpty {
+            menu.addItem(disabled("No shortcuts bound"))
+        }
+    }
+
+    /// One row of the Shortcuts submenu. The chord is drawn as text in the title rather than as a
+    /// real `keyEquivalent` — see `ShortcutsMenu.swift`'s header for why claiming it here would be
+    /// the one thing this feature must not do.
+    private func shortcutItem(for row: ShortcutMenuRow) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "", action: row.canPerform ? #selector(performShortcut(_:)) : nil,
+            keyEquivalent: "")
+        item.isEnabled = row.canPerform
+        item.target = row.canPerform ? self : nil
+        item.representedObject = row.command
+        item.attributedTitle = Self.shortcutTitle(label: row.label, chord: row.display)
+        return item
+    }
+
+    private static func shortcutTitle(label: String, chord: String) -> NSAttributedString {
+        let style = NSMutableParagraphStyle()
+        style.tabStops = [NSTextTab(textAlignment: .right, location: 220)]
+        style.defaultTabInterval = 220
+        return NSAttributedString(
+            string: "\(label)\t\(chord)",
+            attributes: [.paragraphStyle: style, .font: NSFont.menuFont(ofSize: 0)])
+    }
+
+    @objc private func performShortcut(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? URLCommand else { return }
+        controller.perform(command)
     }
 
     private func disabled(_ title: String) -> NSMenuItem {
@@ -378,6 +451,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettingsWindow() {
         settings.show()
+    }
+
+    /// The Shortcuts submenu's conflict row: opens Settings landed on the Overview rather than
+    /// wherever it was last left, since the row exists to answer "which one" — see
+    /// `SettingsPresenter.show(anchor:)`.
+    @objc private func openSettingsOverview() {
+        settings.show(anchor: SettingsAnchor.overview)
     }
 
     @objc private func quit() {

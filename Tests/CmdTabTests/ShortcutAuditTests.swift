@@ -251,4 +251,32 @@ final class ShortcutAuditTests: XCTestCase {
     func testTheNoKeySentinelIsNotAValidKeyCode() {
         XCTAssertLessThan(ShortcutEntry.Chord.noKey, 0)
     }
+
+    // MARK: - macOS-owned shortcuts
+
+    /// A Cmd-Tab binding on a chord macOS already claims produces exactly one warning, named after
+    /// the system shortcut rather than another Cmd-Tab row — the whole point of `Kind.systemOwned`.
+    func testCmdTabBindingCollidingWithAnEnabledSystemChordWarnsByTheSystemsName() {
+        let spotlight = CGEventFlags.maskCommand
+        let entries = [
+            entry(.systemOwned, "system.64", key: 49, spotlight),
+            entry(.directActivation, "activate.something", key: 49, spotlight),
+        ]
+        let collisions = ShortcutAudit.collisions(in: entries)
+        XCTAssertEqual(collisions.count, 1)
+        XCTAssertEqual(collisions.first?.winner?.id, "system.64")
+        XCTAssertEqual(collisions.first?.losers.map(\.id), ["activate.something"])
+    }
+
+    /// A system chord that is present but disabled is not claimed by macOS at all — see
+    /// `SystemShortcuts.decodeSymbolicHotKeys` — so `ShortcutAudit.entries()` never emits an entry
+    /// for it in the first place. This test stands in for that by simply not including one: a
+    /// disabled system chord produces no `ShortcutEntry`, so a Cmd-Tab binding on the same
+    /// combination warns about nothing.
+    func testCmdTabBindingOnADisabledSystemChordWarnsAboutNothing() {
+        let entries = [
+            entry(.directActivation, "activate.something", key: 49, .maskCommand)
+        ]
+        XCTAssertTrue(ShortcutAudit.collisions(in: entries).isEmpty)
+    }
 }

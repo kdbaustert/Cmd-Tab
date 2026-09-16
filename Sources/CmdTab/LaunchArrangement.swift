@@ -71,7 +71,7 @@ final class LaunchArrangementWatcher {
         guard watching.insert(pid).inserted else { return }
         Log.general.notice(
             "launch arrangement: watching \(bundleID, privacy: .public) for \(arrangement.rawValue, privacy: .public)")
-        poll(pid: pid, arrangement: arrangement, remaining: Self.attempts)
+        poll(pid: pid, arrangement: arrangement, launchDisplay: rule.launchDisplay, remaining: Self.attempts)
     }
 
     /// Waits for the app to own a switchable window, then tiles it.
@@ -80,7 +80,9 @@ final class LaunchArrangementWatcher {
     /// is a readiness check, not a handle to pass along: an `AXUIElement` captured now can be
     /// replaced by the app between the poll and the tile (Electron hosts swap their first window
     /// out), and the tiler's `AX.frontWindow` re-read is what makes it the window on screen.
-    private func poll(pid: pid_t, arrangement: WindowArrangement, remaining: Int) {
+    private func poll(
+        pid: pid_t, arrangement: WindowArrangement, launchDisplay: Int?, remaining: Int
+    ) {
         guard remaining > 0 else {
             watching.remove(pid)
             Log.general.notice(
@@ -103,7 +105,8 @@ final class LaunchArrangementWatcher {
                     // it, and an answer that lands after any of those has nothing left to do.
                     guard let self, self.watching.contains(pid) else { return }
                     self.resume(
-                        pid: pid, arrangement: arrangement, remaining: remaining, isReady: isReady)
+                        pid: pid, arrangement: arrangement, launchDisplay: launchDisplay,
+                        remaining: remaining, isReady: isReady)
                 }
             }
         }
@@ -111,22 +114,34 @@ final class LaunchArrangementWatcher {
 
     /// The readiness answer, back on the main thread: tile now, or wait out `delay` and ask again.
     private func resume(
-        pid: pid_t, arrangement: WindowArrangement, remaining: Int, isReady: Bool
+        pid: pid_t, arrangement: WindowArrangement, launchDisplay: Int?, remaining: Int,
+        isReady: Bool
     ) {
         guard isReady else {
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay) { [weak self] in
-                self?.poll(pid: pid, arrangement: arrangement, remaining: remaining - 1)
+                self?.poll(
+                    pid: pid, arrangement: arrangement, launchDisplay: launchDisplay,
+                    remaining: remaining - 1)
             }
             return
         }
         watching.remove(pid)
+        let areas = WindowTiler.visibleAreas()
+        // Enqueued before `apply`, on the same serial tiling queue, so the move is guaranteed to
+        // land before the arrangement reads the window's home display — "display 2, left half"
+        // has to mean the left half of display 2, not whichever display the window opened on.
+        if let launchDisplay {
+            Log.general.notice(
+                "launch arrangement: moving pid \(pid, privacy: .public) to display \(launchDisplay, privacy: .public)")
+            WindowTiler.moveToLaunchDisplay(pid: pid, displayNumber: launchDisplay, areas: areas)
+        }
         Log.general.notice(
             "launch arrangement: applying \(arrangement.rawValue, privacy: .public) to pid \(pid, privacy: .public)")
         // `cycleWidths: false` — the width cycle is a response to pressing the same chord twice, and
         // there is no second press here. Left on, a launch would consume the first step of the cycle
         // and the user's first real chord would land on the second.
         WindowTiler.apply(
-            arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
+            arrangement, pid: pid, areas: areas,
             cycleWidths: false, gap: gap)
     }
 

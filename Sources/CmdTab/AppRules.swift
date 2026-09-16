@@ -26,6 +26,15 @@ struct AppRule: Equatable {
     var displayName = ""
     /// Snap this app's windows here as they open. Nil leaves them wherever the app puts them.
     var launchArrangement: WindowArrangement?
+    /// Move the first window to this display, by the same 1-based numbering the display badges and
+    /// `display1…4` use, before `launchArrangement` is applied — so "display 2, left half" means
+    /// the left half of display 2, not whichever display the app happened to open on.
+    ///
+    /// Kept even once the display it names is unplugged: a laptop's external monitor comes and
+    /// goes, and a rule that forgot its number the moment it was disconnected would need
+    /// re-entering every time it was plugged back in. Unplugged, the move is skipped and the
+    /// arrangement still applies wherever the window actually opened.
+    var launchDisplay: Int?
 
     var isDefault: Bool { self == AppRule() }
 
@@ -85,6 +94,12 @@ final class AppRulesStore: ObservableObject {
         set(rule, for: bundleID)
     }
 
+    func setLaunchDisplay(_ value: Int?, for bundleID: String) {
+        var rule = self.rule(for: bundleID)
+        rule.launchDisplay = value
+        set(rule, for: bundleID)
+    }
+
     func remove(_ bundleID: String) {
         guard rules[bundleID] != nil else { return }
         rules[bundleID] = nil
@@ -134,6 +149,7 @@ final class AppRulesStore: ObservableObject {
             // having set one — the app simply opens where it opens.
             rule.launchArrangement = (fields["launchArrangement"] as? String)
                 .flatMap(WindowArrangement.init(rawValue:))
+            rule.launchDisplay = fields["launchDisplay"] as? Int
             if !rule.isDefault { out[bundleID] = rule }
         }
         return out
@@ -153,6 +169,7 @@ final class AppRulesStore: ObservableObject {
             if let arrangement = rule.launchArrangement {
                 fields["launchArrangement"] = arrangement.rawValue
             }
+            if let display = rule.launchDisplay { fields["launchDisplay"] = display }
             raw[bundleID] = fields
         }
         UserDefaults.standard.set(raw, forKey: Self.defaultsKey)

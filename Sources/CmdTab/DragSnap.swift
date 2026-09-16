@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ApplicationServices
 
 /// Snap-on-drag: throw a window at a screen edge and it tiles there.
 ///
@@ -44,6 +45,9 @@ final class DragSnap {
 
     /// Per-app overrides, so an app the user has marked "never tile" is left alone here too.
     var appRules: [String: AppRule] = [:]
+    /// Per-window rules, unioned with `appRules` for the same guard — a window a title rule marks
+    /// `.neverTile` drags exactly as it always did, even on an app with no rule of its own.
+    var titleRules: [CompiledTitleRule] = []
 
     /// The tiling gap, so the preview shows where the window will actually land rather than the
     /// zone it was dropped in. A preview that ignored the gap would be wrong by up to a gap on
@@ -153,9 +157,13 @@ final class DragSnap {
                     "drag-snap move check", { Self.bounds(of: windowID) }),
                 Self.isMove(from: initial, to: current)
             else { return }
-            // An app the user has told us never to tile drags exactly as it always did.
-            if let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
-                appRules[id]?.neverTile == true {
+            // An app the user has told us never to tile drags exactly as it always did — and so
+            // does a window a title rule protects on its own, whatever app it belongs to.
+            let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+            let title = AX.window(ofApplication: pid, matching: initial)
+                .flatMap { AX.copyString($0, kAXTitleAttribute) } ?? ""
+            if id.map({ appRules[$0]?.neverTile == true }) ?? false
+                || CompiledTitleRule.matches(titleRules, bundleID: id, title: title, action: .neverTile) {
                 reset()
                 return
             }

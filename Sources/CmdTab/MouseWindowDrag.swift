@@ -275,6 +275,13 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
     private var storedAppRules: [String: AppRule] = [:]
 
+    /// Per-window rules, unioned with `appRules` for the same guard.
+    var titleRules: [CompiledTitleRule] {
+        get { lock.withLock { storedTitleRules } }
+        set { lock.withLock { storedTitleRules = newValue } }
+    }
+    private var storedTitleRules: [CompiledTitleRule] = []
+
     /// Called when a press claims the chord for a drag, so the hold-and-point gesture — which is
     /// armed by the very same chord — stands down instead of firing a second snap of its own.
     ///
@@ -689,6 +696,15 @@ final class MouseWindowDrag: @unchecked Sendable {
                 self.end()
                 return
             }
+            // A title rule protects this exact window whatever app it belongs to — checked once
+            // the element is resolved anyway, so this costs nothing the guard above didn't already.
+            let title = AX.copyString(element, kAXTitleAttribute) ?? ""
+            if CompiledTitleRule.matches(
+                self.titleRules, bundleID: bundleID, title: title, action: .neverTile
+            ) {
+                self.end()
+                return
+            }
             Self.draggedWindow = element
             Log.general.notice(
                 "mouse drag: resolved window for pid \(target.pid, privacy: .public)")
@@ -950,6 +966,8 @@ final class ModifierTargetHighlight {
     /// modifier-drag in `MouseWindowDrag.resolve` — and this one was simply never given the rules to
     /// check, so "No tiling" held everywhere except when you pointed at the window.
     var appRules: [String: AppRule] = [:]
+    /// Per-window rules, unioned with `appRules` for the same guard.
+    var titleRules: [CompiledTitleRule] = []
 
     private var flagsMonitors: [Any] = []
     private var moveMonitors: [Any] = []
@@ -1025,10 +1043,13 @@ final class ModifierTargetHighlight {
         // outline, no dot, no landing block. Refusing at the *drop* instead would draw the whole
         // affordance and then silently do nothing, which reads as the gesture being broken rather
         // than as the setting being obeyed.
-        if let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier,
-            appRules[id]?.neverTile == true {
+        let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+        let title = AX.window(ofApplication: target.pid, matching: target.bounds)
+            .flatMap { AX.copyString($0, kAXTitleAttribute) } ?? ""
+        if id.map({ appRules[$0]?.neverTile == true }) ?? false
+            || CompiledTitleRule.matches(titleRules, bundleID: id, title: title, action: .neverTile) {
             Log.general.notice(
-                "point gesture: \(id, privacy: .public) is set to never tile; not arming")
+                "point gesture: \(id ?? "window", privacy: .public) is set to never tile; not arming")
             return
         }
         anchor = point

@@ -14,6 +14,12 @@ struct ShortcutEntry: Identifiable {
     /// Which family a binding belongs to. The declaration order **is** the order
     /// `SwitcherController.handle` matches them in, which is what decides who wins a collision.
     enum Kind: Int, CaseIterable, Comparable {
+        /// What macOS itself already claims — `AppleSymbolicHotKeys` and `NSUserKeyEquivalents`,
+        /// decoded by `SystemShortcuts`. Declared first because that is the true match order: the
+        /// window server resolves its own global shortcuts before Cmd-Tab's event tap ever sees the
+        /// keystroke, so a system entry is the one that "wins" a collision, not merely the one
+        /// listed first for tidiness.
+        case systemOwned
         case switcherTrigger
         case appWindowCycle
         case scopedTrigger
@@ -42,6 +48,7 @@ struct ShortcutEntry: Identifiable {
 
         var title: String {
             switch self {
+            case .systemOwned: return "macOS"
             case .switcherTrigger: return "Switcher"
             case .appWindowCycle: return "App-window cycle"
             case .scopedTrigger: return "Scoped shortcut"
@@ -56,6 +63,7 @@ struct ShortcutEntry: Identifiable {
         /// Where in Settings this binding is edited.
         var location: String {
             switch self {
+            case .systemOwned: return "System Settings"
             case .switcherTrigger, .appWindowCycle, .scopedTrigger, .inSwitcherAction:
                 return "Shortcuts"
             case .directActivation: return "Apps"
@@ -90,7 +98,8 @@ struct ShortcutEntry: Identifiable {
         var ignoresShift: Bool {
             switch self {
             case .switcherTrigger, .appWindowCycle, .scopedTrigger: return true
-            case .directActivation, .allWindows, .tiling, .inSwitcherAction, .mouseGesture:
+            case .systemOwned, .directActivation, .allWindows, .tiling, .inSwitcherAction,
+                .mouseGesture:
                 return false
             }
         }
@@ -171,6 +180,8 @@ enum ShortcutAudit {
     static func entries() -> [ShortcutEntry] {
         let behavior = BehaviorStore.shared
         var out: [ShortcutEntry] = []
+
+        out.append(contentsOf: systemEntries())
 
         out.append(
             entry(.switcherTrigger, "trigger", "Open the switcher", behavior.hotkey, active: true))
@@ -332,6 +343,52 @@ enum ShortcutAudit {
             id: id, kind: kind, label: label, display: hotkey.displayString,
             chord: ShortcutEntry.Chord(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
             isActive: active)
+    }
+
+    /// What macOS itself claims, decoded fresh from the two preference domains `SystemShortcuts`
+    /// knows how to read. `CFPreferencesCopyAppValue` is cfprefsd's own cache, not a disk read, so
+    /// this is called on every `entries()` — the same as the five stores above it — rather than
+    /// carrying a second, hand-rolled cache that would need its own invalidation whenever a hotkey
+    /// is recorded elsewhere in the app.
+    private static func systemEntries() -> [ShortcutEntry] {
+        var out: [ShortcutEntry] = []
+        for hotkey in SystemShortcuts.decodeSymbolicHotKeys(systemHotkeysPlist()) {
+            out.append(
+                ShortcutEntry(
+                    id: "system.\(hotkey.id)", kind: .systemOwned,
+                    label: SystemShortcuts.name(forID: hotkey.id),
+                    display: Hotkey(keyCode: hotkey.keyCode, modifierRaw: hotkey.modifiers.rawValue)
+                        .displayString,
+                    chord: ShortcutEntry.Chord(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
+                    isActive: true))
+        }
+        for shortcut in SystemShortcuts.decodeUserKeyEquivalents(globalUserKeyEquivalents()) {
+            out.append(
+                ShortcutEntry(
+                    id: "system.appShortcut.\(shortcut.label)", kind: .systemOwned,
+                    label: shortcut.label,
+                    display: Hotkey(
+                        keyCode: shortcut.keyCode, modifierRaw: shortcut.modifiers.rawValue
+                    ).displayString,
+                    chord: ShortcutEntry.Chord(
+                        keyCode: shortcut.keyCode, modifiers: shortcut.modifiers),
+                    isActive: true))
+        }
+        return out
+    }
+
+    private static func systemHotkeysPlist() -> [String: Any] {
+        CFPreferencesCopyAppValue(
+            "AppleSymbolicHotKeys" as CFString, "com.apple.symbolichotkeys" as CFString)
+            as? [String: Any] ?? [:]
+    }
+
+    /// `defaults read -g NSUserKeyEquivalents`'s own domain — "Apple Global Domain" is the
+    /// application id `CFPreferences` uses for it, same as the shell tool.
+    private static func globalUserKeyEquivalents() -> [String: String] {
+        CFPreferencesCopyAppValue(
+            "NSUserKeyEquivalents" as CFString, "Apple Global Domain" as CFString)
+            as? [String: String] ?? [:]
     }
 
     /// Resolved once per call rather than per row — this walks the running apps and can reach

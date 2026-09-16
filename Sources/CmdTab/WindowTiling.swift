@@ -18,6 +18,25 @@ import CoreGraphics
 /// same work whatever the binding does: persistence that can tell "cleared" from "never set", a
 /// recorder, cross-store conflict detection, the per-app `neverTile` guard and the Overview. A
 /// parallel enum would have duplicated all of it to express one extra verb.
+/// The left-to-right slots a marked set of windows tiles into, for `SwitcherController`'s ⌥T.
+///
+/// A free function rather than a method on the controller so the mapping — the one part of ⌥T with
+/// real logic in it — is testable without the event tap, the panels or anything else a controller
+/// instance drags in. Everything downstream of this (honouring the gap, the never-tile rule, the
+/// display) is already `WindowTiler.apply`'s job and stays there.
+enum MarkedTiling {
+    /// The arrangement for each of `count` marked windows, in the order they tile left to right —
+    /// or nil when `count` is not 2, 3 or 4, which is the shape ⌥T refuses rather than guesses at.
+    static func arrangements(for count: Int) -> [WindowArrangement]? {
+        switch count {
+        case 2: return [.leftHalf, .rightHalf]
+        case 3: return [.leftThird, .centerThird, .rightThird]
+        case 4: return [.topLeft, .topRight, .bottomLeft, .bottomRight]
+        default: return nil
+        }
+    }
+}
+
 enum WindowArrangement: String, CaseIterable, Identifiable {
     case leftHalf, rightHalf, topHalf, bottomHalf
     case leftThird, centerThird, rightThird
@@ -1339,9 +1358,15 @@ enum WindowTiler {
     }
 
     /// The frame each window had before it was first tiled, so `.restore` has something to go back
-    /// to, and the order those frames were recorded in so the oldest can be dropped first.
+    /// to, and the order those frames were last touched in so the oldest can be dropped first.
     ///
     /// Touched only on `queue`, which is what keeps them safe without a lock.
+    ///
+    /// One entry per window and one level of undo, which is what makes the answer unambiguous. A
+    /// tile writes here only when there is nothing recorded, so the frame stays the one from before
+    /// any of this started rather than creeping forward a tile at a time; `.restore` is the single
+    /// arrangement that overwrites, with the frame it is about to replace, which is what makes it a
+    /// toggle rather than a one-shot. See `apply`.
     ///
     /// The desk the frame was recorded against is kept with it. Restore promises the exact
     /// rectangle back, and a rescue that tidies a window onto the nearest display breaks that
@@ -1485,8 +1510,23 @@ enum WindowTiler {
                 target = carried(current, from: areas[home], to: areas[index])
                 cycle = nil
             } else if arrangement == .restore {
-                guard let saved = restorePoints.removeValue(forKey: key) else { return }
+                guard let saved = restorePoints[key] else { return }
+                // Swapped rather than consumed, which is what makes restore a toggle: the frame it
+                // is about to replace becomes the new restore point, so a second press comes back
+                // to the tile the first press undid. Consuming the entry instead left the chord
+                // doing nothing at all on its second press, with no way back to a layout someone
+                // had undone by accident — and "undo" that cannot be undone is the one shape of
+                // this feature nobody expects.
+                //
+                // Restore is deliberately the *only* arrangement that overwrites an existing point.
+                // Every other one records only when there is nothing there (see the branch below),
+                // so the anchor stays the frame the window had before any of this started rather
+                // than creeping forward one tile at a time.
+                restorePoints[key] = (frame: current, desk: areas)
+                // Back to the end of the queue: a window being restored is one the user is working
+                // with, and eviction is oldest-*touched* first, not oldest-recorded.
                 restoreOrder.removeAll { $0 == key }
+                restoreOrder.append(key)
                 cycle = nil
                 target = restoreTarget(
                     saved.frame, savedOn: saved.desk, desk: areas, fallback: area)
@@ -1539,6 +1579,27 @@ enum WindowTiler {
                 // snaps it back across the desk. Re-associating is what makes a warp stick.
                 CGAssociateMouseAndMouseCursorPosition(1)
             }
+        }
+    }
+
+    /// Moves an app's first window onto a display, by the same 1-based numbering `display1…4` and
+    /// the tile badges already use — `displayNumber - 1` indexes straight into `areas`.
+    ///
+    /// For `launchDisplay`, which has no chord to run out of and so is not capped at four the way
+    /// the bound arrangements are. A display that is not plugged in right now, or that the window
+    /// is already on, is silently skipped rather than treated as an error: `LaunchArrangementWatcher`
+    /// applies the arrangement itself immediately after, wherever the window actually lands.
+    ///
+    /// Enqueued on `queue` like `apply`, so a caller that runs both back to back is guaranteed the
+    /// move lands before the arrangement reads the window's new home display.
+    static func moveToLaunchDisplay(pid: pid_t, displayNumber: Int, areas: [CGRect]) {
+        let index = displayNumber - 1
+        guard areas.indices.contains(index) else { return }
+        queue.async {
+            guard let window = resolve(nil, pid: pid), let current = AX.frame(window) else { return }
+            guard let home = homeDisplay(of: current, in: areas), home != index else { return }
+            let target = carried(current, from: areas[home], to: areas[index])
+            AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
         }
     }
 

@@ -56,6 +56,11 @@ final class TargetProvider {
     /// Per-app overrides. Only apps the user has given a rule appear here.
     var appRules: [String: AppRule] = [:]
 
+    /// Per-window rules, compiled once when the store's list changes rather than once per window
+    /// per refresh. Unioned with `appRules` everywhere the latter answers "hide", "expand", or
+    /// "never tile" — see `CompiledTitleRule.matches`.
+    var titleRules: [CompiledTitleRule] = []
+
     /// Favourited apps, in the user's order. Any that aren't running are shown as launchable tiles.
     var favoriteBundleIDs: [String] = [] {
         didSet { appInfoCache = appInfoCache.filter { favoriteBundleIDs.contains($0.key) } }
@@ -377,11 +382,13 @@ final class TargetProvider {
         let windowMRU = self.windowMRU.entries
         let grouped = self.groupWindowsByApp
         let rules = self.appRules
+        let titleRules = self.titleRules
         // Apps the user has asked to always see window-by-window, even in app mode.
-        let expanding = mode == .apps
+        let expandingByRule = mode == .apps
             ? apps.filter { $0.bundleID.map { rules[$0]?.expandWindows == true } ?? false }
             : []
-        let needsFrames = mode == .windows || !expanding.isEmpty
+        let hasExpandTitleRules = mode == .apps && titleRules.contains { $0.action == .expand }
+        let needsFrames = mode == .windows || !expandingByRule.isEmpty || hasExpandTitleRules
         let screenFrames = needsFrames && NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
         let launchTargets = launchFavorites()
@@ -408,6 +415,24 @@ final class TargetProvider {
             let badges = wantsBadges ? DockBadges.current() : [:]
             var targets: [SwitchTarget]
             var freshTitles = titleCache
+            // Widened here, off the main thread, by any app owning a window a title rule marks
+            // `.expand`: that rule is about one window, but the splice below (same as
+            // `expandWindows`) can only add or remove a whole app's tile, so a matching window
+            // takes its whole app with it into the per-window list.
+            var expanding = expandingByRule
+            if hasExpandTitleRules {
+                let alreadyExpanding = Set(expanding.map(\.pid))
+                for app in apps where !alreadyExpanding.contains(app.pid) {
+                    let matches = AX.windows(of: AX.application(app.pid)).contains { window in
+                        AX.isSwitchableWindow(window)
+                            && CompiledTitleRule.matches(
+                                titleRules, bundleID: app.bundleID,
+                                title: AX.copyString(window, kAXTitleAttribute) ?? "",
+                                action: .expand)
+                    }
+                    if matches { expanding.append(app) }
+                }
+            }
             switch mode {
             case .apps:
                 targets = Self.appTargets(
@@ -428,7 +453,7 @@ final class TargetProvider {
                     let built = Self.windowTargets(
                         expanding, order: order, sortOrder: sortOrder,
                         windowMRU: windowMRU, screenFrames: screenFrames, badges: badges,
-                        titleCache: freshTitles)
+                        titleCache: freshTitles, titleRules: titleRules)
                     freshTitles = built.titleCache
                     let windows = Self.withSpaceBadges(built.targets)
                     let byPID = Dictionary(grouping: windows, by: \.pid)
@@ -448,7 +473,7 @@ final class TargetProvider {
                 let built = Self.windowTargets(
                     apps, order: order, sortOrder: sortOrder,
                     windowMRU: windowMRU, screenFrames: screenFrames, badges: badges,
-                    grouped: grouped, titleCache: freshTitles)
+                    grouped: grouped, titleCache: freshTitles, titleRules: titleRules)
                 freshTitles = built.titleCache
                 targets = Self.withSpaceBadges(built.targets)
             }
@@ -527,12 +552,13 @@ final class TargetProvider {
                 // where the main switcher shows none.
                 let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
                 let titleCache = self.titleCache
+                let titleRules = self.titleRules
 
                 self.axQueue.async {
                     let built = Self.windowTargets(
                         apps, order: order, sortOrder: sortOrder,
                         windowMRU: windowMRU, screenFrames: screenFrames, grouped: grouped,
-                        titleCache: titleCache)
+                        titleCache: titleCache, titleRules: titleRules)
                     let badged = Self.withSpaceBadges(built.targets)
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated { self.titleCache = built.titleCache }
@@ -540,6 +566,50 @@ final class TargetProvider {
                     }
                 }
             }
+        }
+    }
+
+    /// One tile per tab of the frontmost window of every switchable app that has one, for the
+    /// `.tabs` scoped trigger. Active tab first within each app, apps in the same order
+    /// `switchableApps()` returns them.
+    ///
+    /// Uncached and gathered only on demand, like `allWindowTargets`: the walk is
+    /// `TabEnumeration.enumerate`, one Accessibility round trip per app plus a depth-bounded search
+    /// inside each, and almost no session ever opens this scope. `TabEnumeration.enumerationBudget`
+    /// bounds the walk itself; hopping off the caller's turn first keeps the (cheap, main-thread)
+    /// app enumeration off the event-tap callback the same way the other scoped fetches do.
+    func tabTargets(then handler: @escaping @Sendable ([SwitchTarget]) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return handler([]) }
+                let apps = self.switchableApps()
+                self.axQueue.async {
+                    let deadline = DispatchTime.now() + TabEnumeration.enumerationBudget
+                    let refs = TabEnumeration.enumerate(pids: apps.map(\.pid), deadline: deadline)
+                    let byPID = Dictionary(
+                        apps.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+                    let targets = Self.tabTargets(refs, apps: byPID)
+                    DispatchQueue.main.async { handler(targets) }
+                }
+            }
+        }
+    }
+
+    /// Builds one tile per discovered tab. An app that vanished from `apps` between the two reads
+    /// (quit mid-walk) contributes no tile rather than one with no name or icon.
+    private nonisolated static func tabTargets(
+        _ refs: [TabEnumeration.TabRef], apps: [pid_t: AppInfo]
+    ) -> [SwitchTarget] {
+        refs.enumerated().compactMap { index, ref in
+            guard let app = apps[ref.pid] else { return nil }
+            return SwitchTarget(
+                id: "tab:\(ref.pid):\(index)",
+                kind: .tab(ref),
+                title: ref.title.isEmpty ? app.name : ref.title,
+                appName: app.name,
+                icon: app.icon,
+                isMinimized: false,
+                isHidden: app.isHidden)
         }
     }
 
@@ -552,11 +622,13 @@ final class TargetProvider {
         let windowMRU = self.windowMRU.entries
         let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
         let titleCache = self.titleCache
+        let titleRules = self.titleRules
 
         axQueue.async {
             let built = Self.windowTargets(
                 [app], order: [pid], sortOrder: sortOrder,
-                windowMRU: windowMRU, screenFrames: screenFrames, titleCache: titleCache)
+                windowMRU: windowMRU, screenFrames: screenFrames, titleCache: titleCache,
+                titleRules: titleRules)
             // Badged here, not in the hop below: `SpaceMover.placement` is a CGS round trip, and
             // evaluating it inside the `main.async` body put that IPC on the thread that services
             // the event tap.
@@ -923,7 +995,8 @@ final class TargetProvider {
     private nonisolated static func windowTargets(
         _ apps: [AppInfo], order: [pid_t], sortOrder: SortOrder,
         windowMRU: [CGWindowID], screenFrames: [CGRect], badges: [String: String] = [:],
-        grouped: Bool = true, titleCache: [CGWindowID: (title: String, expiry: Date)] = [:]
+        grouped: Bool = true, titleCache: [CGWindowID: (title: String, expiry: Date)] = [:],
+        titleRules: [CompiledTitleRule] = []
     ) -> (targets: [SwitchTarget], titleCache: [CGWindowID: (title: String, expiry: Date)]) {
         let mruRank = RecencyList<CGWindowID>.ranks(of: windowMRU)
         let now = Date()
@@ -956,6 +1029,12 @@ final class TargetProvider {
                     }
                 }
                 if let wid { seenIDs.insert(wid) }
+                // Never listed at all, in either mode — the per-window version of an app being
+                // excluded outright. Cached above like every other title, so a rule that is later
+                // cleared does not have to wait out the TTL to see the window it was hiding.
+                if CompiledTitleRule.matches(
+                    titleRules, bundleID: app.bundleID, title: title, action: .hide
+                ) { continue }
                 let minimized = AX.isMinimized(window)
                 let id = wid.map { "win:\($0)" } ?? "win:\(app.pid):\(index)"
                 let display = screenFrames.isEmpty ? nil : displayIndex(of: window, in: screenFrames)

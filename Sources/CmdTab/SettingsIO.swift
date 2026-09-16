@@ -175,6 +175,7 @@ enum SettingsIO {
         GlobalActionsStore.shared.reload()
         ScopedTriggersStore.shared.reload()
         AppRulesStore.shared.reload()
+        TitleRulesStore.shared.reload()
         SwitcherShortcutsStore.shared.reload()
         // Last: an import or reset can flip the config-file switch itself, and this re-reads it
         // rather than leaving a watcher running against a preference that has since changed.

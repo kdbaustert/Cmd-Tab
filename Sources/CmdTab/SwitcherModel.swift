@@ -67,6 +67,28 @@ final class SwitcherModel: ObservableObject {
     /// Font family for tile titles and the caption. Empty means the system font.
     @Published var titleFontName: String = ""
 
+    /// The marked set, by target id. Session-scoped — the controller clears it in `hide()`, which
+    /// every dismissal path (commit, cancel, an emptied list) already funnels through, so there is
+    /// one place that has to remember to do it rather than one per exit.
+    @Published private(set) var markedIDs: Set<String> = []
+
+    /// Toggles tile `index` in or out of the marked set. Out of range is a silent no-op, the same
+    /// tolerance `jump(to:)` gives a stray keypress.
+    func toggleMark(at index: Int) {
+        guard targets.indices.contains(index) else { return }
+        let id = targets[index].id
+        if markedIDs.contains(id) { markedIDs.remove(id) } else { markedIDs.insert(id) }
+    }
+
+    func clearMarks() { markedIDs.removeAll() }
+
+    func isMarked(at index: Int) -> Bool {
+        targets.indices.contains(index) && markedIDs.contains(targets[index].id)
+    }
+
+    /// The marked tiles, in list order — which is also left-to-right tiling order for `tileMarked`.
+    var markedTargets: [SwitchTarget] { targets.filter { markedIDs.contains($0.id) } }
+
     /// The title font at `size`. See `TitleFont.resolve`.
     func titleFont(size: CGFloat) -> Font { TitleFont.resolve(titleFontName, size: size) }
 
@@ -216,6 +238,7 @@ final class SwitcherModel: ObservableObject {
         suggestions = []
         targets = new
         matchingIndices = []
+        markedIDs = []
     }
 
     /// Keeps the highlight on the same target across a background refresh, so the tile the user
@@ -294,7 +317,15 @@ final class SwitcherModel: ObservableObject {
     private static func matches(_ list: [SwitchTarget], query: String) -> [Match] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
         return list.indices.compactMap { index in
-            score(list[index], query: query).map {
+            // A fallback tile is built *from* the query, so scoring its title against it fuzzily
+            // would be a coincidence rather than a signal — and the whole point of the tier is that
+            // it always matches, being the last resort rather than a competing answer. Ties within
+            // the group break towards the earlier index, which is what keeps the highlight on the
+            // first fallback (URL, then search, then shell) whenever more than one is offered.
+            if list[index].isFallback {
+                return Match(index: index, score: 0, running: false)
+            }
+            return score(list[index], query: query).map {
                 Match(index: index, score: $0, running: !list[index].isLaunchable)
             }
         }

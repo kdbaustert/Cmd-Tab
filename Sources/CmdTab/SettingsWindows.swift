@@ -441,7 +441,9 @@ struct WindowSettings: View {
         }
         switch arrangement {
         case .center: return "Keeps the window's size and centres it."
-        case .restore: return "Back to where the window was before you first tiled it."
+        case .restore:
+            return "Back to where the window was before you first tiled it. Press it again to go "
+                + "back to the tile you just undid."
         case .larger, .smaller:
             // Said on both rows rather than in the card footer, because the thing worth knowing is
             // the anchor, and someone reading only one of the two rows still needs it.

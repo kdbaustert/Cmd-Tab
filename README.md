@@ -44,8 +44,10 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | *type* | Filter the list by app / window name |
 | ⌫ | Delete the last character of the filter |
 | ⌥W | Close the highlighted window (with **Enable window actions** on) — the ⌥ keys act on the tile without leaving the switcher; see [Window actions](#shortcuts) |
+| ⌥-Space | Mark or unmark the highlighted tile (with **Enable window actions** on). ⌥-click marks whatever tile the pointer is on. Marks are a session and clear when the switcher closes; with any marked, ⌥Q/⌥⇧Q/⌥W/⌥H/⌥M act on the whole set instead of just the highlighted tile |
+| ⌥T | Tile 2-4 marked window tiles side by side on the first one's display; a no-op with an app tile marked, or more than four |
 | ⌘-1 … ⌘-9, ⌘-0 | Switch straight to that tile (no filter active). 0 is the tenth tile |
-| Esc | Dismiss the switcher — always, filter or not. While the panel is up it owns every key on the machine, so this is the one exit that must never depend on any other state; ⌫ is how you back out of a query |
+| Esc | Dismiss the switcher — always, filter or not. While the panel is up it owns every key on the machine, so this is the one exit that must never depend on any other state |
 | Release ⌘ | Switch to the selection — unless **Stay open** is on, which keeps the panel up |
 | Tab (⌘ released) | With **Stay open**, switches to the selection, the way releasing ⌘ otherwise would. ⇧-Tab still steps backwards, and a session opened from the menu bar works the same way — it has no chord to release either |
 
@@ -94,6 +96,19 @@ is used rather than a global mouse-moved monitor because such a monitor only see
 With **Preview windows** enabled, pausing over an app tile also floats live thumbnails of
 that app's windows beside it — see [Window preview](#window-preview).
 
+When a query matches nothing running and nothing launchable, three more fallbacks can offer to do
+something with the query itself, each its own setting under **Fallback** and each off by default:
+**Open as URL** when the text looks like an address (has a dot with no spaces in it, or already
+names a scheme — `localhost:3000` counts), **Search the web** through a template you choose
+(`%s` stands for the query, percent-encoded), and **Run as shell command**, which runs the text
+verbatim with no confirmation and no visible output. The first two open through your default
+browser and carry its icon; the ordering is fixed — URL, then search, then shell — and whichever
+of them is offered is highlighted, since there is nothing running to prefer over it. They are
+off by default for the reason the setting after them is: unlike a launch suggestion, which only
+ever chooses among apps already on the machine, all three leave it, and the shell one runs
+whatever was typed with no way to see what it did. It is also the one thing in this app that
+[driving it from a script](#driving-it-from-a-script) can never reach, whatever is enabled.
+
 The pointer gets one of the window actions as a control rather than a key: with **Enable window
 actions** on, the tile under the cursor carries a small **×** in its top-left corner, and clicking it
 closes that window — the same thing ⌥W does. It is the only action a click can reach. Quit and
@@ -101,14 +116,25 @@ force-quit are marked destructive and ask before they run, and a control that en
 stray click is exactly what that flag exists to prevent; closing a window is recoverable in the way
 quitting an app is not. That is the same line the `cmdtab://` scheme draws, for the same reason.
 
+With **Enable window actions** on, ⌥-Space marks the highlighted tile — a check appears in its
+top-right corner — and ⌥-click marks whatever tile the pointer is on, without moving the highlight.
+Marks are a session: they exist only while the panel is up and vanish the moment it closes, by any
+route. With one or more tiles marked, ⌥Q, ⌥⇧Q, ⌥W, ⌥H and ⌥M act on every marked tile instead of just
+the highlighted one — quit and force-quit still ask first, but once, naming the count rather than
+listing every app. ⌥⇧H (hide others) and ⌥F (zoom) always act on the highlighted tile alone and
+ignore marks, since neither has a sensible reading for a set. A second ⌥T tiles 2-4 marked *window*
+tiles side by side — halves, thirds or quarters, depending on the count — on the first marked tile's
+display; anything else marked (an app tile, or more than four) makes it do nothing.
+
 The first nine tiles carry their number in the bottom-right corner. The number switches
 immediately rather than moving the highlight — waiting for ⌘ to come up would make it slower than
 the arrow keys. A digit past the end of the list does nothing, but is still swallowed: letting it
 through would fire ⌘-7 in whatever app is sitting behind the panel.
 
 Tiles carry small badges besides the number: a minimized window shows a **–**, a hidden app an
-**eye-slash**, a not-running favourite an **↗** (and a dimmed icon), and — in window mode with more
-than one display — the window's **display number**.
+**eye-slash**, a not-running favourite an **↗** (and a dimmed icon), a marked tile a **check** in
+the opposite corner from the number, and — in window mode with more than one display — the
+window's **display number**.
 
 Both the number row and the keypad work. The mapping is by physical key position, so it follows
 the keys *labelled* 0–9 on ANSI-style layouts.
@@ -124,6 +150,23 @@ its own gradient icon badge, and a search field above them. Typing in the search
 tab list with matching settings, named by the tab and section they live in; picking one switches to
 that tab, scrolls to the section and outlines it for a moment.
 
+The menu bar item also carries a **Shortcuts** submenu, rebuilt each time it opens, listing every
+chord currently bound and grouped by kind. It is the same flattened list the Overview audits,
+filtered to the rows that are actually bound, so a forgotten chord is one click away rather than a
+hunt through Settings. If the Overview would report a conflict — now including chords macOS itself
+already owns, such as Mission Control or Spotlight — a line at the top says how many and opens
+Settings on the Overview itself, whichever tab was showing before.
+
+Clicking a tiling arrangement, a direct activation or hide/show-all performs it there and then —
+the same set `cmdtab://` exposes, drawn along the same line and for the same reason. An in-switcher
+window action or a mouse gesture is listed with its chord but greyed out, since those can close a
+window or end a process and belong behind a keyboard someone is sitting at. macOS's own shortcuts
+never appear as rows here — this submenu is "what have I bound", not "what is macOS holding" —
+though they still count toward the conflict line above. The chord itself is
+drawn as text rather than set as the item's real key equivalent: a key equivalent would ask macOS to
+claim that combination for as long as the menu bar item exists, which is the very combination the
+event tap already owns.
+
 Content is built from titled sections whose rows sit inside a rounded card — label and explanation
 on the left, control on the right — so the explanation for a setting sits under it rather than in a
 tooltip.
@@ -136,12 +179,29 @@ tooltip.
 | Start at login | Registers the app as a login item via `SMAppService`. | Off |
 | Menu-bar glyph | Which artwork the menu-bar item shows. The menu shows each glyph rather than only its name. | Command |
 | Settings file | Export or import every preference, favourites and exclusions included, as JSON. | — |
+| Import shortcuts | Carries the chords over from another switcher — see below. | — |
 | Reset to defaults | Clears every Cmd-Tab preference. | — |
 | Keep settings in a config file | Mirrors every preference to `~/.config/cmdtab/config.json` (honouring `XDG_CONFIG_HOME`). Two-way and live: edits to the file apply without a relaunch, changes made in Settings are written back. The file is written **in place** rather than atomically, so a symlink into a dotfiles repo survives every save — an atomic write replaces the inode and would quietly break it. On launch the file wins over local defaults, which is what makes a fresh checkout come up configured — and an install that has never touched either of these two switches turns this one on by itself when a `config.json` is already sitting there, so the checkout really is the whole of the setup. Only ever *never touched*: unticking writes the decision down, so a file left behind by someone who deliberately turned this off is not revived at the next launch. Unticking leaves the file on disk: it may be tracked, and deleting a tracked file because a checkbox changed is not ours to do. | Off |
 | Sync settings over iCloud | Keeps the settings file at `~/Library/Mobile Documents/com~apple~CloudDocs/Cmd-Tab/config.json` instead, where every Mac signed into the account reads and writes the same one — a change on any of them turns up on the others, picked up by the same watcher that notices an edit made in an editor. **Independent of the switch above**: turning this on alone starts mirroring, with no need to opt into a dotfiles file first. There is only ever one mirror, so with both switches on the file lives in iCloud Drive — a second copy under `~/.config` would diverge the moment either changed, leaving two files each claiming to be the settings and nothing to say which wins. Reached by its CloudDocs path rather than through `url(forUbiquityContainerIdentifier:)`, which wants the ubiquity-container entitlement and a provisioning profile naming a team; a plain file in iCloud Drive syncs just as well, needs no entitlement, and is visible in Finder — which for a config file whose point is being editable is the better side of the trade. Turning it on with nothing in iCloud yet seeds it from the file you were using, so your settings are published rather than blanked; turning it on where a file already exists lets that file win, the same rule launch follows. An undownloaded copy (iCloud's `.config.json.icloud` placeholder) suspends writing until it lands, which is what stops a second Mac overwriting the first's settings during setup. Turning it back off leaves the cloud copy alone — the other Macs are still syncing against it. Greyed out, with the reason given, when iCloud Drive is off. Simultaneous edits on two Macs are resolved by iCloud, which keeps both and leaves a conflicted copy. | Off |
 | Restore macOS ⌘-Tab | Hands the system switcher back without quitting. The takeover is otherwise undone only by a clean quit, which is no help in the case that matters — the trigger is bound to something unreachable and ⌘-Tab does nothing. Cmd-Tab keeps its own trigger, so both respond until it is restarted. | — |
 
 Start at login lives in the system's Login Items, not our defaults.
+
+#### Importing shortcuts from another switcher
+
+**Import shortcuts…** reads the hotkeys already set up in Rectangle, Rectangle Pro or AltTab and
+offers to carry over the ones there is a matching action for — the tiling chords, and from AltTab
+the hold-to-switch chord that corresponds to the trigger here. Nothing is written until you agree:
+it shows what it found first, split into what will be imported, what has no equivalent here and is
+left alone, and anything it could not read. A chord already bound to something in Cmd-Tab is
+reported and skipped rather than overwriting what you have, because the settings you arrived with
+are the ones you chose.
+
+Two gaps, both deliberate. **AltTab stores each shortcut twice** — once as the readable string its
+own interface shows, once as an archived object belonging to a framework this app does not link —
+and only the readable string is parsed, so an exotic chord comes back as unreadable rather than as a
+guess. **Command-Tab Plus 2 is absent**: its format is not published and no copy was available to
+read, and inventing one risks importing nothing while claiming success, or importing the wrong keys.
 
 ## Signing and release
 
@@ -376,9 +436,34 @@ running the XML through Jekyll and mangling it.
 | --- | --- | --- |
 | Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
 | Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
-| Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, windows on the current **Desktop**, or minimized windows. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. | None |
-| Overview | Every binding in the app in one list, with cross-store conflicts flagged. Each pane warns about clashes inside its own store; nothing could see *across* them, and the kinds of binding are spread over several stores — a tiling chord and a direct activation on the same keys produced no warning anywhere. Shows which of a clashing pair actually fires. | — |
+| Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, windows on the current **Desktop**, minimized windows, or browser and terminal tabs. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. See [Tab search](#tab-search) for the tabs scope. | None |
+| Overview | Every binding in the app in one list, with cross-store conflicts flagged, including chords macOS itself already owns (Mission Control, Spotlight, the screenshot combinations, and anything bound in System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts). Each pane warns about clashes inside its own store; nothing could see *across* them, and the kinds of binding are spread over several stores — a tiling chord and a direct activation on the same keys produced no warning anywhere. A system chord is read from the two preference domains it lives in (`AppleSymbolicHotKeys` and `NSUserKeyEquivalents`) and treated like any other family: shown under the system's own name for it, flagged if a Cmd-Tab binding sits on the same keys, silent if it's present but switched off in System Settings, since then it isn't claiming anything. One honest gap: an id with no entry in `AppleSymbolicHotKeys` at all is at its OS default, which may still be enabled, and this can't see that — only entries actually present in the plist are checked. Shows which of a clashing pair actually fires. | — |
 | In-switcher keys | The keys the panel handles while it is open, listed for reference: Tab/⇧Tab and ←/→ move the selection, Return switches, 1–9/0 jump, typing filters, ⌫ deletes a filter character, ⎋ closes. Not rebindable. | — |
+
+### Tab search
+
+The tabs scope above lists one tile per **tab**, not per window: every running regular app that
+exposes tabs through Accessibility contributes the tabs of its **frontmost window only**, picked
+from Accessibility rather than any per-app integration — there is no AppleScript, no browser
+extension, and nothing to install in the browser. Typing filters exactly the way it does everywhere
+else in the switcher, against the tab's own title and the owning app's name, so "saf" narrows to
+Safari's tabs the same way it would narrow to Safari itself in the app list. Picking a tile
+activates the app, raises that tab's window, and presses the tab — no fallback if the press fails;
+the window is still raised.
+
+Finding "the tabs" has no API to ask for directly, so this is a search: walk the frontmost window,
+at most 12 levels deep, for the first `AXTabGroup` with two or more `AXRadioButton` descendants, and
+treat those as the tabs. One search rather than a table of per-app rules, because every tab strip
+measured — Safari, Chrome-family browsers, Ghostty — turns out to have that shape, just at
+different depths. The walk only ever happens when a tabs-scoped trigger opens the switcher, never on
+the switcher's ordinary background refresh, and it is capped at roughly 150ms across every app so
+one slow responder cannot hold the panel up — whatever was found by then is what shows.
+
+Only the **frontmost** window of each app is searched, not every window it has open: a browser with
+several windows shows the tabs of the one you were last in, the same "which window" question every
+other part of the switcher answers by picking the front one rather than asking you to choose.
+
+See *Known limitations* for the two apps this does not reach.
 
 ### Windows
 
@@ -412,7 +497,7 @@ you are looking at, which is why they are not on the Shortcuts tab with the swit
 | Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block are fixed at light grey on black — Rectangle's own footprint styling (`FootprintWindow`: `borderColor = .lightGray`, `fillColor = .black`, `borderWidth = 2`, alpha `0.3`) — and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
 | Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
 | Center | Keeps the window's size and centres it; a window bigger than the screen is clamped to it. | ⌃⌘C |
-| Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. | ⌃⌘Z |
+| Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. **Press it again and you go back to the tile you just undid**: restoring records the frame it is about to replace, so the chord toggles between the two rather than firing once and going quiet. One level of undo per window, which is what makes the second press unambiguous. It is the same *remember the frame before the change* mechanism every other arrangement uses, so it obeys the per-app **Never tile** rule like the rest of them, and `cmdtab://tile/restore` reaches it without a chord. | ⌃⌘Z |
 | Hide all windows | Hide every app to clear the screen to the desktop. | Unbound |
 | Show all windows | Bring back exactly what Hide all hid — apps you hid yourself stay hidden, since undoing a decision this feature never made would be wrong. | Unbound |
 
@@ -437,8 +522,13 @@ swallowed, so nothing downstream sees a key-up with no matching press.
 
 Restore points are keyed by the window element itself (`CFEqual`), never by pid: two windows of one
 app must not share a slot, or restoring the second would move it to a frame the first once had. The
-table evicts oldest-first at 128 entries rather than clearing, so tiling one more window than the cap
-cannot silently strand every window you are still working with.
+table evicts oldest-*touched* first at 128 entries rather than clearing, so tiling one more window
+than the cap cannot silently strand every window you are still working with, and a window you keep
+restoring keeps its slot. Every arrangement records the window's frame before it writes a new one,
+but only when there is nothing recorded yet — that is what keeps the anchor at "before any of this
+started" instead of letting it creep forward one tile at a time. *Restore* is the single exception,
+and deliberately: it overwrites, with the frame it is about to replace, which is the whole of what
+makes it a toggle.
 
 Geometry is computed in Accessibility's top-left-origin space against each screen's `visibleFrame`,
 and the target screen is the one the window most **overlaps** rather than merely touches — a window
@@ -478,6 +568,19 @@ Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `sortOrder`,
 Both are driven by the same sliders: a list row's icon is 42% of the icon-size setting, and the
 row's width scales with it too, so one control still scales the whole panel. **Max columns** caps
 the wrap in either layout (0 = automatic). Persists as `switcherLayout`.
+
+A list row never carries a live thumbnail, whatever the thumbnail settings say. At the height a row
+gives it, a capture reads as a smear rather than a preview, and it would cost a Screen Recording
+capture per row to draw it.
+
+With **Panels → All displays** every panel used to be an exact copy of the first, tile size and
+column count included. That is wrong the moment the desk is mixed: a tile sized for a 6K display is
+a postage stamp on the laptop lid beside it, and a laptop-sized panel spills off a smaller external.
+Each panel now derives its own tile size and column count from the screen it is actually on, out of
+that screen's visible area and backing scale. The sliders stay one shared setting — what varies per
+display is only how much of that setting survives contact with the screen — and **Max columns**
+still applies everywhere as a ceiling. There is no per-display appearance setting and none is
+planned: the same sliders, landing sensibly on each screen, is the whole of it.
 
 The sliders below it are the `Metrics` the panel lays itself out from:
 
@@ -747,6 +850,36 @@ apps/windows mode and a window tiler: *always list this app window-by-window* ev
 mode, and *never let a tiling shortcut touch this app* (which the drag gesture honours too). Only
 apps carrying an override are stored, and a row whose overrides are all switched off deletes itself.
 
+An override can also snap an app's first window to an arrangement as it opens, and — first — move it
+to a chosen display. "Display 2, left half" means the left half of *display 2*, not whichever
+display the app happened to launch on: the move runs before the arrangement, and if display 2 isn't
+plugged in right now the move is skipped and the arrangement still applies wherever the window
+actually opened. The display is numbered the same way the tile badges and the `display1…4` tiling
+chords are, and the picker offers as many rows as are plugged in right now — but keeps the choice
+even once that display is unplugged, so a laptop's external monitor coming and going does not mean
+re-entering the rule every time it is plugged back in. There is deliberately no equivalent for the
+Desktop: see *Known limitations* for why that move is not automated.
+
+**Window title rules** answer the same three questions per-window instead of per-app, matched by a
+regular expression against the window's title rather than by which app owns it — a picture-in-picture
+player, a screen-share overlay, or the one Zoom window mid-meeting, where every other window of the
+same app should behave as usual. A rule can be scoped to one app or left at *Any app* for a title
+that names itself the same way regardless of which app opened it. The match is case-insensitive and
+anchoring is entirely up to the pattern — `Zoom` matches the word anywhere in the title, `^Zoom` only
+a title that starts with it. A rule and the per-app override above are never in tension: either one
+hiding, expanding, or protecting a window is enough, and clearing one leaves the other exactly as it
+was. An invalid pattern is kept rather than rejected — it saves as you type — and is treated as
+matching nothing, with a red outline on the row until it compiles. Rules are stored under
+`titleRules`, in `UserDefaults` and mirrored to `config.json` the same way every other setting is.
+
+Two of the three actions have an honest limit. **Always list individually** widens the whole app
+into per-window tiles rather than singling out just the matching window — an app with a matching
+window shows all of its windows individually, not that one alone, because the switcher's per-app
+expansion has no finer-grained way to say "this one, not its siblings". And **never tile** matched by
+title only protects a window from the tiling chords, the titlebar drag, and the modifier-drag — it
+does not yet reach the window-swap chord or a desktop's restored layout, both of which still check
+only the per-app override.
+
 **Direct activation** gives an app its own chord: pressing it jumps straight there, launching the
 app if it isn't running. For the handful of apps you reach for all day the switcher is pure
 overhead. Entries are added unbound — picking the app and picking the combination are two
@@ -841,6 +974,7 @@ open 'cmdtab://tile/focusRight'        # including the families that ship unboun
 open 'cmdtab://tile/nudgeUp'
 open 'cmdtab://tile/growRight'         # one edge, the other three pinned
 open 'cmdtab://tile/almostMaximize'
+open 'cmdtab://tile/restore'           # and again to toggle back to the tile
 open 'cmdtab://tile/display2'          # by name, not by counting
 open 'cmdtab://activate/com.apple.Safari'
 open 'cmdtab://windows/hideAll'        # or showAll
@@ -869,6 +1003,15 @@ applications, and a URL claims nothing from anybody — refusing to tile because
 hotkeys is off would be a setting doing something it never described. The Desktop switch is not
 about chords at all. It guards a gesture that seizes the pointer and flashes Mission Control for the
 better part of a second, and consent to that is not something a URL should route around.
+
+### Raycast and Alfred
+
+`integrations/` packages the same `open cmdtab://...` calls above as a Raycast extension and an
+Alfred workflow, so tiling, activation and hide/show are reachable from a launcher's own search
+rather than a hand-typed `open`. Neither integration hard-codes the arrangement list: both read
+`integrations/arrangements.json`, so adding a `WindowArrangement` case — or a future verb like
+`restore` or `layout` — is one edit there instead of one per launcher. See each subdirectory's
+README for installing it.
 
 ## Switching to an app whose windows are all minimized
 
@@ -1040,12 +1183,24 @@ after that. Remove the identity in Keychain Access to undo it.
 - **Focus follows the pointer raises the window it focuses.** macOS treats the two as one action for
   another app's window, so the X11 "focus without raise" is not on offer here rather than being an
   omission. The rest delay is what keeps it from firing on windows the pointer merely crosses.
+- **There is no "keep this window on top".** It is gated on window ownership, the same wall the
+  Desktop move runs into, and the measurements say so plainly: `SLSSetWindowLevel` on another app's
+  window returns success and changes nothing — `SLSGetWindowLevel` reads the level back unchanged —
+  while the identical call on a window this process owns reads back the level it was given, which is
+  the control that turns "our call is wrong" into "the call is refused". `SLSOrderWindow` does not
+  even pretend: it returns 1000. Accessibility has no floating or level attribute to set, so there is
+  nothing to ask for politely either. The tools that manage it inject into Dock and need SIP
+  partially disabled, which is not a trade this app makes for one convenience.
 - Live window thumbnails are optional in both modes and off by default: the window preview in app
   mode, and **Thumbnail tiles** in window mode. Without either, tiles are app icons and Screen
   Recording is never touched.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
   frontmost app and a ⌘-Tab lands one target further along than usual. Close it and ordering is
   normal again.
+- **Tab search does not reach VS Code or Xcode.** VS Code's tab strip is not built from an
+  `AXTabGroup` within the search's depth bound, so it is never found; Xcode is slow enough answering
+  Accessibility that walking it on every tabs-scoped session was not worth the wait. Both are the
+  same outcome as any other app with no tabs: neither shows up in the list, and nothing indicates why.
 
 ## Layout
 
@@ -1100,7 +1255,8 @@ after that. Remove the identity in Keychain Access to undo it.
 | `FuzzyMatch.swift` | Subsequence matching with scoring, for type-to-filter |
 | `InstalledApps.swift` | The installed-app catalogue behind launch-from-search |
 | `AppRules.swift` | Per-app overrides (expand windows, never tile) |
-| `LaunchArrangement.swift` | Snaps an app's first window to a chosen arrangement as it opens |
+| `LaunchArrangement.swift` | Snaps an app's first window to a chosen arrangement (and, first, a chosen display) as it opens |
+| `TitleRules.swift` | Per-window rules matched by regex against a window's title, unioned with the per-app ones |
 | `GlobalActions.swift` | Direct-activation and hide/show-all chords, and what they do |
 | `SwitcherShortcuts.swift` | The window actions available while the switcher is open, and their extra-modifier bindings |
 | `ScopedTriggers.swift` | Extra triggers that open a narrowed window list |

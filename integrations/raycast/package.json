@@ -1,0 +1,57 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "cmd-tab",
+  "title": "Cmd-Tab",
+  "description": "Drive Cmd-Tab's tiling, activation and window-hiding commands over its cmdtab:// URL scheme.",
+  "icon": "icon.png",
+  "author": "kenny",
+  "categories": ["Productivity", "System"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "tile-window",
+      "title": "Tile Window",
+      "subtitle": "Cmd-Tab",
+      "description": "Apply a Cmd-Tab window arrangement to the focused window.",
+      "mode": "view"
+    },
+    {
+      "name": "switch-to-app",
+      "title": "Switch to App",
+      "subtitle": "Cmd-Tab",
+      "description": "Activate an app through Cmd-Tab.",
+      "mode": "view"
+    },
+    {
+      "name": "hide-all-windows",
+      "title": "Hide All Windows",
+      "subtitle": "Cmd-Tab",
+      "description": "Hide every app's windows through Cmd-Tab.",
+      "mode": "no-view"
+    },
+    {
+      "name": "show-all-windows",
+      "title": "Show All Windows",
+      "subtitle": "Cmd-Tab",
+      "description": "Show every app's windows through Cmd-Tab.",
+      "mode": "no-view"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.87.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "20.8.10",
+    "@types/react": "18.3.3",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "publish": "npx @raycast/api@latest publish"
+  }
+}

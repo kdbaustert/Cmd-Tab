@@ -188,6 +188,32 @@ enum AX {
         }
     }
 
+    /// Performs the press action on `element` itself, as opposed to `press(_:button:)`, which
+    /// resolves one of an element's own *button* attributes first. This is what switching a browser
+    /// tab means: the `AXRadioButton` the tab list exposes is the thing to press, not a sub-attribute
+    /// of it.
+    static func performPress(_ element: AXUIElement) {
+        onOwningThread(element) {
+            AXUIElementPerformAction(element, kAXPressAction as CFString)
+        }
+    }
+
+    /// An attribute read as an integer, folding in the boolean shape some hosts answer with (Safari's
+    /// tab `AXValue` is a number; other attributes of the same shape could come back as a `CFBoolean`
+    /// depending on the host). `copyBool` already covers the case where the caller only cares about
+    /// true/false; this is for the tab search, which reads Safari's `AXValue == 1` as the active-tab
+    /// marker.
+    static func copyInt(_ element: AXUIElement, _ attribute: String) -> Int? {
+        onOwningThread(element) {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+            else { return nil }
+            if let number = value as? Int { return number }
+            if let flag = value as? Bool { return flag ? 1 : 0 }
+            return nil
+        }
+    }
+
     /// The window's on-screen origin (top-left, Quartz global coordinates).
     static func position(_ window: AXUIElement) -> CGPoint? {
         guard let value = copyAXValue(window, kAXPositionAttribute) else { return nil }

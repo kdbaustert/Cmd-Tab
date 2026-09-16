@@ -227,9 +227,10 @@ actor WindowCapture {
     /// working" with nothing to say why, so each now announces itself. Logged at `.error` because
     /// the first two are broken states rather than ordinary ones, and rate-limited because this runs
     /// on every hover and a withheld permission would otherwise write a line per tile per sweep.
-    func thumbnails(for pid: pid_t, maxCount: Int = 12, maxHeight: CGFloat = 150) async
-        -> [WindowThumb]
-    {
+    func thumbnails(
+        for pid: pid_t, titleRules: [CompiledTitleRule] = [], maxCount: Int = 12,
+        maxHeight: CGFloat = 150
+    ) async -> [WindowThumb] {
         guard Permissions.canCaptureScreen else {
             reportOnce(
                 .permission,
@@ -269,10 +270,19 @@ actor WindowCapture {
         // amount of layer-0 debris — several 2056x39 strips, 1x1 and 64x64 stubs, and for Chrome a
         // couple of full-width dropdown surfaces — and every one of them is untitled, while every
         // window a user could actually switch to has a title. Size alone let the dropdowns through.
+        // Read once, off the main actor: the bundle id a title rule is scoped to, or nil for an app
+        // ScreenCaptureKit can't attribute to one (which then only matches an any-app rule).
+        let bundleID = await MainActor.run {
+            NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        }
         var live = content.windows.filter {
             $0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.windowID != 0
                 && $0.frame.width > Self.minWindowSide && $0.frame.height > Self.minWindowSide
                 && !($0.title ?? "").isEmpty
+                // Never shown in a preview or thumbnail strip, the per-window version of an app
+                // being excluded from the switcher outright.
+                && !CompiledTitleRule.matches(
+                    titleRules, bundleID: bundleID, title: $0.title ?? "", action: .hide)
         }
 
         // Which of those are actually in the Dock.

@@ -63,6 +63,12 @@ struct SwitcherSettings: Equatable {
     // Session behaviour, held directly by the controller.
     var showDelay: TimeInterval = 0
     var launchFromSearch = true
+    /// The fallback tier: offering a query nothing running or installed answered as a URL, a web
+    /// search, or a shell command. Off by default, each of the three — see `FallbackAction`.
+    var offerURLFallback = false
+    var offerSearchFallback = false
+    var offerShellFallback = false
+    var fallbackSearchTemplate = SwitcherFallbacks.defaultSearchTemplate
     var stickyMode = false
     var hotkey: Hotkey = .commandTab
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
