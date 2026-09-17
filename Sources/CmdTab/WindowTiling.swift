@@ -742,6 +742,14 @@ struct WindowTilingBindings: Equatable {
     /// laptop being carried. Everything else in this app that rearranges something waits to be
     /// asked, and this one rearranges the most at once. See `DisplayLayouts`.
     var restoresLayoutOnDisplayChange: Bool = false
+    /// Put an assigned app back on its Desktop after the displays change.
+    ///
+    /// Off by default, on the same argument as the setting above and one of its own. The same:
+    /// it moves windows the user did not ask it to move, at a moment they are often not watching.
+    /// Its own: the move is `DesktopMover`'s gesture, so it drives the pointer and opens Mission
+    /// Control — which is already why `desktopMoves` is a switch rather than always-on, and that
+    /// one at least runs because a key was pressed. See `DesktopAssignments`.
+    var restoresDesktopAssignments: Bool = false
     /// Pixels of space left around a tiled window: the whole gap against a screen edge, half of it
     /// where two tiles meet. 0 keeps windows flush, which is what tiling has always done.
     var gap: CGFloat = 0
@@ -867,6 +875,7 @@ final class WindowTilingStore: ObservableObject {
         static let focusFollows = "focusFollowsMouseEnabled"
         static let focusFollowsDelay = "focusFollowsMouseDelay"
         static let restoreOnDisplayChange = "restoreLayoutOnDisplayChange"
+        static let restoreDesktopAssignments = "restoreDesktopAssignments"
     }
 
     /// Every key this store owns, for export/import/reset.
@@ -877,6 +886,7 @@ final class WindowTilingStore: ObservableObject {
         Key.dotHex, Key.outlineHex, Key.landingHex,
         Key.mouseDrag, Key.mouseMove, Key.mouseResize,
         Key.focusFollows, Key.focusFollowsDelay, Key.restoreOnDisplayChange,
+        Key.restoreDesktopAssignments,
     ]
 
     @Published private(set) var tiling: WindowTilingBindings = .defaults
@@ -1077,6 +1087,15 @@ final class WindowTilingStore: ObservableObject {
         }
     }
 
+    var restoresDesktopAssignments: Bool {
+        get { tiling.restoresDesktopAssignments }
+        set {
+            guard newValue != tiling.restoresDesktopAssignments else { return }
+            tiling.restoresDesktopAssignments = newValue
+            persist()
+        }
+    }
+
     private init() {
         tiling = Self.load()
         mouseDrag = Self.loadMouseDrag()
@@ -1270,6 +1289,7 @@ final class WindowTilingStore: ObservableObject {
         // both correctly — no telling apart needed, unlike the two above it.
         result.pointerFollowsDisplayMove = defaults.bool(forKey: Key.pointerFollowsDisplay)
         result.restoresLayoutOnDisplayChange = defaults.bool(forKey: Key.restoreOnDisplayChange)
+        result.restoresDesktopAssignments = defaults.bool(forKey: Key.restoreDesktopAssignments)
         // Absent means never set, which is 0 — `double(forKey:)` already reports 0 for a missing
         // key, so the two cases need no telling apart here.
         //
@@ -1314,6 +1334,7 @@ final class WindowTilingStore: ObservableObject {
         defaults.set(tiling.followsDesktopMove, forKey: Key.followsDesktopMove)
         defaults.set(tiling.pointerFollowsDisplayMove, forKey: Key.pointerFollowsDisplay)
         defaults.set(tiling.restoresLayoutOnDisplayChange, forKey: Key.restoreOnDisplayChange)
+        defaults.set(tiling.restoresDesktopAssignments, forKey: Key.restoreDesktopAssignments)
         defaults.set(Double(tiling.gap), forKey: Key.gap)
         // The four per-edge keys are deliberately not written back. They are a migration source
         // only — see `load()` — and left where they are, so a downgrade finds what it wrote.

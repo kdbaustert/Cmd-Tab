@@ -1091,11 +1091,9 @@ SIGHUP all restore it on the way out. SIGKILL and hard crashes cannot — log ou
 
 ## Signing
 
-`build.sh` signs with a self-signed certificate called **Cmd-Tab Local**. It was reissued under
-that name from the earlier **Overtab Local** one: a certificate's common name is bound into the
-certificate itself, so renaming meant issuing a new one, which changed the designated requirement
-and cost a single Accessibility re-grant. The old certificate is referenced by nothing and can be
-deleted from Keychain Access.
+`build.sh` signs with a self-signed certificate called **Cmd-Tab Local**. A certificate's common
+name is bound into the certificate itself, so issuing one under a new name changes the designated
+requirement and costs a single Accessibility re-grant.
 
 The certificate is what keeps the Accessibility grant alive across rebuilds. macOS keys the
 permission to the app's *designated requirement*; signed with a certificate, that requirement is
@@ -1263,7 +1261,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | `ConfigFile.swift` | The `~/.config` mirror: file watching, write-back, live apply |
 | `WindowClassification.swift` | Whether an Accessibility window belongs in the switcher — pure, and tested |
 | `Updater.swift` | Sparkle, and the update preferences surfaced in Settings → About |
-| `Migration.swift` | Carries settings over from the old Overtab bundle id; deletable in time |
+| `Migration.swift` | One-off rewrites of stored settings between releases; each deletable in time |
 | `FrontProcess.swift` | Brings one window forward without dragging its siblings off the Desktops they live on |
 | `DockBadges.swift` | Reads other apps' Dock badges out of the Dock's Accessibility tree |
 | `Permissions.swift` | The Accessibility and Screen Recording grants, and how each is asked for |
@@ -1456,12 +1454,7 @@ app that is hanging, which is the difference between "the machine is busy" and "
 Signposts cost close to nothing unattached — `OSSignposter` checks whether anyone is listening
 before formatting — which is what makes it acceptable to leave one in a per-keystroke callback.
 
-## Renamed from Overtab
+## Naming
 
-The app was called Overtab until the bundle identifier changed to `com.cmdtab.CmdTab`. That
-identifier is also the `UserDefaults` domain, so `Migration.swift` copies the old settings across
-on first launch — otherwise every tuned value would silently vanish. It never overwrites a value
-the new build already has, and runs before any store is read.
-
-The project directory is still `Developer/Overtab`, and the Swift target is `CmdTab` because a
-module name cannot contain a hyphen. Only the bundle carries the hyphenated name.
+The bundle identifier is `com.cmdtab.CmdTab` and the bundle is `Cmd-Tab.app`. The Swift target is
+`CmdTab` because a module name cannot contain a hyphen; only the bundle carries the hyphenated name.

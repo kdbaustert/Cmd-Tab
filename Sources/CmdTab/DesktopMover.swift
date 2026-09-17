@@ -81,7 +81,25 @@ enum DesktopMover {
     /// and this type is reached from `queue`.
     private static let missionControl = "com.apple.expose.awake"
 
-    /// Moves the focused window of `pid` `step` Desktops along, clamped to the ends.
+    /// Where a move is aiming.
+    ///
+    /// Two cases because the two callers know different things. A bound chord knows only "one along"
+    /// — the user is throwing a window in a direction and the destination is whatever is there.
+    /// `DesktopAssignments` knows the exact Desktop macOS was told the app belongs on, and has to
+    /// say so rather than hand over a step: a step is computed against a reading of where the window
+    /// is *now*, and the gesture re-reads that for itself a moment later. Between those two reads
+    /// sits a display change that is still settling, which is the one moment the answer is most
+    /// likely to move — and a step computed against the older reading lands the window on the wrong
+    /// Desktop, which is precisely the failure the assignment feature exists to undo.
+    enum Destination {
+        /// This many Desktops along from wherever the window is, clamped to the ends of its display.
+        case step(Int)
+        /// One specific Space, by the id `SpaceMover` reports. Ignored if it is not on the same
+        /// display as the window — a Desktop move travels the Spaces Bar of one display.
+        case space(UInt64)
+    }
+
+    /// Moves the focused window of `pid` to `destination`, clamped to the ends of its display.
     ///
     /// Clamped rather than wrapped, unlike the display moves. Wrapping a window from the last
     /// Desktop round to the first is a long way for a key to throw something, and the Desktop a
@@ -94,16 +112,17 @@ enum DesktopMover {
     /// the window instead of watching it leave. `completion` runs on `queue` once the gesture is
     /// over and Mission Control is gone, landed or not.
     static func move(
-        pid: pid_t, step: Int, follow: Bool, completion: (@Sendable () -> Void)? = nil
+        pid: pid_t, to destination: Destination, follow: Bool,
+        completion: (@Sendable () -> Void)? = nil
     ) {
-        guard step != 0 else { return }
+        if case .step(0) = destination { return }
         guard beginIfIdle() else {
             Log.general.notice("desktop move: already moving a window; ignoring")
             return
         }
         queue.async {
             defer { end() }
-            let landed = perform(pid: pid, step: step, follow: follow)
+            let landed = perform(pid: pid, to: destination, follow: follow)
             // Dropped on a Desktop, the window sits behind whatever was already there. Raised here
             // rather than inside `perform`: its `defer` has to close Mission Control and put the
             // frame back first, and a raise while the overlay is up goes nowhere. Follow only —
@@ -137,7 +156,9 @@ enum DesktopMover {
     // MARK: - The gesture
 
     /// The window that landed on the destination, or nil for every other way this can end.
-    private static func perform(pid: pid_t, step: Int, follow: Bool) -> CGWindowID? {
+    private static func perform(pid: pid_t, to destination: Destination, follow: Bool)
+        -> CGWindowID?
+    {
         guard let dockNotify else {
             Log.general.notice("desktop move: CoreDockSendNotification unavailable")
             return nil
@@ -149,7 +170,24 @@ enum DesktopMover {
             Log.general.notice("desktop move: the mouse button is already down; ignoring")
             return nil
         }
-        guard let plan = plan(pid: pid, step: step) else { return nil }
+        guard let plan = plan(pid: pid, to: destination) else { return nil }
+
+        // The gesture takes the window by its title bar with the pointer, so the window has to be
+        // on the Desktop its display is showing — and the window `DesktopAssignments` sends here
+        // is, by definition, on one it is not: that is the whole reason it needs moving. Measured
+        // on the first cut of that feature, which skipped this: with the window on Desktop 3 and
+        // Desktop 1 in front, all four grab points resolved to another app's window, and every
+        // unplug ended in "no title bar to grab; covered". So the display is switched to the
+        // window's Desktop first, and put back afterwards.
+        var landed = false
+        let origin = bringToFront(plan)
+        defer {
+            // Runs after the gesture's own cleanup below — defers unwind last-in first-out — so
+            // Mission Control is closed and the frame written back before the Desktop leaves. Not
+            // after a follow that landed: the user asked to arrive with the window, and has.
+            if let origin, !(follow && landed) { returnToOrigin(plan, from: origin) }
+        }
+        guard let grabs = grabs(for: plan) else { return nil }
 
         // From here the mouse button is down and Mission Control is on its way up, so every exit
         // has to put both back. A `defer` rather than a tidy path at the bottom: the middle of this
@@ -160,7 +198,7 @@ enum DesktopMover {
         // Hoisted above the `defer` so the cleanup can see whether the window was ever picked up,
         // and where the pointer was last put.
         var grabbed = false
-        var point = plan.grabs[0]
+        var point = grabs[0]
         defer {
             // Only if the gesture did not get as far as its own release. A second `leftMouseUp` is
             // not free — it lands wherever the pointer is, which after a follow is the menu bar —
@@ -185,7 +223,7 @@ enum DesktopMover {
         // One grab point at a time, in the plan's order, until the window comes along. A point
         // that does not take is let go of before the next is tried: a button still down across
         // the warp would turn into a drag of whatever the first press landed on.
-        for grab in plan.grabs {
+        for grab in grabs {
             CGWarpMouseCursorPosition(grab)
             usleep(cursorSettle)
             post(.leftMouseDown, grab)
@@ -250,7 +288,7 @@ enum DesktopMover {
         released = true
         // One line, either way. This used to log "did not land" and then "dropped on desktop N"
         // immediately after, which is a contradiction to read back at three in the morning.
-        let landed = awaitLanding(plan)
+        landed = awaitLanding(plan)
         if landed {
             Log.general.notice(
                 """
@@ -407,9 +445,10 @@ enum DesktopMover {
         /// The frame the window had *before* the gesture. Both the reference `didGrab` compares
         /// against and the frame restored at the end.
         let bounds: CGRect
-        /// Where to take hold of the window, in order of preference: points along its title bar
-        /// that are uncovered and not sitting on a control. Never empty — see `grabPoints(for:)`.
-        let grabs: [CGPoint]
+        /// Where the window is and what its display is showing, as read when the plan was made.
+        /// The gesture needs the window on the Desktop in front, and this is how `perform` knows
+        /// whether it is — and which Desktop to put the user back on afterwards.
+        let state: SpaceMover.SpaceState
         /// 0-based index of the destination Desktop within its display's Spaces Bar.
         let destination: Int
         /// The destination's Space id. The drop is confirmed against this rather than slept
@@ -421,10 +460,11 @@ enum DesktopMover {
         let display: CGRect?
     }
 
-    /// Resolves the window, checks it can actually be dragged, and works out which Desktop to aim
-    /// at. nil when any of that fails, and each failure says why — a gesture this visible must not
-    /// start at all if it cannot finish.
-    private static func plan(pid: pid_t, step: Int) -> Plan? {
+    /// Resolves the window and works out which Desktop to aim at. nil when any of that fails, and
+    /// each failure says why — a gesture this visible must not start at all if it cannot finish.
+    /// Whether the window can actually be taken hold of is `grabs(for:)`, kept out of here because
+    /// it can only be answered once the window is in front — see `perform`.
+    private static func plan(pid: pid_t, to target: Destination) -> Plan? {
         guard let element = AX.frontWindow(ofApplication: pid) else {
             Log.general.notice("desktop move: no front window for pid \(pid, privacy: .public)")
             return nil
@@ -450,26 +490,6 @@ enum DesktopMover {
             return nil
         }
 
-        // Points along the title bar, each checked twice before it is worth a press. First that
-        // the point really belongs to this window: without that a covered window would hand the
-        // drag to whatever is on top of it, and the gesture would move a window the user never
-        // selected — much worse than doing nothing. Second that nothing under it is a control,
-        // because a press on one is a click on it rather than a drag: VS Code draws its own title
-        // bar with the Command Center search box dead centre, so the midpoint — which is the
-        // title bar in every native window — opened its quick-open picker and moved nothing,
-        // every time. Accessibility's hit test says what is there without pressing anything.
-        let grabs = grabPoints(for: bounds).filter {
-            topWindow(at: $0) == window && !isControl(at: $0)
-        }
-        guard !grabs.isEmpty else {
-            Log.general.notice(
-                """
-                desktop move: window \(window, privacy: .public) has no title bar to grab; \
-                covered, or controls all along it
-                """)
-            return nil
-        }
-
         guard let state = SpaceMover.spaceState(of: window) else {
             Log.general.notice("desktop move: window \(window, privacy: .public) is on no Desktop")
             return nil
@@ -480,7 +500,26 @@ enum DesktopMover {
             Log.general.notice("desktop move: window's Desktop is not a standard one")
             return nil
         }
-        let destination = current + step
+        let destination: Int
+        switch target {
+        case .step(let step):
+            destination = current + step
+        case .space(let space):
+            // Not on this window's display, so no amount of travelling its Spaces Bar reaches it.
+            // The everyday cause is an assignment naming a Desktop on a monitor that has just been
+            // unplugged; `DesktopAssignments` drops those before it gets here, and this is the
+            // backstop for the window that moved between its reading and this one.
+            guard let index = spaces.firstIndex(of: space) else {
+                Log.general.notice(
+                    "desktop move: space \(space, privacy: .public) is not on this window's display")
+                return nil
+            }
+            destination = index
+        }
+        // Already there. Only reachable on the `.space` path — `.step(0)` is turned away in `move`
+        // — and worth catching, because the gesture is not free: it would pick the window up, open
+        // Mission Control and drop it back on the thumbnail it started on.
+        guard destination != current else { return nil }
         guard spaces.indices.contains(destination) else {
             Log.general.notice(
                 """
@@ -490,9 +529,93 @@ enum DesktopMover {
             return nil
         }
         return Plan(
-            window: window, element: element, bounds: bounds, grabs: grabs,
+            window: window, element: element, bounds: bounds, state: state,
             destination: destination, destinationSpace: spaces[destination],
             display: displayBounds(containing: bounds))
+    }
+
+    /// Where to take hold of the window, in order of preference: points along its title bar that
+    /// are uncovered and not sitting on a control. nil, having said why, when there are none.
+    ///
+    /// Each point is checked twice before it is worth a press. First that the point really belongs
+    /// to this window: without that a covered window would hand the drag to whatever is on top of
+    /// it, and the gesture would move a window the user never selected — much worse than doing
+    /// nothing. Second that nothing under it is a control, because a press on one is a click on it
+    /// rather than a drag: VS Code draws its own title bar with the Command Center search box dead
+    /// centre, so the midpoint — which is the title bar in every native window — opened its
+    /// quick-open picker and moved nothing, every time. Accessibility's hit test says what is
+    /// there without pressing anything.
+    ///
+    /// Both checks look at the Desktop in front, which is why this runs after `bringToFront` and
+    /// not inside `plan`: on any other Desktop the window is not in the on-screen list at all,
+    /// and the first check fails for every point however clear its title bar is.
+    private static func grabs(for plan: Plan) -> [CGPoint]? {
+        let grabs = grabPoints(for: plan.bounds).filter {
+            topWindow(at: $0) == plan.window && !isControl(at: $0)
+        }
+        guard !grabs.isEmpty else {
+            Log.general.notice(
+                """
+                desktop move: window \(plan.window, privacy: .public) has no title bar to grab; \
+                covered, or controls all along it
+                """)
+            return nil
+        }
+        return grabs
+    }
+
+    /// Switches the window's display to the Desktop the window is on and waits for the window to
+    /// be in front. nil when it already was, or when no switch could be issued; otherwise the
+    /// Space the display was showing, for `returnToOrigin`.
+    ///
+    /// The wait is a floor and then a poll, both from numbers measured elsewhere in this app.
+    /// The floor because `.optionOnScreenOnly` lists an incoming Desktop's windows as the
+    /// transition *opens* — see `SwitchTarget.frontOnScreenWindow` — so a press timed off that
+    /// list alone lands mid-animation; `revealSettle` is the same floor the pick path waits after
+    /// the same switch. Then the window's arrival in that list, which is the exact precondition
+    /// `grabs(for:)` tests, rather than a sleep sized for a slow machine. A window that never
+    /// arrives is still attempted: the switch was made, and the grab check says the rest.
+    private static func bringToFront(_ plan: Plan) -> UInt64? {
+        let reveal = SpaceMover.reveal(window: plan.window, state: plan.state)
+        guard reveal.switched, let origin = reveal.state?.currentSpace else { return nil }
+        usleep(useconds_t(revealSettle * 1_000_000))
+        for _ in 0..<Int(revealTimeout / pollInterval) {
+            if isOnScreen(plan.window) { return origin }
+            usleep(useconds_t(pollInterval * 1_000_000))
+        }
+        Log.general.notice(
+            """
+            desktop move: window \(plan.window, privacy: .public) is still not in front after \
+            switching to its Desktop; trying anyway
+            """)
+        return origin
+    }
+
+    /// Puts the display back on the Desktop the user was looking at before `bringToFront`.
+    ///
+    /// The Space to hide is re-read rather than taken as the window's, for the reason
+    /// `SpaceMover.reveal` re-reads its own: a Desktop change during the gesture — the user's,
+    /// mid-move — would otherwise have the hide take down a Space that is not the one on screen.
+    private static func returnToOrigin(_ plan: Plan, from origin: UInt64) {
+        let display = plan.state.display
+        let now = SpaceMover.currentSpace(ofDisplay: display) ?? plan.state.windowSpace
+        guard now != origin else { return }
+        Log.general.notice(
+            """
+            desktop move: returning display to space \(origin, privacy: .public) from \
+            \(now, privacy: .public)
+            """)
+        SpaceMover.switchDisplay(display, from: now, to: origin)
+    }
+
+    /// Whether the window server is compositing `window` right now — the list `topWindow(at:)`
+    /// searches, asked only for membership.
+    private static func isOnScreen(_ window: CGWindowID) -> Bool {
+        guard
+            let info = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return false }
+        return info.contains { ($0[kCGWindowNumber as String] as? CGWindowID) == window }
     }
 
     /// Where along the title bar to try taking hold, most likely first. Pure, so the order and
@@ -920,6 +1043,10 @@ enum DesktopMover {
     /// and a slow one still gets its time.
     private static let pollInterval: Double = 0.02
     private static let landingTimeout: Double = 1.0
+    /// After a Desktop switch: the floor before the window is trusted to be in front, and how long
+    /// past it to keep looking. The floor is `SwitchTarget.spaceSettleDelay`; see `bringToFront`.
+    private static let revealSettle: Double = 0.45
+    private static let revealTimeout: Double = 1.5
     /// How long one follow press is given to take effect, and how many presses to try. The first is
     /// routinely swallowed — see `followTo` — so this must be more than one.
     private static let followPressTimeout: Double = 0.3

@@ -3,8 +3,9 @@ import AppKit
 // Recovery path for a takeover that outlived the process that made it. `SystemSwitcher` disables
 // the Dock's ⌘-Tab in the window server's memory and restores it on every ordinary exit — quit,
 // SIGTERM, SIGINT, SIGHUP — but SIGKILL and hard crashes run no cleanup, and
-// `CGSGetSymbolicHotKeyEnabled` is gone on current macOS, so nothing can even ask whether the
-// takeover is still in force. That left logging out as the only way back.
+// while a *running* instance can now ask the window server whether the takeover is in force
+// (`SystemSwitcher.isNativeEnabled`), a dead one cannot answer for itself. That left logging out as
+// the only way back.
 //
 // This flag is the way back that does not cost a session: the symbolic hot keys are global window
 // server state, so a fresh process can hand them over on behalf of the dead one. Handled before

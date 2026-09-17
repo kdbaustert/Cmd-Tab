@@ -198,6 +198,7 @@ final class SwitcherController {
             targetHighlight.gap = tiling.gap
             launchArrangements.gap = tiling.gap
             displayLayouts.isEnabled = tiling.restoresLayoutOnDisplayChange
+            desktopAssignments.isEnabled = tiling.restoresDesktopAssignments
             guard tiling.dragSnap != oldValue.dragSnap else { return }
             dragSnap.isEnabled = tiling.dragSnap
         }
@@ -205,6 +206,8 @@ final class SwitcherController {
     private let dragSnap = DragSnap()
     /// Remembers the window layout per set of displays, and puts it back when one returns.
     private let displayLayouts = DisplayLayouts()
+    /// Puts an app macOS has assigned to a Desktop back on it after the displays change.
+    private let desktopAssignments = DesktopAssignments()
 
     /// Hold-a-modifier-and-drag to move or resize. Pushed by `AppDelegate`, like the bindings.
     var mouseDrag: MouseDragSettings = .init() {
@@ -289,6 +292,7 @@ final class SwitcherController {
             targetHighlight.appRules = appRules
             launchArrangements.appRules = appRules
             displayLayouts.appRules = appRules
+            desktopAssignments.appRules = appRules
             provider.refresh()
         }
     }
@@ -905,7 +909,7 @@ final class SwitcherController {
             if let step = arrangement.desktopStep {
                 Log.tap.notice(
                     "desktop move: pid \(pid, privacy: .public), step \(step, privacy: .public)")
-                DesktopMover.move(pid: pid, step: step, follow: follows) { [weak self] in
+                DesktopMover.move(pid: pid, to: .step(step), follow: follows) { [weak self] in
                     // The gesture activates Mission Control, so the activation notifications it
                     // fires rebuild the list while the window is between Desktops — and nothing
                     // rebuilds it again once the window has landed. Under a Desktop order that

@@ -127,10 +127,9 @@ fi
 # the code hash, which changes on every build — hence the re-granting.
 #
 # The certificate's common name is cryptographically part of it, so this is not a label that can be
-# edited — the identity was reissued under the app's own name, and the previous "Overtab Local" one
-# is simply no longer referenced. That reissue changed the designated requirement and cost one
-# Accessibility re-grant, which is the price of the rename and is paid once. See README for how to
-# create it. `release.sh` overrides it with a Developer ID.
+# edited: a certificate under a new name is a new designated requirement, and costs one
+# Accessibility re-grant. See README for how to create it. `release.sh` overrides it with a
+# Developer ID.
 IDENTITY="${CODESIGN_IDENTITY:-Cmd-Tab Local}"
 SIGN_ARGS=(--force)
 if [[ "${HARDENED:-0}" == "1" ]]; then
@@ -202,12 +201,23 @@ if [[ "${1:-}" == "--install" ]]; then
     # Kill the running copy first; a replaced binary keeps running off the old inode otherwise.
     osascript -e 'quit app "Cmd-Tab"' 2>/dev/null || true
     pkill -x CmdTab 2>/dev/null || true
-    # The pre-rename app, if it is still around. It disabled the system ⌘-Tab on the way in and
-    # only restores it on a clean quit, so it has to go down properly rather than be deleted.
-    osascript -e 'quit app "Overtab"' 2>/dev/null || true
-    pkill -x Overtab 2>/dev/null || true
-    sleep 1
-    rm -rf /Applications/Cmd-Tab.app /Applications/Overtab.app
+    # Wait for the old process to actually be gone, not a fixed second. `quit` returns when the
+    # event is delivered and `pkill` when the signal is; the teardown behind both runs on the old
+    # process's main queue, behind whatever that thread was busy with, and it ends by handing the
+    # system ⌘-Tab back. Launched over the top of that, the new copy takes ⌘-Tab over first and
+    # then has it handed back underneath it — after which the window server eats every ⌘-Tab
+    # before the new copy's tap can see one. The app now notices and re-takes it, but the
+    # installer should not be manufacturing the race in the first place.
+    for _ in $(seq 1 50); do
+        pgrep -x CmdTab >/dev/null 2>&1 || break
+        sleep 0.1
+    done
+    if pgrep -x CmdTab >/dev/null 2>&1; then
+        echo "==> The old copy did not exit within 5s; forcing it" >&2
+        pkill -9 -x CmdTab 2>/dev/null || true
+        sleep 0.5
+    fi
+    rm -rf /Applications/Cmd-Tab.app
     cp -R "$APP" /Applications/Cmd-Tab.app
     open /Applications/Cmd-Tab.app
     echo "==> Launched. Look for the stacked-squares icon in the menu bar."

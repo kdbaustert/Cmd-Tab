@@ -1,10 +1,8 @@
 import Foundation
 
-/// The app was called Overtab before it was called Cmd-Tab. The rename changed the bundle
-/// identifier, and `UserDefaults.standard` is keyed on that, so every tuned setting would
-/// otherwise disappear the first time the renamed build launched.
-///
-/// This can go once nobody is upgrading from an Overtab build.
+/// One-off rewrites of settings a user already has, from the shape an earlier release stored them
+/// in to the shape this one reads. Each runs once per install, records that it ran, and can go once
+/// nobody is upgrading from the release that needed it.
 ///
 /// ## Why everything here is parameterised
 ///
@@ -14,35 +12,21 @@ import Foundation
 /// should not withholds a value they were owed. Neither shows up as anything but a preference that
 /// is mysteriously not what it was.
 ///
-/// So the domains and the reporter are arguments rather than globals. `run()` supplies the real
-/// ones and is what `AppDelegate` calls; the tests drive `run(in:migratingFrom:report:)` against a
-/// throwaway suite. Nothing here reaches for `UserDefaults.standard` or `Log` on its own, which is
-/// the whole of what makes the four branches below checkable.
+/// So the domain and the reporter are arguments rather than globals. `run()` supplies the real
+/// ones and is what `AppDelegate` calls; the tests drive `run(in:report:)` against a throwaway
+/// suite. Nothing here reaches for `UserDefaults.standard` or `Log` on its own, which is the whole
+/// of what makes the three branches below checkable.
 enum Migration {
-    private static let oldDomain = "com.overtab.Overtab"
-    private static let doneKey = "migratedFromOvertab"
-    private static let keys = [
-        "mode", "iconSize", "iconSpacing", "titleSpacing", "excludedBundleIDs",
-    ]
-
     /// Must run before anything reads a setting.
     static func run() {
-        run(in: .standard, migratingFrom: UserDefaults(suiteName: oldDomain))
+        run(in: .standard)
     }
 
     /// The testable entry point, and the one that does the work.
-    ///
-    /// `overtab` is separate from `defaults` because it is a second real domain on any Mac that ever
-    /// ran the old build — a test that let this resolve itself would read whatever that machine
-    /// happens to have, and pass or fail accordingly.
-    static func run(
-        in defaults: UserDefaults, migratingFrom overtab: UserDefaults?,
-        report: (String) -> Void = announce
-    ) {
+    static func run(in defaults: UserDefaults, report: (String) -> Void = announce) {
         splitBadgeToggle(defaults, report)
         reviveSnapHighlightColor(defaults, report)
         dropSavedLayouts(defaults, report)
-        renameFromOvertab(defaults, from: overtab, report)
     }
 
     /// The production reporter. Injectable for the reason `TapStateMirror.report` documents: the
@@ -129,23 +113,4 @@ enum Migration {
     }
 
     private static let badgeSplitKey = "migratedBadgeSplit"
-
-    private static func renameFromOvertab(
-        _ defaults: UserDefaults, from overtab: UserDefaults?, _ report: (String) -> Void
-    ) {
-        guard !defaults.bool(forKey: doneKey) else { return }
-        defaults.set(true, forKey: doneKey)
-
-        guard let overtab else { return }
-        var moved: [String] = []
-        for key in keys {
-            // Never clobber a value the new build already has.
-            guard defaults.object(forKey: key) == nil, let value = overtab.object(forKey: key)
-            else { continue }
-            defaults.set(value, forKey: key)
-            moved.append(key)
-        }
-        guard !moved.isEmpty else { return }
-        report("migrated from Overtab: " + moved.joined(separator: ", "))
-    }
 }

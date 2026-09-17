@@ -194,11 +194,10 @@ enum SpaceMover {
         guard state.windowSpace != state.currentSpace else {
             return Reveal(state: state, switched: false)
         }
-        guard let setCurrentSpace, let mainConnection else {
+        guard setCurrentSpace != nil, mainConnection != nil else {
             Log.general.notice("space reveal: cannot switch Space, private symbol unavailable")
             return Reveal(state: state, switched: false)
         }
-        let cid = mainConnection()
         // The Space to hide is read here rather than taken from `state`, and that is the whole of
         // the difference between one Desktop on screen and two.
         //
@@ -228,6 +227,21 @@ enum SpaceMover {
         Log.general.notice(
             "space reveal: window \(window, privacy: .public) space \(origin, privacy: .public) -> \(state.windowSpace, privacy: .public)"
         )
+        switchDisplay(state.display, from: origin, to: state.windowSpace)
+        return Reveal(state: fresh, switched: true)
+    }
+
+    /// Points `display` at `space`, taking `origin` down behind it: the switch `reveal` performs,
+    /// for a caller that already knows both ends. `DesktopMover` uses it to put the user back on
+    /// the Desktop they were looking at after moving a window it had to bring in front first.
+    /// `origin` must be what the display is showing *now*, re-read rather than remembered — see
+    /// `reveal` for the two-Desktops-composited bug a stale one causes.
+    ///
+    /// Returns false, having done nothing, when the private symbols are missing.
+    @discardableResult
+    static func switchDisplay(_ display: String, from origin: UInt64, to space: UInt64) -> Bool {
+        guard let setCurrentSpace, let mainConnection else { return false }
+        let cid = mainConnection()
         // Show the destination and hide the origin *around* the current-Space write, rather than
         // making that write the whole of the switch.
         //
@@ -260,15 +274,15 @@ enum SpaceMover {
         // already declined to travel on its own — and a future macOS that drops these two symbols is
         // better served by the old bookkeeping-only switch than by no switch at all.
         if let showSpaces, let hideSpaces {
-            showSpaces(cid, [NSNumber(value: state.windowSpace)] as CFArray)
-            setCurrentSpace(cid, state.display as CFString, state.windowSpace)
+            showSpaces(cid, [NSNumber(value: space)] as CFArray)
+            setCurrentSpace(cid, display as CFString, space)
             hideSpaces(cid, [NSNumber(value: origin)] as CFArray)
         } else {
             Log.general.notice(
-                "space reveal: no show/hide symbols; the switch may not re-composite the display")
-            setCurrentSpace(cid, state.display as CFString, state.windowSpace)
+                "space switch: no show/hide symbols; the switch may not re-composite the display")
+            setCurrentSpace(cid, display as CFString, space)
         }
-        return Reveal(state: fresh, switched: true)
+        return true
     }
 
     /// Which Space `display` is showing right now, and nothing else.
@@ -331,6 +345,33 @@ enum SpaceMover {
             return spaces.filter { ($0["type"] as? Int) == 0 }.compactMap(spaceID(from:))
         }
         return []
+    }
+
+    /// Every user Space that exists right now, keyed by the UUID macOS files app bindings under.
+    ///
+    /// The bridge between a stored assignment and a live Desktop. `com.apple.spaces`'s
+    /// `app-bindings` names its destination by UUID and nothing else, and a UUID is the only
+    /// identifier here that means the same Desktop tomorrow: `ManagedSpaceID` is handed out per
+    /// session — measured on this machine, the six Desktops of one display carry ids 4, 5, 6, 1, 7,
+    /// 8, so it is not even an ordering — and a position in the Spaces Bar shifts the moment a
+    /// Desktop is added or removed.
+    ///
+    /// A Space with an empty UUID is skipped rather than stored under `""`. Real: the fourth
+    /// Desktop of the display this was written against has one, and keying it by the empty string
+    /// would collide every such Space onto one entry and hand a binding the wrong Desktop. Nothing
+    /// is lost by dropping them — a Space with no UUID is a Space no binding can name.
+    static func spaceIDsByUUID() -> [String: UInt64] {
+        var out: [String: UInt64] = [:]
+        for display in managedDisplays() {
+            guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
+            for space in spaces where (space["type"] as? Int) == 0 {
+                guard let uuid = space["uuid"] as? String, !uuid.isEmpty,
+                    let id = spaceID(from: space)
+                else { continue }
+                out[uuid] = id
+            }
+        }
+        return out
     }
 
     /// Every user Space in order, flattened across displays.

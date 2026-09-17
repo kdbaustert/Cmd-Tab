@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // First, so the measurement covers launch too — the busiest the main thread ever gets, and
         // the one stretch where a stall is expected rather than alarming. See the type.
         MainLoopMonitor.start()
+        // Its sibling for the other silent failure: keys that never reach the tap at all.
+        KeyboardOwnershipMonitor.start()
 
         // Before any store is touched: the first read of one is what would bake in the defaults.
         Migration.run()

@@ -37,14 +37,14 @@ final class MigrationTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    /// Runs the real entry point with both domains stood in for and the log silenced. `messages` is
+    /// Runs the real entry point with the domain stood in for and the log silenced. `messages` is
     /// returned rather than asserted on by default: what a migration *announces* is not the contract,
     /// but "it announced something" is the only way to tell a branch that ran from one that was
     /// skipped when both leave the same defaults behind.
     @discardableResult
-    private func migrate(from overtab: UserDefaults? = nil) -> [String] {
+    private func migrate() -> [String] {
         var messages: [String] = []
-        Migration.run(in: defaults, migratingFrom: overtab) { messages.append($0) }
+        Migration.run(in: defaults) { messages.append($0) }
         return messages
     }
 
@@ -83,7 +83,7 @@ final class MigrationTests: XCTestCase {
         migrate()
         for key in [
             "migratedBadgeSplit", "migratedRevivedSnapHighlightColor",
-            "migratedDroppedSavedLayouts", "migratedFromOvertab",
+            "migratedDroppedSavedLayouts",
         ] {
             XCTAssertTrue(defaults.bool(forKey: key), key)
         }
@@ -160,56 +160,5 @@ final class MigrationTests: XCTestCase {
     func testNothingIsAnnouncedWhenThereWereNoSavedLayouts() {
         let messages = migrate()
         XCTAssertTrue(messages.filter { $0.contains("saved-layouts") }.isEmpty, "\(messages)")
-    }
-
-    // MARK: - Overtab rename
-
-    func testTunedSettingsComeAcrossFromTheOldDomain() throws {
-        let overtab = try makeOvertabDomain([
-            "mode": "windows", "iconSize": 96, "excludedBundleIDs": ["com.apple.Finder"],
-        ])
-        migrate(from: overtab)
-        XCTAssertEqual(defaults.string(forKey: "mode"), "windows")
-        XCTAssertEqual(defaults.integer(forKey: "iconSize"), 96)
-        XCTAssertEqual(defaults.stringArray(forKey: "excludedBundleIDs"), ["com.apple.Finder"])
-    }
-
-    /// The new build's own value wins. Someone who installed Cmd-Tab fresh, tuned it, and only then
-    /// had an old Overtab domain turn up — a restored backup, a synced home directory — must not
-    /// have the older value dragged over the top of it.
-    func testAValueTheNewBuildAlreadyHasIsNotClobbered() throws {
-        let overtab = try makeOvertabDomain(["iconSize": 96])
-        defaults.set(48, forKey: "iconSize")
-        migrate(from: overtab)
-        XCTAssertEqual(defaults.integer(forKey: "iconSize"), 48)
-    }
-
-    /// Only the five keys named in `Migration.keys` travel. The old domain can hold anything at all,
-    /// including keys whose meaning changed between the two apps.
-    func testKeysOutsideTheListAreLeftBehind() throws {
-        let overtab = try makeOvertabDomain(["mode": "windows", "somethingElse": "value"])
-        migrate(from: overtab)
-        XCTAssertEqual(defaults.string(forKey: "mode"), "windows")
-        XCTAssertNil(defaults.object(forKey: "somethingElse"))
-    }
-
-    /// The overwhelmingly common case — a machine that never ran Overtab — and the one where a
-    /// crash would be worst, since this runs before the app has drawn anything.
-    func testAMissingOldDomainIsNotAnError() {
-        let messages = migrate(from: nil)
-        XCTAssertTrue(messages.filter { $0.contains("Overtab") }.isEmpty, "\(messages)")
-        XCTAssertTrue(defaults.bool(forKey: "migratedFromOvertab"))
-    }
-
-    private var overtabSuiteName: String?
-
-    private func makeOvertabDomain(_ contents: [String: Any]) throws -> UserDefaults {
-        let name = "com.cmdtab.tests.overtab.\(UUID().uuidString)"
-        overtabSuiteName = name
-        UserDefaults.standard.removePersistentDomain(forName: name)
-        let old = try XCTUnwrap(UserDefaults(suiteName: name))
-        for (key, value) in contents { old.set(value, forKey: key) }
-        addTeardownBlock { UserDefaults.standard.removePersistentDomain(forName: name) }
-        return old
     }
 }

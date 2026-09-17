@@ -117,6 +117,12 @@ struct WindowSettings: View {
             set: { store.pointerFollowsDisplayMove = $0 })
     }
 
+    private var restoresDesktopAssignments: Binding<Bool> {
+        Binding(
+            get: { store.restoresDesktopAssignments },
+            set: { store.restoresDesktopAssignments = $0 })
+    }
+
     private var restoresLayoutOnDisplayChange: Binding<Bool> {
         Binding(
             get: { store.restoresLayoutOnDisplayChange },
@@ -296,6 +302,18 @@ struct WindowSettings: View {
                         + "first plug or unplug after switching this on only learns; the one after "
                         + "that restores. Kept in memory for the session, never written to disk.",
                     isOn: restoresLayoutOnDisplayChange)
+                SettingsToggle(
+                    title: "Put assigned apps back on their desktop",
+                    subtitle: "Unplugging a display moves its windows onto whichever desktop is in "
+                        + "front, ignoring any app you have assigned to a desktop in the Dock "
+                        + "(right-click the icon, Options, Assign To). This puts those apps back "
+                        + "where you assigned them once the displays settle. Only apps carrying an "
+                        + "assignment are touched, and only the front window of each. For each "
+                        + "one it switches to the desktop the window landed on, opens Mission "
+                        + "Control and moves the pointer for a moment, then switches back, because "
+                        + "macOS allows no quieter way to move another app's window between "
+                        + "desktops.",
+                    isOn: restoresDesktopAssignments)
             }
 
             // Only when there is more than one display — see `displayTargets(count:)`.
