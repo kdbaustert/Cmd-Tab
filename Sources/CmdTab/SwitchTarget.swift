@@ -1025,6 +1025,36 @@ extension SwitchTarget {
                         placed = refreshedPlacement
                         placement = refreshedPlacement[id] ?? placement
                     }
+
+                    // The app's own Window menu, before the private switch below gets a turn.
+                    //
+                    // A decline is not the Dock refusing; it is the Dock never being asked. On
+                    // every travelled pick the Dock logs `switching to space N for window(…)
+                    // ordered on non-visible space` about 110ms after the activation lands, and on
+                    // the declined ones — three in three days, two of them Finder, which has never
+                    // travelled — launchservicesd made the app frontmost and the Dock logged nothing
+                    // at all. The activation took; the window ordering that triggers the travel did
+                    // not follow. Pressing the window's menu item makes the *app* order it front,
+                    // which is exactly that event, and the Dock answers with the genuine transition:
+                    // animated, and composited. The private switch is neither — the Dock records it
+                    // as a bare `becameCurrent` — and the screen it leaves behind is the "window came
+                    // over to my Desktop and went back when I switched by hand" report.
+                    //
+                    // The one precondition the menu route has, an app that is already frontmost, is
+                    // the thing a decline has just established. Only while the window is still on
+                    // another Space, though: a refreshed reading that puts it here means the
+                    // activation dragged it over, and there is nothing left to travel to.
+                    if let state = placement, state.windowSpace != state.currentSpace {
+                        let changesBefore = spaceChanges.value
+                        if pressWindowMenuItem(window: id, pid: pid, title: title) {
+                            settle(
+                                window: id, pid: pid, attempts: 14, delay: 0.15,
+                                generation: generation, actWhenUnreached: false,
+                                awaitingSpaceChange: changesBefore,
+                                notBefore: .now() + spaceSettleDelay)
+                            return
+                        }
+                    }
                 }
             }
 
@@ -1182,7 +1212,7 @@ extension SwitchTarget {
             focus window \(id, privacy: .public): asking macOS to travel to space \
             \(state.windowSpace, privacy: .public) from \(state.currentSpace, privacy: .public)
             """)
-        // Blocks `focusQueue` while it waits, which is why the whole budget is under a second rather
+        // Blocks `focusQueue` while it waits, which is why the whole budget is about a second rather
         // than the couple of seconds the rest of this file allows itself: a pick that lands during
         // the wait queues behind it, and a switcher that stutters under fast repeated picks would be
         // its own bug.
@@ -1208,10 +1238,16 @@ extension SwitchTarget {
         // that window reached the second round and none of them travelled in it.
         //
         // 28 turns puts the boundary ~120ms past the slowest measured arrival, so a switch that is
-        // coming lands in the first round and is never asked twice. The eight turns left to the
-        // second round keep the re-ask for the case it was written for — a request macOS dropped
-        // outright, which answers immediately or not at all — and hold the total budget where it
-        // was, since it is `focusQueue` that pays for the wait.
+        // coming lands in the first round and is never asked twice.
+        //
+        // The second round gets the same 28. It used to get eight — 160ms — on the reasoning that a
+        // dropped request "answers immediately or not at all", which is not how a re-ask can land: a
+        // second activation that macOS *does* honour starts the same 380–444ms transition the first
+        // would have, so an 160ms window could never observe one succeeding, and every re-ask ever
+        // logged reads as declined whether it worked or not. Worse, a re-ask that was in fact
+        // travelling had the private switch issued into the middle of its transition. The cost is
+        // half a second more on a decline only, which is three picks in three days; the common pick
+        // never reaches this round.
         //
         // Only the display's current Space is read per turn — see `SpaceMover.currentSpace`. Asking
         // for the *window's* placement here instead would rebuild the whole display/Space map on
@@ -1229,7 +1265,7 @@ extension SwitchTarget {
                     """)
             }
             activate(pid: pid)
-            for _ in 0..<(round == 0 ? 28 : 8) {
+            for _ in 0..<28 {
                 usleep(20_000)
                 guard generation == focusGeneration else { return .superseded }
                 let now = SpaceMover.currentSpace(ofDisplay: state.display)
