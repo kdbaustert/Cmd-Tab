@@ -1073,6 +1073,7 @@ final class WindowPreviewPanel: NSPanel {
         let size = host.fittingSize
         setContentSize(size)
         setFrameOrigin(origin(for: size, over: tileRect, placement: placement))
+        restoreAllSpaces("preview strip")
         orderFrontRegardless()
         // Geometry only — where a floating panel landed is the first thing worth knowing when it
         // lands somewhere wrong, and a rect names no windows, apps or documents.

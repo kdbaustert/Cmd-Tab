@@ -30,6 +30,8 @@ enum SpaceMover {
     ) -> Unmanaged<CFArray>?
     private typealias SetCurrentSpaceFn = @convention(c) (Int32, CFString, UInt64) -> Void
     private typealias ShowHideSpacesFn = @convention(c) (Int32, CFArray) -> Void
+    private typealias CopySpacesForWindowsFn = @convention(c) (Int32, UInt32, CFArray)
+        -> Unmanaged<CFArray>?
 
     /// `nonisolated(unsafe)` because a dyld handle is an opaque pointer and so not `Sendable`.
     /// Safe: it is a `let`, initialised once by the runtime's thread-safe lazy-static machinery and
@@ -50,6 +52,8 @@ enum SpaceMover {
         symbol("CGSManagedDisplaySetCurrentSpace", SetCurrentSpaceFn.self)
     private static let showSpaces = symbol("CGSShowSpaces", ShowHideSpacesFn.self)
     private static let hideSpaces = symbol("CGSHideSpaces", ShowHideSpacesFn.self)
+    private static let copySpacesForWindows =
+        symbol("CGSCopySpacesForWindows", CopySpacesForWindowsFn.self)
 
     /// Breadth of the per-Space window query. `0x0` misses a window or two per Space and `0x7` pulls
     /// in shadow and helper surfaces that name no switchable window; `0x2` is the setting that
@@ -458,6 +462,31 @@ enum SpaceMover {
             out.insert(current)
         }
         return out
+    }
+
+    /// The one Space the window server has confined `window` to, or nil when it is tagged with
+    /// every Space — or when there is only one Space, or the layout cannot be read.
+    ///
+    /// For a `.canJoinAllSpaces` window the server's tag, not AppKit's flag, is what decides whether
+    /// an order-in draws: ordered front on a Space it is not tagged with, `isVisible` reads true and
+    /// nothing appears. The two can come apart — seen 2026-09-18 with both switcher panels tagged to
+    /// Desktop 1 alone while their behaviour still read `.canJoinAllSpaces`. Measured on macOS 27
+    /// with a control panel: healthy returns every Space id, pinned returns exactly one, and
+    /// `orderFrontRegardless` on another Desktop leaves `kCGWindowIsOnscreen` unset.
+    ///
+    /// `CGSCopySpacesForWindows` here despite the caveat on `windowSpaces`: that is about placing
+    /// *other* apps' windows, where the per-window call answered only for the front Space. For a
+    /// window of our own, the tag set is the very thing being asked. Mask `0x7`; `0x1`, `0x2` and
+    /// `0x4` all came back empty.
+    static func confinement(of window: CGWindowID) -> UInt64? {
+        guard window != 0, let mainConnection, let copySpacesForWindows else { return nil }
+        guard
+            let raw = copySpacesForWindows(
+                mainConnection(), 0x7, [NSNumber(value: window)] as CFArray)?.takeRetainedValue(),
+            let tags = raw as? [NSNumber], tags.count == 1,
+            userSpaceIDs(in: managedDisplays()).count > 1
+        else { return nil }
+        return tags[0].uint64Value
     }
 
     private static func spaceID(from space: [String: Any]) -> UInt64? {

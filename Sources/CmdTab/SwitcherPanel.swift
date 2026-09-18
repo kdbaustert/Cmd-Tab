@@ -184,6 +184,7 @@ final class SwitcherPanel: NSPanel {
         // on driving `alphaValue` back down underneath the fade-in below.
         settleAlphaAnimation()
         alphaValue = fade ? 0 : 1
+        restoreAllSpaces("switcher panel")
         orderFrontRegardless()
         guard fade else { return }
         NSAnimationContext.runAnimationGroup { ctx in
@@ -416,5 +417,31 @@ final class SwitcherPanel: NSPanel {
             targetCount: model.targets.count, mode: model.mode, layout: model.layout,
             showsTitle: model.showsTitle, metrics: metrics, visibleSize: screen.visibleFrame.size,
             cap: cap)
+    }
+}
+
+extension NSWindow {
+    /// Puts the window back on every Space when the window server has confined it to one.
+    ///
+    /// `collectionBehavior` still reads `.canJoinAllSpaces` when this fires: AppKit's flag and the
+    /// server's tag have come apart, and only the tag decides whether an order-in draws. Seen on
+    /// 2026-09-18 — the switcher and the preview strip both tagged to Desktop 1 alone, every session
+    /// opening and committing normally, the panel drawn on that Desktop and on no other. What
+    /// re-tagged them is not known; nothing here writes the behaviour after `init`. So the tag is
+    /// repaired at the moment it matters, and logged as an error so the next occurrence can be lined
+    /// up with whatever else the log shows at that time. Remove-then-insert, because the setter
+    /// ignores an unchanged value; the insert is what re-tags to all Spaces (measured with a
+    /// deliberately pinned control panel).
+    func restoreAllSpaces(_ label: String) {
+        guard windowNumber > 0, collectionBehavior.contains(.canJoinAllSpaces),
+            let space = SpaceMover.confinement(of: CGWindowID(windowNumber))
+        else { return }
+        Log.general.error(
+            """
+            \(label, privacy: .public) confined to space \(space, privacy: .public); re-tagging \
+            to all Spaces
+            """)
+        collectionBehavior.remove(.canJoinAllSpaces)
+        collectionBehavior.insert(.canJoinAllSpaces)
     }
 }
