@@ -498,6 +498,7 @@ final class SnapPreview {
             x: areaFrame.minX, y: primary.frame.height - areaFrame.maxY,
             width: areaFrame.width, height: areaFrame.height)
         panel.setFrame(rect, display: true)
+        panel.restoreAllSpaces("snap landing block")
         panel.orderFrontRegardless()
     }
 

@@ -103,7 +103,9 @@ enum SpaceMover {
     /// *union* over the window array it is handed rather than one entry per window. Measured against
     /// six real windows of one app spread over five Desktops, it returned `[1]` — the Desktop in
     /// front — and nothing at all for the other five, so every off-Desktop lookup came back empty
-    /// and `reveal` had no Space to switch to.
+    /// and `reveal` had no Space to switch to. That failure is specific to *other* processes'
+    /// windows: for a window of our own the same call answers in full, which is what
+    /// `confinement(of:)` relies on — see there for the measurement.
     ///
     /// The reverse direction has no such problem, and it is per-display for free: the Space list
     /// arrives grouped by display, so each window carries the display its Space belongs to and
@@ -476,8 +478,14 @@ enum SpaceMover {
     ///
     /// `CGSCopySpacesForWindows` here despite the caveat on `windowSpaces`: that is about placing
     /// *other* apps' windows, where the per-window call answered only for the front Space. For a
-    /// window of our own, the tag set is the very thing being asked. Mask `0x7`; `0x1`, `0x2` and
-    /// `0x4` all came back empty.
+    /// window of our own it returned the full set every time — 17 consecutive healthy shows on
+    /// macOS 27 read all six Spaces, zero false confinements. Mask `0x7`; `0x1`, `0x2` and `0x4`
+    /// all came back empty.
+    ///
+    /// Cheap enough to sit on every show path, including the preview strip's per-hover `present`:
+    /// the tag read is one window-server round trip, measured at 0.04ms best / 0.14ms mean over 200
+    /// runs *with* the display walk included — and the display walk only runs at all when the tag
+    /// set has already come back as a single Space, which is the case being repaired.
     static func confinement(of window: CGWindowID) -> UInt64? {
         guard window != 0, let mainConnection, let copySpacesForWindows else { return nil }
         guard

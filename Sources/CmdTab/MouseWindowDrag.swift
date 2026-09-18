@@ -1221,6 +1221,7 @@ private final class TargetOutline {
             x: frame.minX, y: primary.frame.height - frame.maxY,
             width: frame.width, height: frame.height)
         panel.setFrame(rect, display: true)
+        panel.restoreAllSpaces("drag target outline")
         panel.orderFrontRegardless()
     }
 
@@ -1265,6 +1266,7 @@ private final class AnchorDot {
                 x: point.x - Self.diameter / 2, y: point.y - Self.diameter / 2,
                 width: Self.diameter, height: Self.diameter),
             display: true)
+        panel.restoreAllSpaces("drag anchor dot")
         panel.orderFrontRegardless()
     }
 

@@ -432,16 +432,37 @@ extension NSWindow {
     /// up with whatever else the log shows at that time. Remove-then-insert, because the setter
     /// ignores an unchanged value; the insert is what re-tags to all Spaces (measured with a
     /// deliberately pinned control panel).
+    ///
+    /// The repair runs every time it is needed; the *log line* is held to one a minute per window.
+    /// Whatever pins the window is not understood, so it may pin it again straight after the repair
+    /// — and a signal meant to mark a rare event must not become a line per ⌘-Tab and per hover
+    /// for as long as that lasts. A minute keeps every distinct occurrence and drops the repeats.
     func restoreAllSpaces(_ label: String) {
         guard windowNumber > 0, collectionBehavior.contains(.canJoinAllSpaces),
             let space = SpaceMover.confinement(of: CGWindowID(windowNumber))
         else { return }
-        Log.general.error(
-            """
-            \(label, privacy: .public) confined to space \(space, privacy: .public); re-tagging \
-            to all Spaces
-            """)
+        if AllSpacesRepair.shouldLog(window: windowNumber) {
+            Log.general.error(
+                """
+                \(label, privacy: .public) confined to space \(space, privacy: .public); re-tagging \
+                to all Spaces
+                """)
+        }
         collectionBehavior.remove(.canJoinAllSpaces)
         collectionBehavior.insert(.canJoinAllSpaces)
+    }
+}
+
+/// When each window last logged a confinement — see `NSWindow.restoreAllSpaces`.
+@MainActor
+private enum AllSpacesRepair {
+    private static var lastLogged: [Int: Date] = [:]
+    private static let interval: TimeInterval = 60
+
+    static func shouldLog(window: Int) -> Bool {
+        let now = Date()
+        if let last = lastLogged[window], now.timeIntervalSince(last) < interval { return false }
+        lastLogged[window] = now
+        return true
     }
 }
