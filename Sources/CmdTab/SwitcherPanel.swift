@@ -450,6 +450,13 @@ extension NSWindow {
         }
         collectionBehavior.remove(.canJoinAllSpaces)
         collectionBehavior.insert(.canJoinAllSpaces)
+        // Re-read rather than assumed. The toggle was measured on a control panel pinned by hand;
+        // whether it takes against whatever pins these windows in the wild is exactly what is not
+        // yet known, and a repair that quietly failed would look like the bug never recurring.
+        if let still = SpaceMover.confinement(of: CGWindowID(windowNumber)) {
+            Log.general.error(
+                "\(label, privacy: .public) repair did not take; still confined to space \(still, privacy: .public)")
+        }
     }
 }
 

@@ -871,7 +871,10 @@ final class SwitcherController {
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
         let rules = appRules
-        DispatchQueue.main.async {
+        // `[self]` stated: this one-shot block holds `self` for its own life anyway, and the inner
+        // `[weak self]` on the mover's completion reads as a lie next to an implicit strong capture
+        // — which is the warning the compiler raised about it.
+        DispatchQueue.main.async { [self] in
             // Our own windows are tiled like anyone else's. The switcher panel does not activate
             // this app, so being frontmost means an ordinary window — Settings, or the permissions
             // window — is in front, and a chord that works on every other window has no business

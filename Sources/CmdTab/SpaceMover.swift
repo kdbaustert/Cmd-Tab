@@ -487,7 +487,8 @@ enum SpaceMover {
     /// runs *with* the display walk included — and the display walk only runs at all when the tag
     /// set has already come back as a single Space, which is the case being repaired.
     static func confinement(of window: CGWindowID) -> UInt64? {
-        guard window != 0, let mainConnection, let copySpacesForWindows else { return nil }
+        guard window != 0, let mainConnection, canReadConfinement, let copySpacesForWindows
+        else { return nil }
         guard
             let raw = copySpacesForWindows(
                 mainConnection(), 0x7, [NSNumber(value: window)] as CFArray)?.takeRetainedValue(),
@@ -496,6 +497,19 @@ enum SpaceMover {
         else { return nil }
         return tags[0].uint64Value
     }
+
+    /// Whether the per-window tag query resolved — evaluated once, and the one place a missing
+    /// symbol is said out loud. `confinement` returns nil for "healthy" and for "cannot ask" alike,
+    /// so without this a macOS that dropped `CGSCopySpacesForWindows` would switch the Space repair
+    /// off with nothing in the log to show it. A `static let` initialiser runs once and is
+    /// thread-safe, which is all the log-once needs.
+    private static let canReadConfinement: Bool = {
+        if copySpacesForWindows == nil {
+            Log.general.notice(
+                "space confinement: CGSCopySpacesForWindows unavailable; the all-Spaces repair is off")
+        }
+        return copySpacesForWindows != nil
+    }()
 
     private static func spaceID(from space: [String: Any]) -> UInt64? {
         (space["ManagedSpaceID"] as? NSNumber)?.uint64Value

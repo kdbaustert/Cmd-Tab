@@ -32,6 +32,10 @@ enum DockBadges {
 
     /// Accessibility IPC to another process — belongs on a background queue, never the event tap.
     static func current() -> [String: String] {
+        // `cached` is unlocked on the strength of the single serial caller. That queue is private
+        // to `TargetProvider`, so the check here is the one expressible from outside it: never the
+        // main thread, which is also where a Dock walk would do the most harm.
+        dispatchPrecondition(condition: .notOnQueue(.main))
         if let cached, Date().timeIntervalSince(cached.at) < ttl { return cached.badges }
         guard
             let dock = NSWorkspace.shared.runningApplications

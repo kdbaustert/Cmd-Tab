@@ -1708,6 +1708,9 @@ enum WindowTiler {
     private static func nextFraction(
         for arrangement: WindowArrangement, key: WindowKey, cycleWidths: Bool
     ) -> CGFloat {
+        // The tables above are safe without a lock only while every touch is on `queue`; the
+        // comment says so, this makes a caller from anywhere else fail where it stands.
+        dispatchPrecondition(condition: .onQueue(queue))
         let fractions = WindowArrangement.cycleFractions
         guard cycleWidths, arrangement.cycles else {
             cycle = nil

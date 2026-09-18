@@ -251,9 +251,21 @@ final class ThemeStore: ObservableObject {
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "\(theme.name).cmdtabtheme.json"
         panel.message = "Export theme"
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? JSONEncoder().encode(theme) else { return }
-        try? data.write(to: url)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try JSONEncoder().encode(theme).write(to: url)
+        } catch {
+            // The panel said OK, so a silent failure here reads as a successful export with no file
+            // at the other end. Same treatment as an unreadable import below.
+            Log.general.error("theme export failed: \(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "The theme could not be saved"
+            alert.informativeText =
+                "\(url.lastPathComponent) was not written.\n\n" + error.localizedDescription
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 
     func importTheme() {
@@ -318,8 +330,13 @@ final class ThemeStore: ObservableObject {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(custom) else { return }
-        try? data.write(to: fileURL)
+        do {
+            try JSONEncoder().encode(custom).write(to: fileURL)
+        } catch {
+            // Logged rather than swallowed: a theme that fails to save is gone at the next launch,
+            // and this was the one write in the file with no record of that happening.
+            Log.general.error("themes.json write failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - Presets

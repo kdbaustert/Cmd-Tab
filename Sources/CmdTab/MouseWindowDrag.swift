@@ -705,6 +705,8 @@ final class MouseWindowDrag: @unchecked Sendable {
                 self.end()
                 return
             }
+            // `draggedWindow` is unlocked on the strength of every touch being on `queue`.
+            dispatchPrecondition(condition: .onQueue(self.queue))
             Self.draggedWindow = element
             Log.general.notice(
                 "mouse drag: resolved window for pid \(target.pid, privacy: .public)")

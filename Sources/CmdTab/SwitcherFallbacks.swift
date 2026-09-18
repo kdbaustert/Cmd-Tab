@@ -42,7 +42,14 @@ enum FallbackAction: Equatable {
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             process.standardInput = FileHandle.nullDevice
-            try? process.run()
+            do {
+                try process.run()
+            } catch {
+                // The command's output is deliberately discarded; the shell failing to *start* is
+                // ours to report, or the fallback does nothing with no way to tell.
+                Log.general.error(
+                    "shell fallback: could not start /bin/zsh: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 }
