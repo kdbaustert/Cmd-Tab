@@ -151,4 +151,20 @@ final class TitleRuleTests: XCTestCase {
         XCTAssertTrue(decoded.unreadable.isEmpty)
         XCTAssertTrue(TitleRulesStore.decode(nil).rules.isEmpty)
     }
+
+    // MARK: - Which apps the expand walk visits
+
+    /// The refresh only reads window titles for apps an expand rule could apply to: one naming the
+    /// app, or one naming none. Other actions do not count.
+    func testOnlyAppsAnExpandRuleNamesAreWalked() {
+        let scoped = [
+            compile(bundleID: "com.apple.Safari", pattern: "PiP", action: .expand),
+            compile(bundleID: nil, pattern: "x", action: .hide),
+        ]
+        XCTAssertTrue(TargetProvider.mayExpand(scoped, bundleID: "com.apple.Safari"))
+        XCTAssertFalse(TargetProvider.mayExpand(scoped, bundleID: "com.apple.mail"))
+        XCTAssertFalse(TargetProvider.mayExpand(scoped, bundleID: nil))
+        let anyApp = [compile(bundleID: nil, pattern: "PiP", action: .expand)]
+        XCTAssertTrue(TargetProvider.mayExpand(anyApp, bundleID: "com.apple.mail"))
+    }
 }

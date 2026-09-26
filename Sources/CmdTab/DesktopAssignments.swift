@@ -207,7 +207,7 @@ final class DesktopAssignments {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard self.desk == planned else { return }
-                    self.start(work)
+                    self.start(work, planned: planned)
                 }
             }
         }
@@ -266,7 +266,7 @@ final class DesktopAssignments {
 
     /// Starts a planned restore, or declines it when there is more to do than one desk change
     /// should.
-    private func start(_ work: [Move]) {
+    private func start(_ work: [Move], planned: String) {
         if work.count > Self.limit {
             Log.general.notice(
                 """
@@ -278,7 +278,7 @@ final class DesktopAssignments {
         }
         Log.general.notice(
             "desktop assignments: restoring \(work.count, privacy: .public) app(s)")
-        move(work)
+        move(work, planned: planned)
     }
 
     /// Which Spaces each app's windows currently sit on.
@@ -327,8 +327,23 @@ final class DesktopAssignments {
     /// last window happened to land on, which after an unplug is a worse place to be left than the
     /// one they were on — and this runs unattended, where a Desktop switch nobody asked for is
     /// startling rather than helpful.
-    private func move(_ work: [Move]) {
+    ///
+    /// Each link re-checks the desk it was planned for, the same test `restore` makes before the
+    /// first one. A chain is seconds of gesture per window, and it used to run to the end whatever
+    /// happened meanwhile: switching the feature off left the remaining moves driving the pointer,
+    /// and a second desk change started a second chain racing this one for `DesktopMover`'s claim.
+    /// `stop()` clears `desk`, so one comparison answers both — and the newer desk's own restore,
+    /// already on its way, is the one that knows where windows belong now.
+    private func move(_ work: [Move], planned: String) {
         guard let next = work.first else { return }
+        guard desk == planned else {
+            Log.general.notice(
+                """
+                desktop assignments: desk changed or switched off; dropping \
+                \(work.count, privacy: .public) planned move(s)
+                """)
+            return
+        }
         // `let`, and the tail taken by value rather than mutated in place: the completion below is
         // an escaping `@Sendable` closure, and capturing a `var` the enclosing scope could still
         // write to is a data race the compiler refuses outright.
@@ -340,7 +355,7 @@ final class DesktopAssignments {
             """)
         DesktopMover.move(pid: next.pid, to: .space(next.space), follow: false) { [weak self] in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.move(remaining) }
+                MainActor.assumeIsolated { self?.move(remaining, planned: planned) }
             }
         }
     }

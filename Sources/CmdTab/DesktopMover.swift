@@ -435,7 +435,8 @@ enum DesktopMover {
             // Re-read every time: the drop re-lays out the Spaces Bar, and a press already
             // half-accepted can leave a stale element behind. The bar is re-read with them, for the
             // same reason and so the scoping still describes one display.
-            let buttons = desktopButtons(on: display, bar: spacesBarFrame(on: display))
+            let buttons = desktopButtons(
+                in: spacesBarButtons(), on: display, bar: spacesBarFrame(on: display))
             guard buttons.indices.contains(destination) else {
                 Log.general.notice("desktop move: no thumbnail to follow to; staying put")
                 return false
@@ -708,7 +709,8 @@ enum DesktopMover {
             // Read in this order the two can never describe different displays, which is exactly
             // what an x-only match did on displays stacked one above the other.
             let bar = spacesBarFrame(on: display)
-            let buttons = desktopButtons(on: display, bar: bar)
+            let all = spacesBarButtons()
+            let buttons = desktopButtons(in: all, on: display, bar: bar)
             guard buttons.indices.contains(index) else { continue }
             // The button's own rectangle is the *label* under the thumbnail, and its reported y sits
             // outside the Spaces Bar group. The x is usable once corrected — see
@@ -718,8 +720,15 @@ enum DesktopMover {
             // The x correction needs the bar. Without one it is the label's own midpoint, not a
             // centring against a placeholder: a zero-width stand-in at the origin has a midX of 0,
             // and centring the row on it dragged every centre there.
+            //
+            // The centring is measured against every thumbnail in the row, not the Desktops alone:
+            // a full-screen app's Space is a thumbnail in the same row with a description of its
+            // own, and leaving it out of the span shifted every aim by half a slot.
             let frames = buttons.map(\.frame)
-            let x = bar.map { thumbnailCentres(of: frames, in: $0)[index] } ?? frames[index].midX
+            let others = all.filter { !$0.isDesktop }.map(\.frame)
+            let x =
+                bar.map { thumbnailCentres(of: frames, in: $0, alongside: others)[index] }
+                ?? frames[index].midX
             return CGPoint(x: x, y: bar?.midY ?? defaultSpacesBarHeight / 2)
         }
         return nil
@@ -744,9 +753,27 @@ enum DesktopMover {
     /// where the midpoint was the right answer and shipped — is left exactly as it is. `minX`
     /// would have been right for 27 alone and silently wrong for everything before it. Pure, so
     /// both cases can be pinned down without Mission Control.
-    static func thumbnailCentres(of frames: [CGRect], in bar: CGRect) -> [CGFloat] {
+    ///
+    /// The row Mission Control centres is every thumbnail, and not every thumbnail is a Desktop: a
+    /// full-screen app gets a Space of its own, drawn in the same row, whose button is not an "exit
+    /// to Desktop" one. Centring the Desktops alone moved every aim by half a slot as soon as one
+    /// existed. `others` is every other button found under the bar, and only the ones that look
+    /// like thumbnails of this row join the span — the same size as the Desktops' within a quarter,
+    /// on the same line. That is defensive on purpose: the full-screen buttons' descriptions have
+    /// not been read off a live Mission Control, so this does not rely on them, and a control that
+    /// is not a thumbnail — an add-Desktop button, whatever else a future macOS hangs there — is
+    /// a different size or on a different line and stays out.
+    static func thumbnailCentres(
+        of frames: [CGRect], in bar: CGRect, alongside others: [CGRect] = []
+    ) -> [CGFloat] {
         guard let first = frames.first else { return [] }
-        let span = frames.dropFirst().reduce(first) { $0.union($1) }
+        let row = others.filter { other in
+            abs(other.width - first.width) <= first.width / 4
+                && abs(other.height - first.height) <= first.height / 4
+                && abs(other.midY - first.midY) <= first.height / 2
+                && other.midX >= bar.minX && other.midX < bar.maxX
+        }
+        let span = (frames.dropFirst() + row).reduce(first) { $0.union($1) }
         let shift = bar.midX - span.midX
         return frames.map { $0.midX + shift }
     }
@@ -802,12 +829,12 @@ enum DesktopMover {
     /// Falls back down the chain rather than to nothing — bar-scoped, then display-x-scoped (what
     /// shipped before), then unfiltered. A single display reaches the same list by every route,
     /// since every button is on the one screen.
-    private static func desktopButtons(on display: CGRect?, bar: CGRect?)
-        -> [(element: AXUIElement, frame: CGRect)]
-    {
-        let all = desktopButtons()
-        let kept = buttonIndices(of: all.map(\.frame), on: display, bar: bar)
-        return kept.map { all[$0] }
+    private static func desktopButtons(
+        in all: [SpacesBarButton], on display: CGRect?, bar: CGRect?
+    ) -> [(element: AXUIElement, frame: CGRect)] {
+        let desktops = all.filter(\.isDesktop)
+        let kept = buttonIndices(of: desktops.map(\.frame), on: display, bar: bar)
+        return kept.map { (desktops[$0].element, desktops[$0].frame) }
     }
 
     /// Which of `frames` belong to the Spaces Bar being aimed at. Pure, so the multi-display cases
@@ -835,14 +862,28 @@ enum DesktopMover {
         return Array(frames.indices)
     }
 
-    private static func desktopButtons() -> [(element: AXUIElement, frame: CGRect)] {
-        var out: [(element: AXUIElement, frame: CGRect)] = []
-        for host in missionControlHosts() where out.isEmpty {
+    /// One button in Mission Control's tree, and whether it is an "exit to Desktop N" one.
+    private struct SpacesBarButton {
+        let element: AXUIElement
+        let frame: CGRect
+        let isDesktop: Bool
+    }
+
+    /// Every button in the first Mission Control host that has Desktop thumbnails.
+    ///
+    /// The non-Desktop ones are kept too, for the centring alone: a full-screen app's Space sits in
+    /// the same row under a button of its own — see `thumbnailCentres`. Only the Desktop ones are
+    /// ever indexed or pressed.
+    private static func spacesBarButtons() -> [SpacesBarButton] {
+        var out: [SpacesBarButton] = []
+        for host in missionControlHosts() where !out.contains(where: \.isDesktop) {
+            out = []
             walk(host) { element, role, description in
-                guard role == "AXButton", description.hasPrefix(exitToDesktop),
-                    let frame = elementFrame(element)
-                else { return }
-                out.append((element, frame))
+                guard role == "AXButton", let frame = elementFrame(element) else { return }
+                out.append(
+                    SpacesBarButton(
+                        element: element, frame: frame,
+                        isDesktop: description.hasPrefix(exitToDesktop)))
             }
         }
         return out
@@ -991,21 +1032,14 @@ enum DesktopMover {
         return CGRect(dictionaryRepresentation: raw as CFDictionary)
     }
 
-    /// The frontmost ordinary window at a point, which is the one a click there would reach.
+    /// The window a click at a point would reach, or nil when that is not an ordinary window.
+    ///
+    /// Not merely the frontmost *layer-0* window there. A floating window over the title bar takes
+    /// the press, and looking past it passed the grab check while the synthetic press went to the
+    /// floating window and dragged that instead. See `WindowHitTest`.
     private static func topWindow(at point: CGPoint) -> CGWindowID? {
-        guard
-            let info = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
-        else { return nil }
-        for window in info {
-            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
-                let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
-                let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
-                bounds.contains(point)
-            else { continue }
-            return window[kCGWindowNumber as String] as? CGWindowID
-        }
-        return nil
+        WindowHitTest.window(
+            at: point, in: WindowHitTest.onScreen(), passingThrough: getpid())?.id
     }
 
     // MARK: - Synthetic mouse

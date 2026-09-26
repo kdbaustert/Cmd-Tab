@@ -13,13 +13,31 @@ enum SettingsIO {
     /// demand — the two must agree on what "your settings" means, or a config file would carry a
     /// different set from an exported one. The one difference is `ignoring`, which the config file
     /// passes its own two switches through: see `ConfigFile.mirrorKeys`.
+    ///
+    /// Read from the persistent domain alone. `object(forKey:)` falls through to the registration
+    /// domain, where `Defaults` puts every setting's default, so the export and the config file
+    /// carried some forty defaults as though they had been chosen — and every import or adoption
+    /// of that file then wrote them into the persistent domain, pinning today's defaults out of
+    /// reach of any future change to them: the trap `BehaviorStore.isReloading` documents.
     static func currentPayload(ignoring ignored: Set<String> = []) -> [String: Any] {
-        let defaults = UserDefaults.standard
-        var dict: [String: Any] = [:]
-        for key in keys where !ignored.contains(key) && defaults.object(forKey: key) != nil {
-            dict[key] = defaults.object(forKey: key)
-        }
-        return dict
+        currentPayload(
+            stored: UserDefaults.standard.persistentDomain(forName: standardDomainName) ?? [:],
+            ignoring: ignored)
+    }
+
+    /// The testable half: the owned keys out of one persistent domain's contents.
+    static func currentPayload(
+        stored: [String: Any], ignoring ignored: Set<String> = []
+    ) -> [String: Any] {
+        let wanted = Set(keys).subtracting(ignored)
+        return stored.filter { wanted.contains($0.key) }
+    }
+
+    /// The name `UserDefaults.standard` persists under: the bundle identifier, or for a bare
+    /// executable with none — `swift run` — the process name, which is what Foundation falls back
+    /// to itself.
+    private static var standardDomainName: String {
+        Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName
     }
 
     /// A settings file's bytes as a payload, or nil when they are not a JSON object.
@@ -142,9 +160,38 @@ enum SettingsIO {
     /// Serialised the one way, so a byte comparison between what we wrote and what is on disk is
     /// meaningful. Sorted keys also keep the file diff-friendly, which is the point of putting it
     /// in a dotfiles repo.
+    ///
+    /// Checked before it is handed over, because `JSONSerialization.data` does not throw on a value
+    /// JSON cannot hold — it raises an Objective-C exception, which `try?` does not catch, and the
+    /// process dies. A NaN or an infinity is a perfectly good property-list number, so one reaching
+    /// `UserDefaults` from anywhere was enough; with the mirror on and the file missing, `start()`
+    /// writes at every launch, so it crashed at every launch, with the native ⌘-Tab still off.
+    /// A setting holding one is dropped whole and named in the log — a list with one entry quietly
+    /// missing would be a different, wrong setting rather than none. Anything else JSON cannot
+    /// hold fails the whole encode, which every caller already reports.
     static func encode(_ payload: [String: Any]) -> Data? {
-        try? JSONSerialization.data(
-            withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        let dropped = payload.filter { !isFinite($0.value) }.map(\.key)
+        if !dropped.isEmpty {
+            Log.general.error(
+                """
+                settings: left out \(dropped.sorted().joined(separator: ", "), privacy: .public) \
+                — not a finite number, which JSON cannot hold
+                """)
+        }
+        let clean = payload.filter { !dropped.contains($0.key) }
+        guard JSONSerialization.isValidJSONObject(clean) else { return nil }
+        return try? JSONSerialization.data(
+            withJSONObject: clean, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    /// Whether every number anywhere inside `value` is finite.
+    private nonisolated static func isFinite(_ value: Any) -> Bool {
+        switch value {
+        case let number as NSNumber: return number.doubleValue.isFinite
+        case let array as [Any]: return array.allSatisfy(isFinite)
+        case let dictionary as [String: Any]: return dictionary.values.allSatisfy(isFinite)
+        default: return true
+        }
     }
 
     static func export() {

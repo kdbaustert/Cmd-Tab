@@ -24,19 +24,26 @@ final class SettingsIOTests: XCTestCase {
 
     /// A throwaway domain per test, cleared on the way in as well as out — a crashed run leaves the
     /// suite behind, and a stale value would let an assertion about "left alone" pass by accident.
+    /// See `ThrowawayDefaults` for the file.
+    private static let group = "settingsio"
     private var suiteName: String!
     private var defaults: UserDefaults!
 
+    override class func setUp() {
+        super.setUp()
+        ThrowawayDefaults.sweep(group)
+    }
+
     override func setUpWithError() throws {
         try super.setUpWithError()
-        suiteName = "com.cmdtab.tests.settingsio.\(UUID().uuidString)"
-        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        suiteName = ThrowawayDefaults.suiteName(in: Self.group)
+        ThrowawayDefaults.remove(suiteName)
         defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     }
 
     override func tearDownWithError() throws {
-        UserDefaults.standard.removePersistentDomain(forName: suiteName)
         defaults = nil
+        ThrowawayDefaults.remove(suiteName)
         suiteName = nil
         try super.tearDownWithError()
     }
@@ -221,6 +228,50 @@ final class SettingsIOTests: XCTestCase {
         XCTAssertEqual(stored("useConfigFile") as? Bool, true)
         XCTAssertNil(stored("syncSettingsViaICloud"))
         XCTAssertEqual(rejected, [])
+    }
+
+    // MARK: - What "your settings" are
+
+    /// Only what was stored. The export and the config file used to carry every registered
+    /// default as though it had been chosen, and an import then pinned them into the persistent
+    /// domain, out of reach of any later change to the default.
+    @MainActor
+    func testThePayloadCarriesStoredSettingsAndNotRegisteredDefaults() {
+        defaults.register(defaults: ["stickyMode": false])
+        defaults.set(4, forKey: "maxColumns")
+        defaults.set("x", forKey: "somebodyElsesKey")
+
+        let payload = SettingsIO.currentPayload(
+            stored: UserDefaults.standard.persistentDomain(forName: suiteName) ?? [:])
+
+        XCTAssertEqual(payload["maxColumns"] as? Int, 4)
+        XCTAssertNil(payload["stickyMode"], "a registered default is not a setting")
+        XCTAssertNil(payload["somebodyElsesKey"], "not ours")
+    }
+
+    @MainActor
+    func testThePayloadLeavesOutIgnoredKeys() {
+        let payload = SettingsIO.currentPayload(
+            stored: ["useConfigFile": true, "maxColumns": 4], ignoring: ["useConfigFile"])
+        XCTAssertEqual(Set(payload.keys), ["maxColumns"])
+    }
+
+    // MARK: - Encoding
+
+    /// `JSONSerialization` raises rather than throws on a NaN, and `try?` does not catch a raise:
+    /// before the check this test took the whole test process down. The setting holding it is left
+    /// out whole; the rest is written.
+    @MainActor
+    func testANonFiniteNumberIsLeftOutRatherThanCrashing() throws {
+        let data = try XCTUnwrap(
+            SettingsIO.encode([
+                "maxColumns": 4, "showDelayMs": Double.nan,
+                "nested": ["a": [1.0, Double.infinity]],
+            ]))
+        let decoded = try XCTUnwrap(SettingsIO.decode(data))
+        XCTAssertEqual(decoded["maxColumns"] as? Int, 4)
+        XCTAssertNil(decoded["showDelayMs"])
+        XCTAssertNil(decoded["nested"], "found however deep it is")
     }
 
     // MARK: - Decoding a file

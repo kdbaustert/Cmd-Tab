@@ -34,7 +34,12 @@ enum FallbackAction: Equatable {
     func perform() {
         switch self {
         case .openURL(_, let url), .search(_, let url):
-            NSWorkspace.shared.open(url)
+            // The answer is checked because nothing else would ever say: the panel is already down
+            // by the time this runs, so a URL nothing would open was a tile that silently did
+            // nothing. The scheme only, since the rest is whatever the user typed.
+            guard !NSWorkspace.shared.open(url) else { return }
+            Log.general.error(
+                "fallback: nothing opened the \(url.scheme ?? "?", privacy: .public): URL")
         case .shellCommand(let command):
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -75,11 +80,16 @@ enum SwitcherFallbacks {
 
     /// The actions this query and these settings produce, in the fixed order URL, then search, then
     /// shell — the same order they are drawn in, since the highlight lands on the first one.
-    static func actions(for query: String, settings: Settings) -> [FallbackAction] {
+    ///
+    /// `hasHandler` is `url(for:hasHandler:)`'s, passed through.
+    static func actions(
+        for query: String, settings: Settings,
+        hasHandler: (URL) -> Bool = SwitcherFallbacks.handlerExists
+    ) -> [FallbackAction] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return [] }
         var actions: [FallbackAction] = []
-        if settings.offerURL, let url = url(for: trimmed) {
+        if settings.offerURL, let url = url(for: trimmed, hasHandler: hasHandler) {
             actions.append(.openURL(query: trimmed, url: url))
         }
         if settings.offerSearch,
@@ -99,30 +109,71 @@ enum SwitcherFallbacks {
     /// Pure over the two booleans rather than reading `SwitcherModel` itself, so the ordering rule
     /// — a running match suppresses fallbacks, an installed-app match suppresses fallbacks, and
     /// only an empty pair of tiers produces them — is testable with no panel, no provider and no
-    /// AX behind it. `SwitcherController.updateLaunchSuggestions` is what supplies the two answers.
+    /// AX behind it. `SwitcherController.launchSuggestions` is what supplies the two answers.
     static func tier(
-        runningMatches: Bool, installedMatches: Bool, query: String, settings: Settings
+        runningMatches: Bool, installedMatches: Bool, query: String, settings: Settings,
+        hasHandler: (URL) -> Bool = SwitcherFallbacks.handlerExists
     ) -> [FallbackAction] {
         guard !runningMatches, !installedMatches else { return [] }
-        return actions(for: query, settings: settings)
+        return actions(for: query, settings: settings, hasHandler: hasHandler)
     }
 
-    /// Whether `query` parses as something URL-like: it names a scheme of its own — `URL`'s parser
-    /// reads `localhost:3000` as scheme `localhost`, which is exactly the shape this is meant to
-    /// catch — or it contains a dot and no spaces, which `https://` in front of turns into an
-    /// address. Anything with a space is typed prose, not an address, whichever way it parses.
-    static func url(for query: String) -> URL? {
+    /// Whether `query` parses as something URL-like, and the URL it means. Anything with a space is
+    /// typed prose, not an address, whichever way it parses. Otherwise, in order:
+    ///
+    /// * **A host and a port** — `localhost:3000`, `example.com:8080` — becomes `http://` that.
+    ///   `URL`'s own parser reads the host as the *scheme*, so this was taken as a URL with scheme
+    ///   `localhost`, which nothing opens: the tile the fallback exists for did nothing, silently.
+    ///   `http` rather than `https` because a bare port is a development server far more often
+    ///   than anything with a certificate.
+    /// * **An explicit scheme** — `https://…`, `mailto:…` — is used as typed, but only when
+    ///   something is registered to open it. `hasHandler` asks; without that check `note:3` or any
+    ///   other `word:word` was offered as a URL and did nothing.
+    /// * **A dot** turns into an `https://` address.
+    ///
+    /// `hasHandler` is a parameter so the refusal can be tested without depending on what this
+    /// machine has installed; the switcher passes a lookup memoized per scheme, since this runs on
+    /// the keystroke path.
+    static func url(
+        for query: String, hasHandler: (URL) -> Bool = SwitcherFallbacks.handlerExists
+    ) -> URL? {
         guard !query.contains(" ") else { return nil }
-        if let url = URL(string: query), url.scheme != nil { return url }
+        if query.range(of: hostAndPort, options: .regularExpression) != nil {
+            return URL(string: "http://\(query)")
+        }
+        if let url = URL(string: query), url.scheme != nil {
+            return hasHandler(url) ? url : nil
+        }
         guard query.contains(".") else { return nil }
         return URL(string: "https://\(query)")
     }
+
+    /// Whether anything is registered to open `url` — the default `hasHandler`. A LaunchServices
+    /// lookup; the switcher memoizes it per scheme rather than paying it per keystroke.
+    static func handlerExists(_ url: URL) -> Bool {
+        NSWorkspace.shared.urlForApplication(toOpen: url) != nil
+    }
+
+    /// `name:digits`, optionally followed by a path — the shape `URL` misreads as a scheme.
+    private static let hostAndPort = #"^[A-Za-z0-9.-]+:[0-9]+(/.*)?$"#
 
     /// The template with `%s` replaced by the percent-encoded query, or nil when the template has
     /// nowhere to put the query or does not parse as a URL once substituted.
     static func searchURL(for query: String, template: String) -> URL? {
         guard template.contains("%s") else { return nil }
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let encoded =
+            query.addingPercentEncoding(withAllowedCharacters: queryValueAllowed) ?? query
         return URL(string: template.replacingOccurrences(of: "%s", with: encoded))
     }
+
+    /// What may stand unescaped inside one query *value*.
+    ///
+    /// `urlQueryAllowed` is the set for a whole query string, so it leaves the characters that
+    /// structure one alone — and a search term carrying them restructured the query instead of
+    /// being part of it: `c++` arrived as `q=c++`, which a server reads as "c" and two spaces, and
+    /// `AT&T` as `q=AT&T`, which ends the value at "AT" and adds a parameter named "T". `#` would
+    /// end the URL outright. `/`, `?` and `;` are legal in a value, and escaping them anyway costs
+    /// nothing, where leaving one to a server's reading of it can.
+    private static let queryValueAllowed = CharacterSet.urlQueryAllowed
+        .subtracting(CharacterSet(charactersIn: "&+=#?;/"))
 }

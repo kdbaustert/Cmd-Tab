@@ -117,7 +117,7 @@ final class SwitcherController {
 
     /// Icons already resolved for launch suggestions, held across keystrokes.
     ///
-    /// `NSWorkspace.icon(forFile:)` is disk-backed, and `updateLaunchSuggestions` is reached
+    /// `NSWorkspace.icon(forFile:)` is disk-backed, and `launchSuggestions` is reached
     /// synchronously from the tap callback — the one place in this app where being slow costs the
     /// user every keystroke on the machine. Uncached it was paid per suggestion per keystroke, with
     /// a cold IconServices or a bundle on a slow volume in the tail. Favourites already get this
@@ -131,12 +131,32 @@ final class SwitcherController {
     /// tile do", the same argument `launchIcons` makes for a launch suggestion's own app icon.
     /// Resolved against a throwaway `https://` URL because `urlForApplication(toOpen:)` answers
     /// for a URL's *handler*, and there is no API that just asks "what is the default browser".
+    ///
+    /// Warmed by `fallbackSettings` the moment a browser fallback is switched on, not left for the
+    /// first fallback tile to fault in: that first tile is built on the tap callback, and this is a
+    /// LaunchServices lookup plus an icon read.
     private lazy var browserIcon: NSImage? = {
         guard let placeholder = URL(string: "https://example.com"),
             let app = NSWorkspace.shared.urlForApplication(toOpen: placeholder)
         else { return nil }
         return NSWorkspace.shared.icon(forFile: app.path)
     }()
+
+    /// Whether anything opens a URL scheme, per scheme, for the URL fallback's explicit-scheme
+    /// check — see `SwitcherFallbacks.url`. That check is a LaunchServices lookup and it runs on
+    /// the keystroke path, so each scheme pays it once. `http`/`https` are settled without asking:
+    /// they are what the fallback builds itself, and a Mac with no browser is not a case to design
+    /// the key path around. A handler installed mid-process is picked up on the next launch, which
+    /// is a fair price for a cache this small.
+    private var schemeHandlers: [String: Bool] = ["http": true, "https": true]
+
+    private func hasHandler(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        if let known = schemeHandlers[scheme] { return known }
+        let found = SwitcherFallbacks.handlerExists(url)
+        schemeHandlers[scheme] = found
+        return found
+    }
 
     /// Whether this session is *allowed* to stay up after the trigger is released.
     private var isSticky = false { didSet { publishTapState() } }
@@ -430,8 +450,24 @@ final class SwitcherController {
     /// that is the whole point of it: the provider builds its cache when an app activates, and the
     /// Desktop in front changes without activating anything — switch to an empty Desktop and no
     /// refresh happens at all. A filter baked into the cache would answer for the Desktop you left.
-    /// Applied in `open` instead, against a Space reading taken at that moment.
+    /// Applied in `open` instead, against a Space reading taken at that moment — and to every
+    /// background refresh that session folds in, against the same reading. See `sessionDesktops`.
     var windowSpaceScope: WindowSpaceScope = .allDesktops
+
+    /// The Desktop narrowing the open session was opened under, so the refreshes that land while it
+    /// is up apply the same one.
+    ///
+    /// `open` used to be the only place the "This Desktop" scope was applied, and the session then
+    /// folded in two refreshes that were not: the one `showWith` starts as the panel comes up, and
+    /// the renumbering after a display change. Both replace the list wholesale with the provider's
+    /// — every Desktop's windows — so about 0.15s into a held ⌘-Tab the other Desktops' windows
+    /// arrived in a list the setting said would not have them.
+    ///
+    /// The Space set is the one read when the session opened, not a fresh one per refresh: which
+    /// Desktop is in front is the user's context for the whole hold, and a list that re-narrowed
+    /// itself mid-session to a Desktop switched to underneath it would be answering a question
+    /// nobody asked. Cleared in `hide`, set afresh by every `open`.
+    private var sessionDesktops = DesktopNarrowing.off
 
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
@@ -621,7 +657,7 @@ final class SwitcherController {
             self.provider.refresh { [weak self] fresh in
                 MainActor.assumeIsolated {
                     guard let self, self.isVisible, token == self.sessionToken else { return }
-                    self.model.update(targets: fresh)
+                    self.model.update(targets: self.narrowToSessionDesktops(fresh))
                     self.finishListMutation()
                 }
             }
@@ -632,6 +668,10 @@ final class SwitcherController {
                 "preview pick: window \(thumb.windowID, privacy: .public) of pid \(thumb.pid, privacy: .public)"
             )
             self.hide()
+            // Recorded as every other commit path records its pick — see `focus(_:)`. This one
+            // calls `focusWindow` directly, so it has to say so itself: a thumbnail of a window in
+            // the app already in front fires no activation, and the pick went unrecorded.
+            if thumb.windowID != 0 { self.provider.noteFocused(window: thumb.windowID) }
             // Off the click, for the same reason `commit()` defers: raising a window is an AX
             // round-trip against a process that may not answer promptly.
             DispatchQueue.main.async {
@@ -1051,7 +1091,7 @@ final class SwitcherController {
             // gesture ends, and without this the next repeat commits and closes the panel — exactly
             // the stay-open failure this predicate was written to fix.
             if code == Key.tab, !isAutorepeat, release.tabCommits(flags: flags) {
-                commit()
+                commit(.keyPress)
                 return true
             }
             advance(flags.contains(.maskShift) ? -1 : 1)
@@ -1093,7 +1133,7 @@ final class SwitcherController {
         // below meant pressing → as many times as the grid is wide.
         case Key.downArrow: advanceRow(1); return true
         case Key.upArrow: advanceRow(-1); return true
-        case Key.enter: commit(); return true
+        case Key.enter: commit(.keyPress); return true
         case Key.delete:
             if !model.query.isEmpty { setQuery(String(model.query.dropLast())) }
             return true
@@ -1118,12 +1158,14 @@ final class SwitcherController {
     }
 
     /// Applies a new filter query and relays out — the list, and often its column count, change.
+    ///
+    /// The suggestions are built first and handed over with the query, so the list is scored once
+    /// per keystroke — see `SwitcherModel.setQuery(_:suggestions:)`.
     private func setQuery(_ query: String) {
-        model.setQuery(query)
+        model.setQuery(query, suggestions: launchSuggestions(for: query))
         // The one decision input `didSet` cannot reach, since the query lives on the model. Only
         // whether there *is* one is mirrored — see `TapState.hasQuery`.
         publishTapState()
-        updateLaunchSuggestions(for: query)
         scheduleLayout()
     }
 
@@ -1138,6 +1180,13 @@ final class SwitcherController {
     var fallbackSettings = SwitcherFallbacks.Settings(
         offerURL: false, offerSearch: false, offerShell: false,
         searchTemplate: SwitcherFallbacks.defaultSearchTemplate)
+    {
+        didSet {
+            // Here, from the settings push, rather than inline on the first keystroke that needs
+            // it — see `browserIcon`. Lazy, so this resolves once however often settings post.
+            if fallbackSettings.offerURL || fallbackSettings.offerSearch { _ = browserIcon }
+        }
+    }
 
     /// Offers installed apps alongside whatever the query found running.
     ///
@@ -1160,12 +1209,12 @@ final class SwitcherController {
     /// is reached from the tap callback, so an uncached `icon(forFile:)` per suggestion per
     /// keystroke is disk-backed LaunchServices work inline on the key path — the one thing the
     /// class comment's invariant says must never go there.
-    private func updateLaunchSuggestions(for query: String) {
+    ///
+    /// Returns the tiles rather than installing them, so `setQuery` can hand them to the model with
+    /// the query in one pass.
+    private func launchSuggestions(for query: String) -> [SwitchTarget] {
         let anyFallback = fallbackSettings.anyEnabled
-        guard (launchFromSearch || anyFallback), !query.isEmpty else {
-            model.setLaunchSuggestions([])
-            return
-        }
+        guard (launchFromSearch || anyFallback), !query.isEmpty else { return [] }
         // Only the apps that actually have a tile, not every app that happens to be running.
         //
         // Excluding all running apps left a hole with "hide apps with no open windows" turned on: an
@@ -1180,7 +1229,9 @@ final class SwitcherController {
         var excluded = provider.excludedBundleIDs
         let tiled = Set(model.targets.map(\.pid))
         for app in NSWorkspace.shared.runningApplications {
-            guard let id = app.bundleIdentifier, tiled.contains(app.processIdentifier) else {
+            // The pid first: it is a field read, where `bundleIdentifier` is a LaunchServices
+            // query, and most running processes are daemons with no tile to be excluded for.
+            guard tiled.contains(app.processIdentifier), let id = app.bundleIdentifier else {
                 continue
             }
             excluded.insert(id)
@@ -1212,25 +1263,18 @@ final class SwitcherController {
                         appName: entry.name, icon: icon, isMinimized: false, isHidden: false)
                 } : []
         // The fallback tier, one rung below: only reached when this tier came up empty *and*
-        // nothing already running answers the query either. `model.targets` still carries whatever
-        // the previous keystroke put there, so the running check is against a purpose-filtered
-        // slice of it rather than the composed list — see `isFallback`.
-        var tiles = suggestions
-        if anyFallback {
-            let runningTargets = model.targets.filter { !$0.isLaunchable && !$0.isFallback }
-            let hasRunningMatch = !SwitcherModel.matchingIndices(runningTargets, query: query).isEmpty
-            let fallbacks = SwitcherFallbacks.tier(
-                runningMatches: hasRunningMatch, installedMatches: !suggestions.isEmpty,
-                query: query, settings: fallbackSettings)
-            if !fallbacks.isEmpty { tiles = fallbackTargets(fallbacks) }
-        }
-        model.setLaunchSuggestions(tiles)
-        // Re-run the query so the freshly added tiles are matched and the highlight is settled
-        // against the whole list; without it the panel would show suggestions the filter had never
-        // been applied to. Where the highlight lands is `bestMatch`'s rule — a running match keeps
-        // it, a launch suggestion only takes it when nothing running answered, and a fallback tile
-        // always takes it, being the last resort rather than a competing answer.
-        if !tiles.isEmpty { model.setQuery(query) }
+        // nothing already running answers the query either. Asked in that order, so the running
+        // check — the one that walks the list — is skipped whenever an installed app answered. It
+        // is asked of the provider's tiles alone, never the previous keystroke's suggestions.
+        //
+        // Where the highlight lands once these are installed is `bestMatch`'s rule — a running
+        // match keeps it, a launch suggestion only takes it when nothing running answered, and a
+        // fallback tile always takes it, being the last resort rather than a competing answer.
+        guard anyFallback, suggestions.isEmpty else { return suggestions }
+        let fallbacks = SwitcherFallbacks.tier(
+            runningMatches: model.hasRunningMatch(for: query), installedMatches: false,
+            query: query, settings: fallbackSettings, hasHandler: hasHandler)
+        return fallbackTargets(fallbacks)
     }
 
     /// Turns already-decided fallback actions into tiles, in the order they were given.
@@ -1370,12 +1414,18 @@ final class SwitcherController {
     /// Without a fallback those characters could only ever make a query match nothing, so they stay
     /// out.
     nonisolated static func isTypable(_ scalar: Unicode.Scalar, allowsPunctuation: Bool) -> Bool {
-        let narrow = CharacterSet.alphanumerics.union(.whitespaces)
-            .union(CharacterSet(charactersIn: "-_.'"))
-        if narrow.contains(scalar) { return true }
+        if nameCharacters.contains(scalar) { return true }
         guard allowsPunctuation else { return false }
-        return CharacterSet.punctuationCharacters.union(.symbols).contains(scalar)
+        return fallbackCharacters.contains(scalar)
     }
+
+    /// Built once rather than per keystroke: a union of `CharacterSet`s is real work — Unicode
+    /// tables merged — and this is asked on the tap callback for every key typed into the filter.
+    private nonisolated static let nameCharacters = CharacterSet.alphanumerics
+        .union(.whitespaces)
+        .union(CharacterSet(charactersIn: "-_.'"))
+    private nonisolated static let fallbackCharacters = CharacterSet.punctuationCharacters
+        .union(.symbols)
 
     // MARK: - Actions
 
@@ -1387,9 +1437,8 @@ final class SwitcherController {
         // does this: the same-app cycle and the scoped triggers are each a deliberate request for a
         // named subset, and narrowing one of those by a *global* setting would mean a chord bound to
         // "all windows" quietly showing some of them.
-        let targets = windowSpaceScope == .currentDesktop
-            ? Self.onCurrentDesktop(provider.snapshot())
-            : provider.snapshot()
+        sessionDesktops = windowSpaceScope == .currentDesktop ? .pending : .off
+        let targets = narrowToSessionDesktops(provider.snapshot())
         // Decided before anything is assigned — see `SessionOpen.plan`, which exists so the order
         // cannot drift: session state set before the bail-out left `isSticky` latched true after a
         // press that opened nothing, so the *next* session, including one from a different hotkey,
@@ -1487,7 +1536,7 @@ final class SwitcherController {
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
                 let target = targets[index]
-                DispatchQueue.main.async { self.focus(target) }
+                DispatchQueue.main.async { self.switchTo(target) }
             }
             }
         }
@@ -1556,7 +1605,7 @@ final class SwitcherController {
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
                 let target = filtered[index]
-                DispatchQueue.main.async { self.focus(target) }
+                DispatchQueue.main.async { self.switchTo(target) }
             }
             }
         }
@@ -1611,11 +1660,48 @@ final class SwitcherController {
         // at all (see `SpaceMover.placement`), and an application list never carries one either, so
         // the scan below settles it for both without leaving the process.
         guard targets.contains(where: { $0.spaceID != nil }) else { return targets }
-        let current = SpaceMover.currentSpaceIDs()
-        guard !current.isEmpty else { return targets }
+        return narrowed(targets, toSpaces: SpaceMover.currentSpaceIDs())
+    }
+
+    /// The filter itself, over a Space set already read. Pure so it can be tested: an empty set is
+    /// a reading that failed and keeps everything, and a target with no Space is kept — see above.
+    nonisolated static func narrowed(
+        _ targets: [SwitchTarget], toSpaces spaces: Set<UInt64>
+    ) -> [SwitchTarget] {
+        guard !spaces.isEmpty else { return targets }
         return targets.filter { target in
             guard let space = target.spaceID else { return true }
-            return current.contains(space)
+            return spaces.contains(space)
+        }
+    }
+
+    /// Where the open session stands on "This Desktop". See `sessionDesktops`.
+    private enum DesktopNarrowing {
+        /// The setting is off, or no session is open.
+        case off
+        /// On, and not read yet — nothing so far carried a Space to filter by.
+        case pending
+        /// On, and read: the Spaces in front when the session first needed to know.
+        case spaces(Set<UInt64>)
+    }
+
+    /// `targets` narrowed to the open session's Desktops, reading them the first time a list that
+    /// carries Spaces needs it and reusing that reading for the rest of the session.
+    ///
+    /// Read lazily rather than always in `open`, which keeps the press-time cost `onCurrentDesktop`
+    /// was written to avoid: a list with no Space on any tile — one Desktop, or app mode — never
+    /// asks the window server at all, and a refresh that brings the first Spaces in reads then.
+    private func narrowToSessionDesktops(_ targets: [SwitchTarget]) -> [SwitchTarget] {
+        switch sessionDesktops {
+        case .off:
+            return targets
+        case .spaces(let spaces):
+            return Self.narrowed(targets, toSpaces: spaces)
+        case .pending:
+            guard targets.contains(where: { $0.spaceID != nil }) else { return targets }
+            let spaces = SpaceMover.currentSpaceIDs()
+            sessionDesktops = .spaces(spaces)
+            return Self.narrowed(targets, toSpaces: spaces)
         }
     }
 
@@ -1725,7 +1811,9 @@ final class SwitcherController {
                     // pass outlives the session that asked for it, and answering into the next one
                     // is answering with the wrong list.
                     guard let self, self.isVisible, token == self.sessionToken else { return }
-                    self.model.update(targets: fresh)
+                    // Narrowed exactly as `open` narrowed the list this replaces — see
+                    // `sessionDesktops`.
+                    self.model.update(targets: self.narrowToSessionDesktops(fresh))
                     self.finishListMutation()
                 }
             }
@@ -1736,6 +1824,7 @@ final class SwitcherController {
         isVisible = false
         isSticky = false
         isScopedSession = false
+        sessionDesktops = .off
         // So the next session announces its opening tile rather than treating it as unchanged. The
         // two sessions can genuinely start on the same app, which is exactly when that would be
         // wrong — a ⌘-Tab that says nothing reads as one the machine ignored.
@@ -1762,39 +1851,73 @@ final class SwitcherController {
     /// pick never changes the frontmost app, so it never fires one.
     private func focus(_ target: SwitchTarget) {
         if let id = target.windowID { provider.noteFocused(window: id) }
-        target.focus()
+        let targetID = target.id
+        target.focus(onLaunchFailure: { [weak self] in
+            self?.provider.launchFailed(targetID: targetID)
+        })
     }
 
-    /// - Parameter picked: the tile was named outright — clicked, or ⌘-numbered — rather than
-    ///   reached by letting go. A query that matches nothing leaves the highlight on a dimmed tile
-    ///   the user was not choosing; releasing on it used to switch there anyway, so an implicit
-    ///   commit now just closes the panel. A named tile is still taken, dimmed or not.
-    private func commit(picked: Bool = false) {
+    /// How a commit was asked for, which decides what it may take.
+    private enum CommitKind {
+        /// The trigger was let go — the way almost every session ends, and the one that has to be
+        /// safe to do without looking.
+        case release
+        /// A key that means "go": Return, or Tab in a session that stayed open.
+        case keyPress
+        /// The tile was named outright — clicked, or ⌘-numbered.
+        case named
+    }
+
+    /// - Parameter kind: how the commit was asked for. A query that matches nothing leaves the
+    ///   highlight on a dimmed tile the user was not choosing; releasing on it used to switch
+    ///   there anyway, so anything short of naming the tile now just closes the panel. A named
+    ///   tile is still taken, dimmed or not. And a tile that runs something only a deliberate
+    ///   press may take (`SwitchTarget.commitsOnlyWhenNamed`) is never taken by a release.
+    private func commit(_ kind: CommitKind = .release) {
         guard isVisible else { return }
-        let target = picked || model.matchesAnything ? model.selected : nil
+        let picked = kind == .named
+        var target = picked || model.matchesAnything ? model.selected : nil
         if !picked, !model.matchesAnything {
             Log.tap.notice("commit: query matched nothing — closing without switching")
         }
-        let rules = appRules
+        if kind == .release, target?.commitsOnlyWhenNamed == true {
+            Log.tap.notice("commit: released on a shell fallback — closing without running it")
+            target = nil
+        }
         hide()
         // Off the tap callback — activating an app is an AX / NSWorkspace round-trip against a
         // process that may not answer promptly.
         DispatchQueue.main.async {
             guard let target else { return }
-            if Self.hidesInsteadOfSwitching(to: target, rules: rules) {
-                Log.tap.notice("commit: pid \(target.pid, privacy: .public) is already front — hiding")
-                target.hideApp()
-                return
-            }
-            // The ordinary switch used to be the one outcome that logged nothing, so a session read
-            // back afterwards ended at "panel shown" with no record of what it picked — and an app
-            // pick leaves no other trace at all, since only the cross-Desktop window path narrates
-            // itself. The target id is `app:<pid>` / `win:<id>` / `launch:<bundle>`, which names the
-            // kind and the thing without carrying a window title.
-            Log.tap.notice(
-                "commit: \(target.id, privacy: .public) pid \(target.pid, privacy: .public)")
-            self.focus(target)
+            self.switchTo(target)
         }
+    }
+
+    /// Takes a committed target: hides it when the user's rule says a pick of the app already in
+    /// front means that, otherwise brings it forward. The one place every commit lands — the
+    /// panel's, the armed quick-switch's and the async sessions' — so the three cannot disagree
+    /// about what a pick of the front app does.
+    ///
+    /// Main-thread only — `NSWorkspace` and `NSRunningApplication` both want it. Callers hop here
+    /// from the tap callback.
+    private func switchTo(_ target: SwitchTarget) {
+        let front = NSWorkspace.shared.frontmostApplication
+        let rule = front?.bundleIdentifier.flatMap { appRules[$0] }
+        if Self.hidesInsteadOfSwitching(
+            to: target, frontPID: front?.processIdentifier, frontRule: rule)
+        {
+            Log.tap.notice("commit: pid \(target.pid, privacy: .public) is already front — hiding")
+            target.hideApp()
+            return
+        }
+        // The ordinary switch used to be the one outcome that logged nothing, so a session read
+        // back afterwards ended at "panel shown" with no record of what it picked — and an app
+        // pick leaves no other trace at all, since only the cross-Desktop window path narrates
+        // itself. The target id is `app:<pid>` / `win:<id>` / `launch:<bundle>`, which names the
+        // kind and the thing without carrying a window title.
+        Log.tap.notice(
+            "commit: \(target.id, privacy: .public) pid \(target.pid, privacy: .public)")
+        focus(target)
     }
 
     /// Whether committing to `target` should hide it rather than switch to it.
@@ -1803,27 +1926,34 @@ final class SwitcherController {
     /// back to where you started and releasing is otherwise a no-op — the one commit that cannot
     /// mean "bring this forward", since it is already there.
     ///
-    /// A launch tile is excluded outright: its app is by definition not running, so it cannot be
-    /// frontmost, and its -1 pid would match any other launch tile's.
+    /// **App tiles only.** A window or tab tile of the front app is a request for *that window*,
+    /// which is usually not the one in front — that is why the user cycled to it. Checking the pid
+    /// alone hid the whole app instead, so with the rule on, the front app's other windows could
+    /// not be reached from the switcher at all. A launch or fallback tile is not running, so it is
+    /// never frontmost either, and its -1 pid would match any other launch tile's.
     ///
-    /// Main-thread only — `NSWorkspace` and `NSRunningApplication` both want it.
-    private static func hidesInsteadOfSwitching(
-        to target: SwitchTarget, rules: [String: AppRule]
+    /// Over values, so the rule can be tested without a frontmost app.
+    nonisolated static func hidesInsteadOfSwitching(
+        to target: SwitchTarget, frontPID: pid_t?, frontRule: AppRule?
     ) -> Bool {
-        guard !target.isLaunchable,
-            let front = NSWorkspace.shared.frontmostApplication,
-            front.processIdentifier == target.pid,
-            let bundleID = front.bundleIdentifier
-        else { return false }
-        return rules[bundleID]?.hideWhenFrontmost == true
+        guard case .app(let pid) = target.kind, pid == frontPID else { return false }
+        return frontRule?.hideWhenFrontmost == true
     }
 
     /// Modifier released. In the tap window this is a quick-switch to the previous target with no
     /// panel; once the panel is up it is a normal commit.
     private func releaseTrigger() {
         // The list is still in flight; remember the release so the fetch can act on it.
+        //
+        // And stop the poll: the release it exists to catch has now been caught. Left running, it
+        // saw the modifier up on every tick until the list landed and logged each one as a missed
+        // `flagsChanged` — a false `.error` five times a second, on the one path where nothing had
+        // gone wrong. Nothing is left for it to guard, either: the fetch's outcome for a released
+        // session is to switch or to abandon, never to draw, and `sameAppDeadline` still bounds a
+        // fetch that never lands.
         if pendingSameApp {
             pendingSameAppReleased = true
+            stopWatchdog()
             return
         }
         if armed {
@@ -1836,7 +1966,7 @@ final class SwitcherController {
                 : provider.tapIndex(in: armedTargets, mode: provider.mode)
             if armedTargets.indices.contains(index) {
                 let target = armedTargets[index]
-                DispatchQueue.main.async { self.focus(target) }
+                DispatchQueue.main.async { self.switchTo(target) }
             }
             return
         }
@@ -1997,7 +2127,7 @@ final class SwitcherController {
         // The id rather than the title: titles are deliberately left redacted (see `Log`), and
         // a line reading "cmd-4: -> <private>" said nothing the commit line after it did not.
         Log.tap.notice("cmd-\(number): -> \(self.model.targets[index].id, privacy: .public)")
-        commit(picked: true)
+        commit(.named)
     }
 
     /// Dismiss only when nothing is left at all (a query matching nothing keeps the panel up),
@@ -2180,16 +2310,27 @@ final class SwitcherController {
     ///
     /// `clearsMarks` is false only for a tile's own close button, which acts on that tile and so
     /// has no business discarding a marked set it never touched — see `closeTile`.
+    ///
+    /// Tab tiles are refused — see `SwitchTarget.canClose` — and said so in the log, since a marked
+    /// set can mix them with windows and only the windows close.
     private func closeTargets(_ targets: [SwitchTarget], clearsMarks: Bool = true) {
-        guard !targets.isEmpty else { return }
-        for target in targets { target.closeWindow() }
-        // Window mode: drop just those tiles. App mode: the app stays (it may have other windows).
-        let windowIDs = Set(
-            targets.compactMap { target -> String? in
-                guard case .window = target.kind else { return nil }
-                return target.id
-            })
-        model.remove { windowIDs.contains($0.id) }
+        let closable = targets.filter(\.canClose)
+        if closable.count < targets.count {
+            Log.tap.notice(
+                "close: refused \(targets.count - closable.count, privacy: .public) tab tile(s)")
+        }
+        guard !closable.isEmpty else { return }
+        for target in closable { target.closeWindow() }
+        // Window mode: drop every tile that stood for a closed window. App mode: the app stays (it
+        // may have other windows). By element as well as by id, so a tile of any kind that named
+        // the same window goes with it — the id only ever matched the one tile that was closed.
+        let closedIDs = Set(closable.filter { $0.windowElement != nil }.map(\.id))
+        let closedWindows = closable.compactMap(\.windowElement)
+        model.remove { tile in
+            if closedIDs.contains(tile.id) { return true }
+            guard let window = tile.windowElement else { return false }
+            return closedWindows.contains { CFEqual($0, window) }
+        }
         if clearsMarks { model.clearMarks() }
         finishListMutation()
     }
@@ -2313,7 +2454,7 @@ final class SwitcherController {
     private func pick(_ index: Int) {
         guard isVisible, model.targets.indices.contains(index) else { return }
         model.selection = index
-        commit(picked: true)
+        commit(.named)
     }
 
     /// A tile's close button was clicked.
@@ -2331,7 +2472,9 @@ final class SwitcherController {
     private func closeTile(_ index: Int) {
         guard isVisible, actionsEnabled, model.targets.indices.contains(index) else { return }
         let target = model.targets[index]
-        guard !target.isLaunchable else { return }
+        // The model draws no ✕ on these (see `SwitcherModel.showsClose`); refused here as well so a
+        // click that lands as the list changes under it cannot reach one.
+        guard target.canClose else { return }
         model.selection = index
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }

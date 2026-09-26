@@ -58,10 +58,36 @@ final class FallbackActionTests: XCTestCase {
         XCTAssertNil(SwitcherFallbacks.url(for: "hello world"))
     }
 
-    /// `URL`'s own parser reads `host:port` as scheme `host`, which is exactly the shape this is
-    /// meant to catch even though there is no dot in it anywhere.
+    /// `URL`'s own parser reads `host:port` as scheme `host`, which nothing opens — this used to
+    /// assert that broken value. It is an address on a port, and it becomes one.
     func testAHostAndPortWithNoDotIsStillURLLike() {
-        XCTAssertEqual(SwitcherFallbacks.url(for: "localhost:3000")?.absoluteString, "localhost:3000")
+        XCTAssertEqual(
+            SwitcherFallbacks.url(for: "localhost:3000")?.absoluteString, "http://localhost:3000")
+    }
+
+    /// A dotted host with a port is the same shape, and would otherwise parse as scheme
+    /// `example.com`.
+    func testADottedHostAndPortBecomesHTTP() {
+        XCTAssertEqual(
+            SwitcherFallbacks.url(for: "example.com:8080/docs")?.absoluteString,
+            "http://example.com:8080/docs")
+    }
+
+    /// An explicit scheme is taken as typed only when something opens it; `word:word` is not an
+    /// address just because `URL` will parse one out of it.
+    func testAnExplicitSchemeNeedsSomethingToOpenIt() {
+        XCTAssertNil(SwitcherFallbacks.url(for: "note:todo", hasHandler: { _ in false }))
+        XCTAssertEqual(
+            SwitcherFallbacks.url(for: "mailto:a@b.c", hasHandler: { _ in true })?.absoluteString,
+            "mailto:a@b.c")
+    }
+
+    /// Nothing without a scheme ever reaches the handler check, so the dotted path is not gated
+    /// on it.
+    func testTheDottedPathDoesNotAskForAHandler() {
+        XCTAssertEqual(
+            SwitcherFallbacks.url(for: "example.com", hasHandler: { _ in false })?.absoluteString,
+            "https://example.com")
     }
 
     func testABareWordWithNoDotAndNoSchemeIsNotURLLike() {
@@ -73,6 +99,22 @@ final class FallbackActionTests: XCTestCase {
     func testTheTemplatePlaceholderIsReplacedWithThePercentEncodedQuery() {
         let url = SwitcherFallbacks.searchURL(for: "swift concurrency", template: "https://duckduckgo.com/?q=%s")
         XCTAssertEqual(url?.absoluteString, "https://duckduckgo.com/?q=swift%20concurrency")
+    }
+
+    /// The characters that structure a query string are part of the search term here, not
+    /// structure: `c++` must not arrive as "c" and two spaces, nor `AT&T` as "AT" and a stray
+    /// parameter.
+    func testQueryStructureCharactersAreEncodedInTheSearchTerm() {
+        let template = "https://duckduckgo.com/?q=%s"
+        XCTAssertEqual(
+            SwitcherFallbacks.searchURL(for: "c++", template: template)?.absoluteString,
+            "https://duckduckgo.com/?q=c%2B%2B")
+        XCTAssertEqual(
+            SwitcherFallbacks.searchURL(for: "AT&T", template: template)?.absoluteString,
+            "https://duckduckgo.com/?q=AT%26T")
+        XCTAssertEqual(
+            SwitcherFallbacks.searchURL(for: "a=b #c", template: template)?.absoluteString,
+            "https://duckduckgo.com/?q=a%3Db%20%23c")
     }
 
     func testATemplateWithNoPlaceholderIsRefused() {

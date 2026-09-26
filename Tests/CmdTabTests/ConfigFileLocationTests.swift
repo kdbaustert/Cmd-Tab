@@ -8,6 +8,12 @@ import XCTest
 /// like from the outside.
 @MainActor
 final class ConfigFileLocationTests: XCTestCase {
+    /// Clears what a crashed run left of the one suite below — see `ThrowawayDefaults`.
+    nonisolated override class func setUp() {
+        super.setUp()
+        ThrowawayDefaults.sweep("configfile")
+    }
+
     /// The two locations must not name the same file. If they did, choosing iCloud Drive would leave
     /// the app writing to the local path and reporting success — sync that silently never happens.
     ///
@@ -171,24 +177,73 @@ final class ConfigFileLocationTests: XCTestCase {
 
     /// A key a newer build wrote — or a typo, or a note — used to vanish from the file the first
     /// time anything changed here. Known keys are not carried forward: an owned one with no value
-    /// here was cleared on purpose, and a retired one is dead.
+    /// here was cleared on purpose, and says so with `null`; a retired one is dead, and goes.
     func testKeysThisBuildDoesNotKnowSurviveTheRewrite() {
         let out = ConfigFile.filePayload(
             ["maxColumns": 4],
             preserving: [
                 "fromANewerBuild": 1, "maxColumns": 9, "clearedHere": 3, "showBadges": false,
             ],
-            known: ["maxColumns", "clearedHere", "showBadges"])
+            known: ["maxColumns", "clearedHere", "showBadges"],
+            clearable: ["maxColumns", "clearedHere"])
 
         XCTAssertEqual(out["fromANewerBuild"] as? Int, 1)
         XCTAssertEqual(out["maxColumns"] as? Int, 4, "this Mac's value wins for a key it owns")
-        XCTAssertNil(out["clearedHere"])
-        XCTAssertNil(out["showBadges"])
+        XCTAssertTrue(out["clearedHere"] is NSNull, "a reset has to reach the other Macs")
+        XCTAssertNil(out["showBadges"], "a retired key may be live on an older build; left out")
     }
 
     func testWithNoFileThereIsNothingToPreserve() {
-        let out = ConfigFile.filePayload(["maxColumns": 4], preserving: nil, known: [])
+        let out = ConfigFile.filePayload(
+            ["maxColumns": 4], preserving: nil, known: [], clearable: [])
         XCTAssertEqual(out.count, 1)
+    }
+
+    /// A `null` only replaces a line the file already had. A key nobody ever set stays out, or the
+    /// file would carry a `null` for every setting in the app.
+    func testAKeyNeverSetIsNotWrittenAsNull() {
+        let out = ConfigFile.filePayload(
+            ["maxColumns": 4], preserving: ["maxColumns": 4], known: ["maxColumns", "stickyMode"],
+            clearable: ["maxColumns", "stickyMode"])
+        XCTAssertNil(out["stickyMode"])
+    }
+
+    /// The whole of the reset path, both Macs, through the real encoder and the real `apply`:
+    /// A sets a value, B takes it; A resets it; B's copy clears, and B's next write does not put
+    /// the old value back into the file. Before, the reset reached the file as a missing line,
+    /// which B read as "no change" — and B's next write restored the value, on both Macs.
+    func testAResetOnOneMacClearsTheSettingOnTheOther() throws {
+        let known: Set<String> = ["maxColumns"]
+        let suite = ThrowawayDefaults.suiteName(in: "configfile")
+        let other = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { ThrowawayDefaults.remove(suite) }
+
+        // A publishes a value; B has taken it.
+        let set = try roundTrip(
+            ConfigFile.filePayload(
+                ["maxColumns": 7], preserving: nil, known: known, clearable: known))
+        SettingsIO.apply(ConfigFile.changes(from: nil, to: set), to: other)
+        XCTAssertEqual(other.persistentDomain(forName: suite)?["maxColumns"] as? Int, 7)
+
+        // A resets: its payload no longer has the key.
+        let reset = try roundTrip(
+            ConfigFile.filePayload([:], preserving: set, known: known, clearable: known))
+        XCTAssertTrue(reset["maxColumns"] is NSNull)
+
+        // B reads the edit and applies what moved.
+        SettingsIO.apply(ConfigFile.changes(from: set, to: reset), to: other)
+        XCTAssertNil(other.persistentDomain(forName: suite)?["maxColumns"])
+
+        // B's next write keeps the reset rather than resurrecting 7.
+        let next = ConfigFile.filePayload(
+            other.persistentDomain(forName: suite) ?? [:], preserving: reset, known: known,
+            clearable: known)
+        XCTAssertTrue(next["maxColumns"] is NSNull)
+    }
+
+    /// Through the encoder and the decoder, so the `null` is the one a real file carries.
+    private func roundTrip(_ payload: [String: Any]) throws -> [String: Any] {
+        try XCTUnwrap(SettingsIO.encode(payload).flatMap(SettingsIO.decode))
     }
 
     // MARK: - What an edit changed
@@ -211,6 +266,19 @@ final class ConfigFileLocationTests: XCTestCase {
     /// is not a reset.
     func testALineDeletedFromTheFileIsNotAChange() {
         XCTAssertTrue(ConfigFile.changes(from: ["maxColumns": 4], to: [:]).isEmpty)
+    }
+
+    /// A reset arrives as `null`, and that is a change — the one a missing line is not.
+    func testANullWhereAValueWasIsAChange() {
+        let changes = ConfigFile.changes(from: ["maxColumns": 4], to: ["maxColumns": NSNull()])
+        XCTAssertTrue(changes["maxColumns"] is NSNull)
+    }
+
+    /// A `null` still there on the next read has already been applied; it is not re-applied.
+    func testANullStillThereIsNotAChange() {
+        XCTAssertTrue(
+            ConfigFile.changes(from: ["maxColumns": NSNull()], to: ["maxColumns": NSNull()])
+                .isEmpty)
     }
 
     /// Compared as values, not as the objects that happened to hold them, so re-reading an

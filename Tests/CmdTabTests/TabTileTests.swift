@@ -24,6 +24,28 @@ final class TabTileTests: XCTestCase {
         XCTAssertFalse(tabTarget(title: "Inbox", appName: "Safari").isLaunchable)
     }
 
+    /// Close is refused on a tab: the button in reach is the whole window's.
+    func testATabTileCannotBeClosed() {
+        XCTAssertFalse(tabTarget(title: "Inbox", appName: "Safari").canClose)
+    }
+
+    /// A tab tile and a window tile over the same window name the same window, so closing the
+    /// window takes both out of the list; another app's window is left alone.
+    func testATabSharesItsWindowWithThatWindowsTile() {
+        let tab = tabTarget(pid: 4242, title: "Inbox", appName: "Safari")
+        let sameWindow = SwitchTarget(
+            id: "win:1", kind: .window(4242, AX.application(4242)), title: "Safari",
+            appName: "Safari", icon: nil, isMinimized: false, isHidden: false)
+        let otherWindow = SwitchTarget(
+            id: "win:2", kind: .window(4243, AX.application(4243)), title: "Mail",
+            appName: "Mail", icon: nil, isMinimized: false, isHidden: false)
+        guard let a = tab.windowElement, let b = sameWindow.windowElement,
+            let c = otherWindow.windowElement
+        else { return XCTFail("both kinds should name a window") }
+        XCTAssertTrue(CFEqual(a, b))
+        XCTAssertFalse(CFEqual(a, c))
+    }
+
     func testATabTilesPidIsTheOwningApps() {
         XCTAssertEqual(tabTarget(pid: 99, title: "Inbox", appName: "Safari").pid, 99)
     }

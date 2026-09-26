@@ -15,10 +15,13 @@ struct ShortcutEntry: Identifiable {
     /// `SwitcherController.handle` matches them in, which is what decides who wins a collision.
     enum Kind: Int, CaseIterable, Comparable {
         /// What macOS itself already claims — `AppleSymbolicHotKeys` and `NSUserKeyEquivalents`,
-        /// decoded by `SystemShortcuts`. Declared first because that is the true match order: the
-        /// window server resolves its own global shortcuts before Cmd-Tab's event tap ever sees the
-        /// keystroke, so a system entry is the one that "wins" a collision, not merely the one
-        /// listed first for tidiness.
+        /// decoded by `SystemShortcuts`. Declared first because that is the true match order for
+        /// the symbolic hotkeys: the window server resolves its own global shortcuts before
+        /// Cmd-Tab's event tap ever sees the keystroke, so one of those is the one that "wins" a
+        /// collision, not merely the one listed first for tidiness.
+        ///
+        /// Not for the App Shortcuts, which share the kind but not the rank — see
+        /// `ShortcutEntry.isAppShortcut`.
         case systemOwned
         case switcherTrigger
         case appWindowCycle
@@ -107,6 +110,26 @@ struct ShortcutEntry: Identifiable {
 
     let id: String
     let kind: Kind
+
+    /// The id prefix of an App Shortcut — System Settings' per-app menu shortcuts, stored as
+    /// `NSUserKeyEquivalents`.
+    static let appShortcutPrefix = "system.appShortcut."
+
+    /// Whether this is an App Shortcut, which macOS owns but which loses to Cmd-Tab rather than
+    /// beating it.
+    ///
+    /// An App Shortcut is a menu key equivalent, resolved by AppKit inside the front app once the
+    /// key has been delivered to it — after Cmd-Tab's tap, which has already taken any chord it is
+    /// bound to. Ranked with the symbolic hotkeys, the Overview named the App Shortcut as the
+    /// winner of a clash it actually loses, and the importer refused chords that would have worked.
+    /// `entries()` lists them after every Cmd-Tab global binding instead, which is what ranks them
+    /// last; this is how the importer tells them apart.
+    ///
+    /// Read off the id, as `ShortcutsMenuModel.command(for:)` reads its commands, rather than a
+    /// kind of its own: every `switch` over `Kind` would have to learn about it, and the one that
+    /// matters here is only the rank.
+    var isAppShortcut: Bool { id.hasPrefix(Self.appShortcutPrefix) }
+
     /// What this binding does, in the words the settings pane uses.
     let label: String
     let display: String
@@ -181,7 +204,7 @@ enum ShortcutAudit {
         let behavior = BehaviorStore.shared
         var out: [ShortcutEntry] = []
 
-        out.append(contentsOf: systemEntries())
+        out.append(contentsOf: symbolicHotkeyEntries())
 
         out.append(
             entry(.switcherTrigger, "trigger", "Open the switcher", behavior.hotkey, active: true))
@@ -224,6 +247,10 @@ enum ShortcutAudit {
                     // `WindowTilingBindings.fires`.
                     active: tiling.tiling.fires(arrangement)))
         }
+
+        // After every Cmd-Tab global binding, because that is where they resolve — see
+        // `ShortcutEntry.isAppShortcut`. Position in this list is the rank `collisions` reads.
+        out.append(contentsOf: appShortcutEntries())
 
         let actions = SwitcherShortcutsStore.shared
         for action in SwitcherAction.allCases {
@@ -357,27 +384,30 @@ enum ShortcutAudit {
             isActive: active)
     }
 
-    /// What macOS itself claims, decoded fresh from the two preference domains `SystemShortcuts`
-    /// knows how to read. `CFPreferencesCopyAppValue` is cfprefsd's own cache, not a disk read, so
-    /// this is called on every `entries()` — the same as the five stores above it — rather than
+    /// What macOS itself claims ahead of the tap, decoded fresh from `com.apple.symbolichotkeys`
+    /// by `SystemShortcuts`. `CFPreferencesCopyAppValue` is cfprefsd's own cache, not a disk read,
+    /// so this is called on every `entries()` — the same as the five stores above it — rather than
     /// carrying a second, hand-rolled cache that would need its own invalidation whenever a hotkey
     /// is recorded elsewhere in the app.
-    private static func systemEntries() -> [ShortcutEntry] {
-        var out: [ShortcutEntry] = []
-        for hotkey in SystemShortcuts.decodeSymbolicHotKeys(systemHotkeysPlist()) {
-            out.append(
-                ShortcutEntry(
-                    id: "system.\(hotkey.id)", kind: .systemOwned,
-                    label: SystemShortcuts.name(forID: hotkey.id),
-                    display: Hotkey(keyCode: hotkey.keyCode, modifierRaw: hotkey.modifiers.rawValue)
-                        .displayString,
-                    chord: ShortcutEntry.Chord(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
-                    isActive: true))
+    private static func symbolicHotkeyEntries() -> [ShortcutEntry] {
+        SystemShortcuts.decodeSymbolicHotKeys(systemHotkeysPlist()).map { hotkey in
+            ShortcutEntry(
+                id: "system.\(hotkey.id)", kind: .systemOwned,
+                label: SystemShortcuts.name(forID: hotkey.id),
+                display: Hotkey(keyCode: hotkey.keyCode, modifierRaw: hotkey.modifiers.rawValue)
+                    .displayString,
+                chord: ShortcutEntry.Chord(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
+                isActive: true)
         }
+    }
+
+    /// The App Shortcuts, read the same way as the symbolic hotkeys and listed apart from them.
+    private static func appShortcutEntries() -> [ShortcutEntry] {
+        var out: [ShortcutEntry] = []
         for shortcut in SystemShortcuts.decodeUserKeyEquivalents(globalUserKeyEquivalents()) {
             out.append(
                 ShortcutEntry(
-                    id: "system.appShortcut.\(shortcut.label)", kind: .systemOwned,
+                    id: ShortcutEntry.appShortcutPrefix + shortcut.label, kind: .systemOwned,
                     label: shortcut.label,
                     display: Hotkey(
                         keyCode: shortcut.keyCode, modifierRaw: shortcut.modifiers.rawValue

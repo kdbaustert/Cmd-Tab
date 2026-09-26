@@ -89,10 +89,18 @@ final class PreviewCoordinator {
     private func capture(pid: pid_t, tileRect: NSRect) {
         captureWork = nil
         guard isActive() else { return }
-        let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
+        // One lookup for the capture's whole life. The capture used to build its own two more —
+        // one for the bundle id a title rule is scoped to, and one for the icon, the expensive
+        // property — on the main actor on every hover, the icon for a fallback most strips never
+        // draw. The bundle id is handed over from here; the icon is fetched only when a thumbnail
+        // actually needs it (see `WindowCapture.thumbnails`).
+        let app = NSRunningApplication(processIdentifier: pid)
+        let name = app?.localizedName ?? ""
+        let bundleID = app?.bundleIdentifier
         let titleRules = self.titleRules
         captureTask = Task { [weak self] in
-            let thumbs = await WindowCapture.shared.thumbnails(for: pid, titleRules: titleRules)
+            let thumbs = await WindowCapture.shared.thumbnails(
+                for: pid, bundleID: bundleID, titleRules: titleRules)
             guard !Task.isCancelled, let self, self.isActive() else { return }
             // pid and count only. Window titles carry document names, mail subjects and URLs, and
             // `.public` would persist them in the unified log for anything that can run `log show`.

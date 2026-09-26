@@ -373,6 +373,95 @@ final class AccessibilityHarnessTests: XCTestCase {
         assertFrame(again, tiled, "a second restore goes back to the tile the first one undid")
     }
 
+    /// A tile after a restore starts from where the window is, not from the tile the restore undid.
+    ///
+    /// Tile, restore, maximize, restore: the last press has to come back to the frame the window
+    /// started at. The restore leaves the undone tile in the slot so a second press can redo it,
+    /// and a tile used to keep that entry as though it were the pre-tiling frame, so this
+    /// sequence brought back the left half. `TilingMemoryTests` covers the rule; this is the real table on
+    /// the tiler's own queue.
+    func testATileAfterARestoreRestoresToWhereItStarted() throws {
+        let window = try openWindow(
+            at: NSRect(x: 280, y: 280, width: 540, height: 380), title: "Tile after restore")
+        let area = try homeArea(of: window)
+        let original = try XCTUnwrap(AX.frame(window))
+        let pid = ProcessInfo.processInfo.processIdentifier
+
+        WindowTiler.apply(
+            .leftHalf, pid: pid, areas: [area], cycleWidths: false, target: .element(window))
+        _ = try waitFor("the tile to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - area.width / 2) <= tolerance
+            else { return nil }
+            return frame
+        }
+        WindowTiler.apply(
+            .restore, pid: pid, areas: [area], cycleWidths: false, target: .element(window))
+        _ = try waitFor("the restore to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - original.width) <= tolerance
+            else { return nil }
+            return frame
+        }
+        WindowTiler.apply(
+            .maximize, pid: pid, areas: [area], cycleWidths: false, target: .element(window))
+        _ = try waitFor("maximize to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - area.width) <= tolerance
+            else { return nil }
+            return frame
+        }
+        WindowTiler.apply(
+            .restore, pid: pid, areas: [area], cycleWidths: false, target: .element(window))
+        let back = try waitFor("the second restore to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - area.width) > tolerance
+            else { return nil }
+            return frame
+        }
+        assertFrame(back, original, "restore after the maximize returns to the starting frame")
+    }
+
+    /// The width cycle advances only on a window still where the last press left it. Pressed twice
+    /// it goes ½ → ⅔; moved in between, the second press is a half again.
+    func testTheWidthCycleStartsOverOnAWindowMovedSinceTheLastPress() throws {
+        let window = try openWindow(
+            at: NSRect(x: 320, y: 320, width: 500, height: 360), title: "Cycle me")
+        let area = try homeArea(of: window)
+        let pid = ProcessInfo.processInfo.processIdentifier
+
+        WindowTiler.apply(
+            .leftHalf, pid: pid, areas: [area], cycleWidths: true, target: .element(window))
+        _ = try waitFor("the half to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - area.width / 2) <= tolerance
+            else { return nil }
+            return frame
+        }
+        WindowTiler.apply(
+            .leftHalf, pid: pid, areas: [area], cycleWidths: true, target: .element(window))
+        _ = try waitFor("the two-thirds step to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - area.width * 2 / 3) <= tolerance
+            else { return nil }
+            return frame
+        }
+
+        // Moved by hand, as a drag would.
+        let moved = CGRect(x: area.minX + 100, y: area.minY + 100, width: 500, height: 360)
+        AX.setFrame(window, moved, sizing: true)
+        _ = try waitFor("the hand move to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - moved.width) <= tolerance
+            else { return nil }
+            return frame
+        }
+
+        WindowTiler.apply(
+            .leftHalf, pid: pid, areas: [area], cycleWidths: true, target: .element(window))
+        let landed = try waitFor("the fresh half to land") { () -> CGRect? in
+            guard let frame = AX.frame(window), abs(frame.width - moved.width) > tolerance
+            else { return nil }
+            return frame
+        }
+        XCTAssertEqual(
+            landed.width, area.width / 2, accuracy: tolerance,
+            "a moved window starts the cycle over at a half, not a third")
+    }
+
     // MARK: - Navigation
 
     /// Directional focus against the window server's own list, which is where it gets its answers.

@@ -271,9 +271,12 @@ actor WindowCapture {
     /// working" with nothing to say why, so each now announces itself. Logged at `.error` because
     /// the first two are broken states rather than ordinary ones, and rate-limited because this runs
     /// on every hover and a withheld permission would otherwise write a line per tile per sweep.
+    ///
+    /// `bundleID` is the app's, looked up by the caller along with its name — the one a title rule
+    /// is scoped to, or nil for an app with none (which then only matches an any-app rule).
     func thumbnails(
-        for pid: pid_t, titleRules: [CompiledTitleRule] = [], maxCount: Int = 12,
-        maxHeight: CGFloat = 150
+        for pid: pid_t, bundleID: String?, titleRules: [CompiledTitleRule] = [],
+        maxCount: Int = 12, maxHeight: CGFloat = 150
     ) async -> [WindowThumb] {
         guard Permissions.canCaptureScreen else {
             reportOnce(
@@ -317,11 +320,6 @@ actor WindowCapture {
         // amount of layer-0 debris — several 2056x39 strips, 1x1 and 64x64 stubs, and for Chrome a
         // couple of full-width dropdown surfaces — and every one of them is untitled, while every
         // window a user could actually switch to has a title. Size alone let the dropdowns through.
-        // Read once, off the main actor: the bundle id a title rule is scoped to, or nil for an app
-        // ScreenCaptureKit can't attribute to one (which then only matches an any-app rule).
-        let bundleID = await MainActor.run {
-            NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
-        }
         var live = content.windows.filter {
             $0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.windowID != 0
                 && $0.frame.width > Self.minWindowSide && $0.frame.height > Self.minWindowSide
@@ -423,7 +421,6 @@ actor WindowCapture {
         let screenFrames = await MainActor.run {
             NSScreen.screens.count > 1 ? TargetProvider.screenCGFrames() : []
         }
-        let icon = await MainActor.run { NSRunningApplication(processIdentifier: pid)?.icon }
 
         // SC hands back its windows front to back, which is the order the strip wants; whatever is
         // sitting in the Dock follows the windows that are actually on screen.
@@ -456,27 +453,59 @@ actor WindowCapture {
         // Captured in bounded batches but reassembled by index, so the strip reads in the order
         // above rather than in whichever order the captures happened to come back.
         let wanted = Array(entries.prefix(maxCount))
-        var built: [(Int, WindowThumb)] = []
+        var built: [(Int, Captured)] = []
         for start in stride(from: 0, to: wanted.count, by: maxConcurrentCaptures) {
             guard !Task.isCancelled else { break }
             let end = min(start + maxConcurrentCaptures, wanted.count)
-            built += await withTaskGroup(of: (Int, WindowThumb?).self) { group in
+            built += await withTaskGroup(of: (Int, Captured?).self) { group in
                 for index in start..<end {
                     let entry = wanted[index]
                     group.addTask {
-                        let thumb = await Self.thumb(
-                            at: index, for: entry, icon: icon, pid: pid, maxHeight: maxHeight)
-                        return (index, thumb)
+                        (index, await Self.capture(entry, maxHeight: maxHeight))
                     }
                 }
-                var out: [(Int, WindowThumb)] = []
-                for await (index, thumb) in group {
-                    if let thumb { out.append((index, thumb)) }
+                var out: [(Int, Captured)] = []
+                for await (index, captured) in group {
+                    if let captured { out.append((index, captured)) }
                 }
                 return out
             }
         }
-        return built.sorted { $0.0 < $1.0 }.map { $0.1 }
+        // The icon only now, and only if a thumbnail is going to show it. It is the expensive
+        // property of `NSRunningApplication` — see `TargetProvider.iconCache` — it has to be read
+        // on the main actor, and most strips are all real captures and never draw it.
+        let needsIcon = built.contains { if case .icon = $0.1 { true } else { false } }
+        let icon = needsIcon
+            ? await MainActor.run { NSRunningApplication(processIdentifier: pid)?.icon } : nil
+        let fallback =
+            icon ?? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) ?? NSImage()
+        return built.sorted { $0.0 < $1.0 }.map { index, captured in
+            let entry = wanted[index]
+            let image: NSImage
+            let hasCapture: Bool
+            switch captured {
+            case .image(let captured):
+                image = captured
+                hasCapture = true
+            case .icon:
+                image = fallback
+                hasCapture = false
+            }
+            return WindowThumb(
+                id: index, windowID: entry.id, image: image, title: entry.title, pid: pid,
+                isMinimized: entry.isMinimized, hasCapture: hasCapture,
+                displayIndex: entry.displayIndex, isReachable: entry.isReachable)
+        }
+    }
+
+    /// What one window's capture came to, before the strip decides what to draw for it.
+    /// `@unchecked Sendable` because `NSImage` is not, and this crosses out of the task group: the
+    /// image is built once inside the task from a fresh `CGImage` and only read afterwards.
+    private enum Captured: @unchecked Sendable {
+        /// Real window pixels.
+        case image(NSImage)
+        /// Nothing usable came back, but the window is real enough for a tile: draw the app icon.
+        case icon
     }
 
     /// Drops the caches when a session ends.
@@ -502,31 +531,21 @@ actor WindowCapture {
         // on its own in `axWindows`.
     }
 
-    /// One window's thumbnail: a live capture when there is one to be had, the app icon when there
-    /// isn't. Returns nil for windows not worth a tile at all.
-    private static func thumb(
-        at index: Int, for entry: Entry, icon: NSImage?, pid: pid_t, maxHeight: CGFloat
-    ) async -> WindowThumb? {
+    /// One window's capture: live pixels when there are any to be had, the icon when there aren't.
+    /// Returns nil for windows not worth a tile at all.
+    private static func capture(_ entry: Entry, maxHeight: CGFloat) async -> Captured? {
         guard !Task.isCancelled else { return nil }
         if let window = entry.window {
             if let image = try? await capture(window, maxHeight: maxHeight), !isBlank(image) {
                 let size = NSSize(width: image.width, height: image.height)
-                return WindowThumb(
-                    id: index, windowID: entry.id, image: NSImage(cgImage: image, size: size),
-                    title: entry.title, pid: pid, isMinimized: entry.isMinimized, hasCapture: true,
-                    displayIndex: entry.displayIndex, isReachable: entry.isReachable)
+                return .image(NSImage(cgImage: image, size: size))
             }
             // Captured blank: one of the invisible helper surfaces Electron and friends keep around
             // rather than a window anyone could switch to. An untitled one is dropped outright; a
-            // titled one is real enough to earn the icon fallback below.
+            // titled one is real enough to earn the icon fallback.
             guard !entry.title.isEmpty else { return nil }
         }
-        let fallback =
-            icon ?? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) ?? NSImage()
-        return WindowThumb(
-            id: index, windowID: entry.id, image: fallback, title: entry.title, pid: pid,
-            isMinimized: entry.isMinimized, hasCapture: false, displayIndex: entry.displayIndex,
-            isReachable: entry.isReachable)
+        return .icon
     }
 
     /// The broken states worth one line each rather than one per hover.

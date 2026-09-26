@@ -147,6 +147,15 @@ final class FavoritePinningTests: XCTestCase {
 
     /// One app in the list, or an MRU too stale to name a second listed app: there is no previous
     /// app, and the caller falls back to its own arithmetic rather than being handed an index.
+    /// A list that was not pinned — any window list, however the app list is set — takes the
+    /// second tile, never the MRU answer meant for a pinned block.
+    func testAnUnpinnedListTapsTheSecondTile() {
+        let targets = [appTarget(1, "Safari"), appTarget(2, "Finder"), appTarget(3, "Code")]
+        XCTAssertEqual(TargetProvider.tapIndex(in: targets, pinned: false, mru: [1, 3, 2]), 1)
+        XCTAssertEqual(TargetProvider.tapIndex(in: targets, pinned: true, mru: [1, 3, 2]), 2)
+        XCTAssertEqual(TargetProvider.tapIndex(in: [], pinned: true, mru: [1]), 0)
+    }
+
     func testNoSecondListedAppReportsNothing() {
         XCTAssertNil(TargetProvider.previousAppIndex(in: [appTarget(1, "Safari")], mru: [1, 2, 3]))
         XCTAssertNil(TargetProvider.previousAppIndex(in: [], mru: [1]))

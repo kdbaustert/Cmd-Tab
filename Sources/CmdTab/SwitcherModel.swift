@@ -116,8 +116,9 @@ final class SwitcherModel: ObservableObject {
     /// Three conditions, and each is load-bearing. The in-switcher actions have to be on, because
     /// the button performs exactly what ⌥W performs and an affordance for a disabled action is a
     /// lie. The cursor has to be on *this* tile, because a button on a tile the pointer is nowhere
-    /// near is a button nobody meant to aim at. And the tile has to be something with a window: a
-    /// not-running favourite is an offer to launch, and there is nothing there to close.
+    /// near is a button nobody meant to aim at. And the tile has to be something the close action
+    /// will act on: a not-running favourite is an offer to launch, with nothing there to close, and
+    /// a tab tile is refused outright — see `SwitchTarget.canClose` for what its ✕ used to close.
     ///
     /// On the model rather than in the view so it can be tested — a click that closes the wrong
     /// window is the most expensive mistake in this file, and "which tile is this button on" is the
@@ -126,7 +127,7 @@ final class SwitcherModel: ObservableObject {
         guard showsCloseButton, hoverIndex == index, targets.indices.contains(index) else {
             return false
         }
-        return !targets[index].isLaunchable
+        return targets[index].canClose
     }
 
     /// Tiles carry a title only when they represent windows — the same-app cycle. App tiles show
@@ -164,22 +165,15 @@ final class SwitcherModel: ObservableObject {
     /// on alternate keystrokes.
     var providerTargetIDs: Set<String> { Set(allTargets.map(\.id)) }
 
-    /// Replaces the launch suggestions, keeping the current query and selection sensible.
+    /// Whether anything the provider built — not a launch suggestion, not a fallback — answers
+    /// `query`. What the fallback tier is gated on.
     ///
-    /// Cleared by `begin` and by any query change that finds matches, so a stale suggestion from a
-    /// previous keystroke can never sit at the end of the list.
-    ///
-    /// Compared on id *and* title before anything is replaced. The ids alone were enough for launch
-    /// tiles, whose id names the app, but a fallback tile's id names its slot rather than its query
-    /// (see `SwitcherController.fallbackID`) — so once the fallback tier appeared, every later
-    /// keystroke produced the same ids, was discarded here, and the tile went on showing and
-    /// running the query from the first keystroke that matched nothing: "Search for wikip" for
-    /// `wikipedia`. The title is built from the query, so it moves with it.
-    func setLaunchSuggestions(_ new: [SwitchTarget]) {
-        guard new.map(\.id) != suggestions.map(\.id) || new.map(\.title) != suggestions.map(\.title)
-        else { return }
-        suggestions = new
-        reapply(anchor: selected?.id)
+    /// Stops at the first hit rather than scoring the whole list, because it is asked on the
+    /// keystroke path and only the yes/no is wanted.
+    func hasRunningMatch(for query: String) -> Bool {
+        let words = Self.words(of: query)
+        guard !words.isEmpty else { return false }
+        return allTargets.contains { !$0.isLaunchable && Self.score($0, words: words) != nil }
     }
 
     func step(_ delta: Int) {
@@ -264,10 +258,23 @@ final class SwitcherModel: ObservableObject {
         reapply(anchor: selected?.id)
     }
 
-    /// Sets the filter query and highlights the first match. All tiles remain visible; selection
+    /// Sets the filter query and highlights the best match. All tiles remain visible; selection
     /// cycles only through matches.
-    func setQuery(_ new: String) {
+    ///
+    /// `suggestions` replaces the launch and fallback tiles in the same pass; nil keeps the ones
+    /// there are. Taking them here rather than through a setter of their own is what keeps a
+    /// keystroke to one scoring pass: the setter re-scored the list to settle the highlight, and
+    /// the query had to be applied again afterwards so the new tiles were matched — the list fuzzy-
+    /// matched up to four times per key, on the path the tap callback waits on. It also means a
+    /// fallback tile, whose id names its slot rather than its query, is always replaced by the
+    /// keystroke's own: "Search for wikip" can no longer outlive the `wikipedia` typed after it.
+    ///
+    /// With no match the highlight stays on the tile it was on, found again by id since the
+    /// suggestions may have moved under it, and clamps only when that tile is gone.
+    func setQuery(_ new: String, suggestions newSuggestions: [SwitchTarget]? = nil) {
+        let anchor = selected?.id
         query = new
+        if let newSuggestions { suggestions = newSuggestions }
         // Keep all targets visible, track which indices match
         targets = composed
         let matches = Self.matches(targets, query: query)
@@ -275,6 +282,10 @@ final class SwitcherModel: ObservableObject {
         // The *best* match, not the first one in list order — see `bestMatch`.
         if let best = Self.bestMatch(matches) {
             selection = best
+        } else if let anchor, let index = targets.firstIndex(where: { $0.id == anchor }) {
+            selection = index
+        } else {
+            selection = targets.isEmpty ? 0 : min(selection, targets.count - 1)
         }
     }
 
@@ -332,6 +343,8 @@ final class SwitcherModel: ObservableObject {
 
     private static func matches(_ list: [SwitchTarget], query: String) -> [Match] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        // Folded and split once for the whole list rather than once per tile.
+        let words = words(of: query)
         return list.indices.compactMap { index in
             // A fallback tile is built *from* the query, so scoring its title against it fuzzily
             // would be a coincidence rather than a signal — and the whole point of the tier is that
@@ -341,7 +354,7 @@ final class SwitcherModel: ObservableObject {
             if list[index].isFallback {
                 return Match(index: index, score: 0, running: false)
             }
-            return score(list[index], query: query).map {
+            return score(list[index], words: words).map {
                 Match(index: index, score: $0, running: !list[index].isLaunchable)
             }
         }
@@ -395,8 +408,7 @@ final class SwitcherModel: ObservableObject {
     /// frontmost app in the middle of cycling. `matchingIndices` had always guarded this by
     /// trimming first; `bestMatch` did not, and the two disagreeing is what made the bug invisible —
     /// nothing was marked as matching while the selection had already moved.
-    private static func score(_ target: SwitchTarget, query: String) -> Int? {
-        let words = query.lowercased().split(separator: " ").map(String.init)
+    private static func score(_ target: SwitchTarget, words: [String]) -> Int? {
         guard !words.isEmpty else { return nil }
         var total = 0
         for word in words {
@@ -406,5 +418,10 @@ final class SwitcherModel: ObservableObject {
             total += best
         }
         return total
+    }
+
+    /// The query as `score` takes it: lowercased, split on spaces.
+    private static func words(of query: String) -> [String] {
+        query.lowercased().split(separator: " ").map(String.init)
     }
 }

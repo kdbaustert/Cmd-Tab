@@ -21,7 +21,7 @@ final class FilteringAndMetricsTests: XCTestCase {
     }
 
     /// An installed app offered as a launch tile, built the way
-    /// `SwitcherController.updateLaunchSuggestions` builds one.
+    /// `SwitcherController.launchSuggestions` builds one.
     private func launchable(_ name: String) -> SwitchTarget {
         SwitchTarget(
             id: "launch:\(name)", kind: .launch(URL(fileURLWithPath: "/Applications/\(name).app")),
@@ -153,7 +153,7 @@ final class FilteringAndMetricsTests: XCTestCase {
     func testLaunchSuggestionsAreAppendedWithoutMovingTheRunningTiles() {
         let model = SwitcherModel()
         model.begin(sample)
-        model.setLaunchSuggestions([launchable("Numbers")])
+        model.setQuery("", suggestions: [launchable("Numbers")])
         XCTAssertEqual(model.targets.count, 4)
         XCTAssertEqual(model.targets.prefix(3).map(\.title), sample.map(\.title))
         XCTAssertTrue(model.targets[3].isLaunchable)
@@ -172,14 +172,49 @@ final class FilteringAndMetricsTests: XCTestCase {
         }
         let model = SwitcherModel()
         model.begin(sample)
-        model.setLaunchSuggestions([search("wikip")])
-        model.setLaunchSuggestions([search("wikipedia")])
+        model.setQuery("wikip", suggestions: [search("wikip")])
+        model.setQuery("wikipedia", suggestions: [search("wikipedia")])
         XCTAssertEqual(model.targets.last?.title, "Search for wikipedia")
         guard case .fallback(let action) = model.targets.last?.kind else {
             return XCTFail("the fallback tile went missing")
         }
         XCTAssertEqual(action, .search(
             query: "wikipedia", url: URL(string: "https://example.com/?q=wikipedia")!))
+    }
+
+    /// A query and its suggestions land in one pass, and the highlight goes to the best match
+    /// across both — a fallback, being the last resort, whenever nothing running answered.
+    func testSuggestionsArriveWithTheQueryAndAreMatchedAtOnce() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("numbers", suggestions: [launchable("Numbers")])
+        XCTAssertEqual(model.selected?.title, "Numbers")
+        XCTAssertEqual(model.matchingIndices, [3])
+    }
+
+    /// With no match anywhere the highlight stays on the tile it was on, found by id — not left on
+    /// an index the suggestions have shifted.
+    func testNoMatchKeepsTheHighlightOnTheSameTile() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("", suggestions: [launchable("Numbers")])
+        model.selection = 3
+        model.setQuery("zzzq", suggestions: [])
+        XCTAssertEqual(model.selection, 2, "the suggestion is gone, so the index clamps")
+        model.selection = 1
+        model.setQuery("zzzqq")
+        XCTAssertEqual(model.selected?.title, "Xcode")
+    }
+
+    /// The fallback gate asks about the provider's tiles only: the previous keystroke's
+    /// suggestions must not count as something running.
+    func testARunningMatchIgnoresSuggestions() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("numbers", suggestions: [launchable("Numbers")])
+        XCTAssertFalse(model.hasRunningMatch(for: "numbers"))
+        XCTAssertTrue(model.hasRunningMatch(for: "xco"))
+        XCTAssertFalse(model.hasRunningMatch(for: " "))
     }
 
     func testMatchIsASubstringNotAPrefix() {

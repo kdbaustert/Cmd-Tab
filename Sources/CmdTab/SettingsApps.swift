@@ -797,11 +797,22 @@ private struct TitleRuleRow: View {
 
     private var isValid: Bool { store.isValid(rule) }
 
+    /// What the app picker offers: the listed apps, plus the rule's own app when it is not one of
+    /// them. The list is running apps, favourites and exclusions, so a rule scoped to an app that
+    /// has since quit had no matching tag — the picker drew blank and the app could not be picked
+    /// back. The same reason `displayChoiceCount` keeps a stored display in its list.
+    private var appChoices: [AppEntry] {
+        guard let id = rule.bundleID, !apps.entries.contains(where: { $0.id == id }) else {
+            return apps.entries
+        }
+        return apps.entries + [apps.entry(for: id)]
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Picker("", selection: bundleID) {
                 Text("Any app").tag(String?.none)
-                ForEach(apps.entries) { entry in
+                ForEach(appChoices) { entry in
                     Text(entry.name).tag(String?.some(entry.id))
                 }
             }

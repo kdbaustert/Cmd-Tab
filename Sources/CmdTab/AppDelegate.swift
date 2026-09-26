@@ -134,6 +134,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         controller.stop()
+        // The signal handlers above end here too, through `NSApp.terminate`, so this covers a
+        // SIGTERM as well as ⌘Q. See `flushPendingWrite`.
+        ConfigFile.shared.flushPendingWrite()
     }
 
     /// Relaunching from Finder (or `open`) while already running opens Settings. This is the way

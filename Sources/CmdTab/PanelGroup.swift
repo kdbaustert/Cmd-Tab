@@ -120,14 +120,11 @@ final class PanelGroup {
     }
 
     /// Union of every panel's frame. Only meaningful for logging — anything positioning itself
-    /// against the switcher wants `anchorFrame`, since the union spans displays and describes a
-    /// region no single screen contains.
+    /// against the switcher wants one panel's own frame, since the union spans displays and
+    /// describes a region no single screen contains.
     var frame: NSRect {
         panels.dropFirst().reduce(panels.first?.frame ?? .zero) { $0.union($1.frame) }
     }
-
-    /// The frame of the panel the cursor is on.
-    var anchorFrame: NSRect { anchor?.frame ?? frame }
 
     /// How many indices the up/down arrows move by — see `SwitcherPanel.rowStride`.
     ///
@@ -158,8 +155,6 @@ final class PanelGroup {
             "\(NSStringFromRect(panel.frame)) onscreen=\(panel.isVisible)"
         }.joined(separator: " | ")
     }
-
-    var effectiveAppearance: NSAppearance? { anchor?.effectiveAppearance }
 
     /// Everything the preview strip needs to place itself against a tile, resolved from the tile's
     /// own rect rather than from the cursor.

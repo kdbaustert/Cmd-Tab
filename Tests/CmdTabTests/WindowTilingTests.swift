@@ -1108,6 +1108,159 @@ final class CarriedFrameTests: XCTestCase {
     }
 }
 
+/// The tiler's per-window memory — the restore slot and the width cycle — and the relative display
+/// step, as the pure rules `WindowTiler.apply` runs them by. The table itself lives on the tiler's
+/// queue and needs a real window; these are the decisions it makes with it.
+final class TilingMemoryTests: XCTestCase {
+    private let desk = [CGRect(x: 0, y: 25, width: 1600, height: 975)]
+    private let original = CGRect(x: 300, y: 200, width: 700, height: 500)
+    private let left = CGRect(x: 0, y: 25, width: 800, height: 975)
+    private let right = CGRect(x: 800, y: 25, width: 800, height: 975)
+    private let full = CGRect(x: 0, y: 25, width: 1600, height: 975)
+
+    private typealias Slot = WindowTiler.RestorePoint
+
+    /// Plays a run of presses against a window at `start`, the way `apply` does: a tile records
+    /// and moves the window to its frame, a restore swaps and moves it to the saved frame. Returns
+    /// where the window ends up.
+    private func play(_ presses: [CGRect?], from start: CGRect) -> CGRect {
+        var slot: Slot?
+        var window = start
+        for press in presses {
+            if let tile = press {
+                slot = Slot.afterTile(slot, current: window, desk: desk)
+                window = tile
+            } else if let saved = slot {
+                slot = Slot.afterRestore(saved, current: window, desk: desk)
+                window = saved.frame
+            }
+        }
+        return window
+    }
+
+    // MARK: - Restore
+
+    func testRestoreUndoesATile() {
+        XCTAssertEqual(play([left, nil], from: original), original)
+    }
+
+    func testRestoreTwiceRedoesTheTile() {
+        XCTAssertEqual(play([left, nil, nil], from: original), left)
+    }
+
+    /// Later tiles do not move the anchor: restore goes back to before any of it started.
+    func testRestoreAfterSeveralTilesGoesBackToTheStart() {
+        XCTAssertEqual(play([left, right, full, nil], from: original), original)
+    }
+
+    /// The reported case. Tile left, restore, maximize — and the next restore brought back the left
+    /// half, because the entry the first restore left behind was kept as though it were an anchor.
+    func testATileAfterARestoreRecordsWhereTheWindowActuallyIs() {
+        XCTAssertEqual(play([left, nil, full, nil], from: original), original)
+    }
+
+    /// Undo, redo, then tile somewhere else: the anchor is still the frame from before tiling.
+    func testATileAfterARedoKeepsTheAnchor() {
+        XCTAssertEqual(play([left, nil, nil, right, nil], from: original), original)
+    }
+
+    /// A window moved by hand after a restore is where the next tile starts from, and so where the
+    /// restore after it returns.
+    func testATileAfterARestoreAndAHandMoveRestoresTheHandMove() {
+        let moved = CGRect(x: 500, y: 300, width: 600, height: 400)
+        var slot = Slot.afterTile(nil, current: original, desk: desk)
+        slot = Slot.afterRestore(slot, current: left, desk: desk)
+        slot = Slot.afterTile(slot, current: moved, desk: desk)
+        XCTAssertEqual(slot.frame, moved)
+        XCTAssertFalse(slot.isRedo)
+    }
+
+    func testRestoreFlagsWhatItWritesAsARedoAndTheNextRestoreClearsIt() {
+        let anchor = Slot.afterTile(nil, current: original, desk: desk)
+        XCTAssertFalse(anchor.isRedo)
+        let undone = Slot.afterRestore(anchor, current: left, desk: desk)
+        XCTAssertTrue(undone.isRedo)
+        XCTAssertEqual(undone.frame, left)
+        let redone = Slot.afterRestore(undone, current: original, desk: desk)
+        XCTAssertFalse(redone.isRedo)
+        XCTAssertEqual(redone.frame, original)
+    }
+
+    // MARK: - Width cycle
+
+    func testTheCycleContinuesOnAWindowStillWhereItWasLeft() {
+        XCTAssertTrue(WindowTiler.continuesCycle(left: [left], current: left))
+    }
+
+    /// Hosts round frames; a point or two off is still the same tile.
+    func testTheCycleToleratesAHostRoundingTheFrame() {
+        XCTAssertTrue(
+            WindowTiler.continuesCycle(
+                left: [left], current: left.insetBy(dx: 0.5, dy: 0).offsetBy(dx: 1, dy: 0)))
+    }
+
+    /// Dragged elsewhere since, the next press is a fresh half rather than the next step.
+    func testTheCycleStartsOverOnAWindowThatHasMoved() {
+        XCTAssertFalse(
+            WindowTiler.continuesCycle(left: [left], current: left.offsetBy(dx: 40, dy: 0)))
+        XCTAssertFalse(
+            WindowTiler.continuesCycle(
+                left: [left], current: CGRect(x: 0, y: 25, width: 700, height: 975)))
+    }
+
+    /// The frame written and the frame read back are both accepted — a terminal sizing to its
+    /// character cells lands a few points off what was asked.
+    func testTheCycleAcceptsEitherTheFrameWrittenOrTheFrameReadBack() {
+        let landed = CGRect(x: 0, y: 25, width: 793, height: 970)
+        XCTAssertTrue(WindowTiler.continuesCycle(left: [left, landed], current: landed))
+        XCTAssertFalse(WindowTiler.continuesCycle(left: [left], current: landed))
+    }
+
+    func testNothingRecordedNeverContinues() {
+        XCTAssertFalse(WindowTiler.continuesCycle(left: [], current: left))
+    }
+
+    // MARK: - Previous and next display
+
+    /// `NSScreen.screens` order is enumeration order, not the desk: here the primary sits in the
+    /// middle, the right-hand monitor was enumerated second and the left-hand one third.
+    private let primary = CGRect(x: 0, y: 25, width: 1600, height: 975)
+    private let rightOfIt = CGRect(x: 1600, y: 0, width: 1920, height: 1080)
+    private let leftOfIt = CGRect(x: -2560, y: 0, width: 2560, height: 1440)
+
+    func testNextDisplayGoesRightWhateverTheEnumerationOrder() {
+        let areas = [primary, rightOfIt, leftOfIt]
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 0, step: 1, in: areas), 1)
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 2, step: 1, in: areas), 0)
+    }
+
+    func testPreviousDisplayGoesLeftWhateverTheEnumerationOrder() {
+        let areas = [primary, rightOfIt, leftOfIt]
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 0, step: -1, in: areas), 2)
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 1, step: -1, in: areas), 0)
+    }
+
+    func testTheStepWrapsAtBothEnds() {
+        let areas = [primary, rightOfIt, leftOfIt]
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 1, step: 1, in: areas), 2)
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 2, step: -1, in: areas), 1)
+    }
+
+    /// Displays stacked one above the other share an x; the upper one comes first.
+    func testStackedDisplaysStepTopToBottom() {
+        let below = CGRect(x: 0, y: 1000, width: 1600, height: 900)
+        let areas = [below, primary]
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 1, step: 1, in: areas), 0)
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 0, step: 1, in: areas), 1)
+    }
+
+    func testTwoDisplaysAlreadyInOrderBehaveAsBefore() {
+        let areas = [primary, rightOfIt]
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 0, step: 1, in: areas), 1)
+        XCTAssertEqual(WindowTiler.displayStepTarget(from: 1, step: 1, in: areas), 0)
+    }
+}
+
 /// Zone detection for drag-to-edge snapping. Screen coordinates here are Cocoa's — bottom-up — so
 /// "top" is the maximum y, which is the opposite of everything in the tiling geometry above.
 final class DragSnapZoneTests: XCTestCase {
@@ -1342,6 +1495,49 @@ final class DragSnapZoneTests: XCTestCase {
         // A top-left resize moves the origin *and* changes the size; still not a move.
         let cornerResized = CGRect(x: 80, y: 80, width: 820, height: 620)
         XCTAssertFalse(DragSnap.isMove(from: initial, to: cornerResized))
+    }
+
+    // MARK: - The modifier-drag's narrower zones
+
+    private func zone(_ x: CGFloat, _ y: CGFloat, _ action: MouseDragAction) -> WindowArrangement? {
+        DragSnap.zone(
+            for: CGPoint(x: x, y: y), in: frame, zones: MouseWindowDrag.snapZones(for: action))
+    }
+
+    /// A resize dragged to a screen edge means "reach the edge". The edge band used to snap the
+    /// window to that half on release and throw the resize away.
+    func testAResizeDraggedToAnEdgeDoesNotSnap() {
+        XCTAssertNil(zone(1, 500, .resize))
+        XCTAssertNil(zone(1599, 500, .resize))
+        XCTAssertNil(zone(800, 999, .resize))
+        XCTAssertNil(zone(800, 1, .resize))
+    }
+
+    /// Nor does a resize carried through the middle of the screen maximize.
+    func testAResizeThroughTheCentreDoesNotMaximize() {
+        XCTAssertNil(zone(frame.midX, frame.midY, .resize))
+    }
+
+    /// A corner still means a quarter, whichever action carried the cursor there.
+    func testAResizeIntoACornerStillSnapsToThatQuarter() {
+        XCTAssertEqual(zone(1, 999, .resize), .topLeft)
+        XCTAssertEqual(zone(1599, 1, .resize), .bottomRight)
+    }
+
+    /// A move keeps the edges and corners but not the centre box: the gesture grabs anywhere, so a
+    /// window held by its middle and nudged would otherwise maximize.
+    func testAModifierMoveKeepsEdgesAndCornersButNotTheCentre() {
+        XCTAssertEqual(zone(1, 500, .move), .leftHalf)
+        XCTAssertEqual(zone(800, 999, .move), .maximize)
+        XCTAssertEqual(zone(1599, 999, .move), .topRight)
+        XCTAssertNil(zone(frame.midX, frame.midY, .move))
+    }
+
+    /// The titlebar drag is untouched: the default is every zone, centre included.
+    func testTheTitlebarDragStillHasTheCentreBox() {
+        XCTAssertEqual(
+            DragSnap.zone(for: CGPoint(x: frame.midX, y: frame.midY), in: frame, zones: .all),
+            .maximize)
     }
 }
 

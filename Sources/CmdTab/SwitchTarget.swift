@@ -134,6 +134,45 @@ struct SwitchTarget: Identifiable {
 
     /// The `CGWindowID` parsed back out of a window target's id, when it carries a resolved one.
     var windowID: CGWindowID? { TargetProvider.windowID(fromTargetID: id) }
+
+    /// Whether the close action — the tile's ✕ and ⌥W alike — may act on this tile.
+    ///
+    /// A tab tile is refused, and that is the decision rather than a gap. A tab has no close button
+    /// of its own that Accessibility exposes; the only one in reach is its *window's*, so closing a
+    /// tab tile pressed the whole window's red button and took every other tab in it along, with no
+    /// confirmation, from a gesture that reads as "close this one tab". A launch or fallback tile
+    /// has nothing open to close at all.
+    var canClose: Bool {
+        switch kind {
+        case .app, .window: return true
+        case .tab, .launch, .fallback: return false
+        }
+    }
+
+    /// The Accessibility window this tile stands for: the window itself, or the window a tab lives
+    /// in. nil for an app tile (which stands for the app, not one window) and for anything not
+    /// running. What lets a closed window take every tile it owned out of the list, whichever kind
+    /// of tile named it.
+    var windowElement: AXUIElement? {
+        switch kind {
+        case .window(_, let element): return element
+        case .tab(let ref): return ref.window
+        case .app, .launch, .fallback: return nil
+        }
+    }
+
+    /// Whether this tile may only be taken when it is named outright — Return, a click, ⌘-digit —
+    /// and never by letting go of the trigger.
+    ///
+    /// Only the shell fallback. A fallback tile always counts as a match, so a query nothing
+    /// answered left the highlight on it, and the plain ⌘ release that ends every session ran the
+    /// query through `/bin/zsh -lc` — a command executed by the gesture that means "never mind".
+    /// The URL and search fallbacks open a page, which a release can be forgiven for; running a
+    /// string nobody confirmed is not.
+    var commitsOnlyWhenNamed: Bool {
+        if case .fallback(.shellCommand) = kind { return true }
+        return false
+    }
 }
 
 extension SwitchTarget {
@@ -191,13 +230,30 @@ extension SwitchTarget {
     ///
     /// A window target defers to `focusWindow`, which additionally switches Desktops when the window
     /// lives on another one — the difference between going to a window and dragging it to you.
-    func focus() {
+    ///
+    /// `onLaunchFailure` runs on the main actor when a launch tile's app would not open — see the
+    /// completion handler below for why the caller has to hear about it.
+    func focus(onLaunchFailure: (@MainActor @Sendable () -> Void)? = nil) {
         // A favourite that isn't running launches instead of switching — handled before the
         // running-app guard below, which would otherwise reject its absent pid.
         if case .launch(let url) = kind {
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: config)
+            let id = self.id
+            // With a handler, not bare. A favourite uninstalled or moved since its metadata was
+            // cached made a tile that did nothing when picked and said nothing either, for as long
+            // as the process lived — the cache is never re-checked on its own. The failure is
+            // logged and handed back so the caller can drop the stale entry.
+            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+                guard let error else { return }
+                Log.general.error(
+                    """
+                    launch \(id, privacy: .public) failed: \
+                    \(error.localizedDescription, privacy: .public)
+                    """)
+                guard let onLaunchFailure else { return }
+                DispatchQueue.main.async { MainActor.assumeIsolated { onLaunchFailure() } }
+            }
             return
         }
         if case .fallback(let action) = kind {
@@ -237,6 +293,10 @@ extension SwitchTarget {
             Self.focusQueue.async {
                 guard Self.isCurrent(generation) else { return }
                 let resolved = Self.windowID(of: window, parsed: parsed, pid: pid)
+                // Again after the lookup: its last route walks the whole window list, and a pick
+                // enqueued while it ran owns the screen from here — including the blind raise
+                // below.
+                guard Self.isCurrent(generation) else { return }
                 guard let id = resolved, !wasMinimized else {
                     // Either no id to look a Space up with, or a minimized window — which sits in
                     // the Dock, on no Desktop at all, so there is nothing to switch to first and
@@ -259,7 +319,8 @@ extension SwitchTarget {
                     Self.activate(pid: pid)
                     return
                 }
-                Self.focusWindow(id: id, pid: pid, title: title)
+                // Inline, under this pick's own generation — see the internal `focusWindow`.
+                Self.focusWindow(id: id, pid: pid, title: title, generation: generation)
             }
 
         case .tab(let ref):
@@ -282,8 +343,11 @@ extension SwitchTarget {
             Self.focusQueue.async {
                 guard Self.isCurrent(generation) else { return }
                 let resolved = Self.windowID(of: window, parsed: parsed, pid: pid)
+                // As on the window path: a later pick that arrived during the lookup wins, and that
+                // includes the tab press below, which would otherwise switch tabs under it.
+                guard Self.isCurrent(generation) else { return }
                 if let id = resolved, !wasMinimized {
-                    Self.focusWindow(id: id, pid: pid)
+                    Self.focusWindow(id: id, pid: pid, generation: generation)
                 } else {
                     Self.raise(element: window)
                     Self.activate(pid: pid)
@@ -402,7 +466,7 @@ extension SwitchTarget {
             // map places it, so re-reading it there could only lose the answer, never improve it.
             // The whole map goes down rather than `state` alone — `focusWindow` needs this app's
             // other windows to tell a Desktop switch from a gather.
-            focusWindow(id: front, pid: pid, placement: placement)
+            focusWindow(id: front, pid: pid, placement: placement, generation: generation)
         }
     }
 
@@ -991,6 +1055,29 @@ extension SwitchTarget {
         // Claimed on the caller's thread, before the hop: see `focusGeneration`.
         let generation = beginFocus()
         focusQueue.async {
+            focusWindow(id: id, pid: pid, placement: known, title: title, generation: generation)
+        }
+    }
+
+    /// The body of `focusWindow`, run inline on `focusQueue` under a generation the caller already
+    /// holds.
+    ///
+    /// Split from the public entry because three callers — `focusApp` and the window and tab tile
+    /// picks — reach it from inside a `focusQueue` block that has already claimed a generation.
+    /// They used to call the public entry, which claimed a *second* one and enqueued: so a pick
+    /// made while the first block was still running (its window-id lookup can walk the whole window
+    /// list) was superseded by the re-claim and dropped at its guard, and the older pick went on to
+    /// own the screen. Claiming once, at the entry the user actually triggered, is what lets the
+    /// newer pick win.
+    private static func focusWindow(
+        id: CGWindowID, pid: pid_t, placement known: [CGWindowID: SpaceMover.SpaceState]? = nil,
+        title: String? = nil, generation: UInt64
+    ) {
+        dispatchPrecondition(condition: .onQueue(focusQueue))
+        // A bare scope where the queued block used to be, so the split moved no line of the body
+        // below — its history stays readable in blame, and every `return` in it still means "end
+        // this pick".
+        do {
             guard isCurrent(generation) else { return }
 
             // A minimized window sits in the Dock, on no Desktop at all: there is nothing to switch
@@ -1999,7 +2086,12 @@ extension SwitchTarget {
 
     /// Closes the window (window mode) or the app's frontmost window (app mode) by pressing its AX
     /// close button. Runs off the main thread — the same event-tap constraint as `focus()`.
+    ///
+    /// Refused for anything `canClose` refuses. `resolveWindow` answers a tab with its window,
+    /// which is right for minimize, zoom and the moves — they act on the window a tab is shown in —
+    /// and exactly wrong here, where it closed every tab in that window.
     func closeWindow() {
+        guard canClose else { return }
         let kind = self.kind
         Self.focusQueue.async {
             guard let window = Self.resolveWindow(kind) else { return }
@@ -2071,7 +2163,11 @@ extension SwitchTarget {
             // window on no display has no next display to be sent to.
             let frame = CGRect(origin: origin, size: size)
             guard let from = WindowTiler.homeDisplay(of: frame, in: frames) else { return }
-            let to = frames[((from + delta) % frames.count + frames.count) % frames.count]
+            // Stepped left to right across the desk, by the same rule as the ⌃⇧⌘-arrow chords —
+            // see `WindowTiler.displayStepTarget`. Stepping `frames` in its own order, which is
+            // `NSScreen.screens`' enumeration order, sent "next display" leftwards on any desk not
+            // enumerated the way it is arranged, and disagreed with the chord that means the same.
+            let to = frames[WindowTiler.displayStepTarget(from: from, step: delta, in: frames)]
             let current = frames[from]
             // The shared arithmetic, not a second copy of it: the promise both sides document is
             // that a window thrown either way lands in the same place, and one function is the only

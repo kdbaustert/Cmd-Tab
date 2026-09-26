@@ -138,6 +138,12 @@ struct AboutSettings: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .onAppear(perform: refresh)
+        // Granting either permission happens in System Settings, and coming back from it does not
+        // re-show this tab — read only on appear, the pill went on saying "Not granted" about a
+        // grant just made. Re-read on return, as `ScreenRecordingWarning` does.
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in refresh() }
     }
 
     private var hero: some View {

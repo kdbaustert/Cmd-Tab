@@ -184,6 +184,86 @@ enum MouseDragGeometry {
     }
 }
 
+// MARK: - Hit testing
+
+/// What a press at a screen point would actually reach, read off the window server's list.
+///
+/// Every mouse gesture here used to walk that list looking for the first `layer == 0` window under
+/// the point and *skip* everything above it. That answers "which ordinary window is under here",
+/// which is not the question: a float-on-top video, a panel, the Dock or an open menu sits above
+/// layer 0, covers what is beneath it, and a click there lands on *it*. Skipping it made the
+/// surface invisible to the gesture — a modifier-drag on a floating player grabbed and snapped the
+/// window underneath, and `DesktopMover`'s grab test passed a title bar a floating window was
+/// covering, so its synthetic press dragged the floating window instead.
+///
+/// So the walk stops at the first surface that is really there and answers from that one:
+/// an ordinary window is a target, anything else means the press is not ours to take.
+/// Focus-follows-mouse made the same call first, as a layer check ahead of a second walk of the
+/// list; this is that rule with the window attached, so a caller gets both answers from one copy.
+enum WindowHitTest {
+    /// One entry of the on-screen list, parsed once.
+    struct Surface: Equatable {
+        let id: CGWindowID
+        let pid: pid_t
+        let layer: Int
+        let alpha: Double
+        let bounds: CGRect
+    }
+
+    /// Surfaces at this level and above are drawn over everything and taken by nothing — dimming
+    /// tools, cursor highlighters, full-screen effects. Counting them would put every point on the
+    /// display under something.
+    static let ceiling = Int(CGWindowLevelForKey(.screenSaverWindow))
+
+    /// The on-screen list, front to back.
+    static func onScreen() -> [Surface] {
+        guard
+            let info = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return [] }
+        return info.compactMap { window in
+            guard let layer = window[kCGWindowLayer as String] as? Int,
+                let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                let id = window[kCGWindowNumber as String] as? CGWindowID,
+                let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary)
+            else { return nil }
+            let alpha = (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+            return Surface(id: id, pid: pid, layer: layer, alpha: alpha, bounds: bounds)
+        }
+    }
+
+    /// The frontmost surface at `point` that covers what is beneath it, or nil over bare desktop.
+    ///
+    /// Passed over rather than counted: anything at or above `ceiling`, anything fully transparent,
+    /// zero-area phantoms (the Electron and Catalyst backing windows `WindowNavigator.onScreen`
+    /// drops for the same reason), and — when `ownPID` is given — this app's own surfaces above
+    /// layer 0. Those are the snap overlays, which are click-through by construction (see
+    /// `OverlayPanel`), so a press goes straight through them to whatever they are drawn over.
+    /// Our layer-0 windows stay targets: Settings is an ordinary window.
+    static func topmost(
+        at point: CGPoint, in surfaces: [Surface], passingThrough ownPID: pid_t?
+    ) -> Surface? {
+        surfaces.first { surface in
+            surface.layer < ceiling && surface.alpha > 0
+                && surface.bounds.width > 1 && surface.bounds.height > 1
+                && surface.bounds.contains(point)
+                && !(surface.pid == ownPID && surface.layer != 0)
+        }
+    }
+
+    /// The ordinary window a press at `point` reaches, or nil when the press lands on something
+    /// drawn above the windows — in which case the gesture passes and the press goes where it
+    /// would have gone anyway.
+    static func window(
+        at point: CGPoint, in surfaces: [Surface], passingThrough ownPID: pid_t?
+    ) -> Surface? {
+        guard let top = topmost(at: point, in: surfaces, passingThrough: ownPID), top.layer == 0
+        else { return nil }
+        return top
+    }
+}
+
 // MARK: - The gesture
 
 /// The thread the mouse tap runs on.
@@ -661,9 +741,8 @@ final class MouseWindowDrag: @unchecked Sendable {
                 : MouseDragGeometry.resized(session.startFrame, corner: session.corner, by: delta)
             write(frame, isMove: session.action == .move)
             // The window follows the cursor either way; the overlay says where letting go will
-            // actually put it. Both gestures snap, since a resize dragged into a corner means the
-            // same thing a move dragged there does.
-            updatePreview(at: location)
+            // actually put it. Both gestures snap, but not to the same zones — see `snapZones`.
+            updatePreview(at: location, zones: Self.snapZones(for: session.action))
             return true
 
         case .leftMouseUp:
@@ -854,20 +933,40 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// — so the event location is flipped first. Shared with the titlebar drag deliberately: an
     /// edge that snaps one way has to snap the same way the other, or the two gestures would
     /// disagree about where the left half begins.
-    private func snapZone(at point: CGPoint) -> (zone: WindowArrangement, area: CGRect)? {
+    private func snapZone(
+        at point: CGPoint, zones: DragSnap.Zones
+    ) -> (zone: WindowArrangement, area: CGRect)? {
         let (screens, height) = lock.withLock { (displays, primaryHeight) }
         let flipped = CGPoint(x: point.x, y: height - point.y)
         for display in screens where NSMouseInRect(flipped, display.frame, false) {
-            guard let zone = DragSnap.zone(for: flipped, in: display.frame) else { return nil }
+            guard let zone = DragSnap.zone(for: flipped, in: display.frame, zones: zones)
+            else { return nil }
             return (zone, display.area)
         }
         return nil
     }
 
+    /// Which of `DragSnap`'s zones each action may drop into.
+    ///
+    /// Neither takes the centre box. The titlebar drag can offer one because its cursor is on a
+    /// titlebar being carried somewhere; this gesture grabs anywhere, so the cursor is wherever the
+    /// press happened to land, and a window moved a little while held by its middle would maximize.
+    ///
+    /// A resize takes the corners and nothing else. Its cursor *is* the corner being dragged, and
+    /// dragging that corner to a screen edge means "make the window reach the edge" — an edge band
+    /// there snapped the window to that half and threw the resize away. A corner dragged into a
+    /// screen corner still means the same thing a move dragged there does: that quarter.
+    static func snapZones(for action: MouseDragAction) -> DragSnap.Zones {
+        switch action {
+        case .move: return [.corners, .edges]
+        case .resize: return .corners
+        }
+    }
+
     /// Shows or hides the overlay for the zone the cursor is over. Called on every drag event, so it
     /// hops to main only when the zone actually changes.
-    private func updatePreview(at point: CGPoint) {
-        let match = snapZone(at: point)
+    private func updatePreview(at point: CGPoint, zones: DragSnap.Zones) {
+        let match = snapZone(at: point, zones: zones)
         let changed: Bool = lock.withLock {
             // Compare both the zone kind and the display area: the same zone kind (e.g. `.leftHalf`)
             // recurring on a different, adjacent display must still count as a change, or the drop
@@ -898,33 +997,19 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// it: this runs on every left click on the machine, and the window list is one cheap call where
     /// an AX hit test is IPC to whichever app was clicked. The event's location is already in
     /// top-left coordinates, which is the space the window list reports.
+    ///
+    /// nil when something drawn *above* the ordinary windows is under the point — see
+    /// `WindowHitTest.window(at:in:passingThrough:)` for why that passes rather than looking past.
+    ///
+    /// Our own windows are targets like anyone else's: Settings is an ordinary resizable window,
+    /// and being unable to grab the one window this app definitely owns is the most obvious thing
+    /// that can be wrong with the gesture. Our own *overlays* are passed through instead — they are
+    /// click-through, and the outline the hold-and-point gesture draws is sitting over exactly the
+    /// window this press is aimed at.
     static func window(at point: CGPoint) -> (pid: pid_t, bounds: CGRect)? {
-        guard
-            let info = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
-        else { return nil }
-        for window in info {
-            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
-                let pid = window[kCGWindowOwnerPID as String] as? pid_t,
-                let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
-                let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
-                // A zero-area surface is not a window a click can land on — see
-                // `WindowNavigator.onScreen`, which drops the same Electron/Catalyst phantom backing
-                // windows for the identical reason.
-                bounds.width > 1, bounds.height > 1,
-                bounds.contains(point)
-            else { continue }
-            // Front-most match wins — the list is in z-order — so a window behind another cannot
-            // claim a press that landed on the one on top.
-            //
-            // Our own windows are targets like anyone else's: Settings is an ordinary resizable
-            // window, and being unable to grab the one window this app definitely owns is the most
-            // obvious thing that can be wrong with the gesture. The switcher panel and the snap
-            // overlays are not reachable here — they sit above `.normal`, so the `layer == 0` test
-            // has already dropped them.
-            return (pid, bounds)
-        }
-        return nil
+        WindowHitTest.window(
+            at: point, in: WindowHitTest.onScreen(), passingThrough: getpid()
+        ).map { ($0.pid, $0.bounds) }
     }
 
     /// The Accessibility element for the window whose frame matches `bounds`.

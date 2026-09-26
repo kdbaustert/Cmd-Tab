@@ -138,7 +138,14 @@ enum InstalledApps {
 
         for root in roots {
             for url in appBundles(under: root, manager: manager) {
-                guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier,
+                // The Info.plist read on its own, not a `Bundle`. `Bundle(url:)` instances are
+                // cached process-wide and never released, so a scan built one per installed app and
+                // kept them all — measured at 3MB for 166 apps, held for the life of a login item
+                // to answer three keys each.
+                guard
+                    let info = CFBundleCopyInfoDictionaryInDirectory(url as CFURL)
+                        as? [String: Any],
+                    let id = info[kCFBundleIdentifierKey as String] as? String,
                     // Ourselves. The other two stores that hold app identities guard against this
                     // — `ExclusionStore.setExcluded` and `FavoritesStore.add` both refuse our own
                     // bundle id — and this one is the same idea for a different reason: the
@@ -149,10 +156,17 @@ enum InstalledApps {
                     !seen.contains(id)
                 else { continue }
                 seen.insert(id)
-                let name =
-                    (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
-                    ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                // The name comes from FileManager, not the Info.plist just read: the raw plist
+                // keys carry the unlocalized name, and a French system would offer "Preview"
+                // where the Finder says "Aperçu". `displayName(atPath:)` answers with the same
+                // localized name the Finder shows, without constructing (and caching) a Bundle.
+                let fallback =
+                    (info["CFBundleDisplayName"] as? String)
+                    ?? (info[kCFBundleNameKey as String] as? String)
                     ?? url.deletingPathExtension().lastPathComponent
+                var name = manager.displayName(atPath: url.path)
+                if name.isEmpty { name = fallback }
+                if name == url.lastPathComponent { name = fallback }
                 out.append(Entry(bundleID: id, name: name, url: url))
             }
         }

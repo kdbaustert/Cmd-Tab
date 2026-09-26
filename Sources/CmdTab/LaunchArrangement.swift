@@ -142,22 +142,30 @@ final class LaunchArrangementWatcher {
             return
         }
         let areas = WindowTiler.visibleAreas()
-        // Enqueued before `apply`, on the same serial tiling queue, so the move is guaranteed to
-        // land before the arrangement reads the window's home display — "display 2, left half"
-        // has to mean the left half of display 2, not whichever display the window opened on.
-        if let launchDisplay {
-            Log.general.notice(
-                "launch arrangement: moving pid \(pid, privacy: .public) to display \(launchDisplay, privacy: .public)")
-            WindowTiler.moveToLaunchDisplay(pid: pid, displayNumber: launchDisplay, areas: areas)
+        // The display the rule names, handed to the tiler as the area to arrange against — so
+        // "display 2, left half" is computed on display 2 and written once. By the same 1-based
+        // numbering `display1…4` and the tile badges use, and not capped at four: there is no chord
+        // to run out of. A display not plugged in right now is no destination at all, and the
+        // arrangement applies wherever the window opened — see `AppRule.launchDisplay`.
+        //
+        // This used to be a separate move queued ahead of `apply`, with `apply` re-reading the
+        // window's frame to find its new display. On hosts that apply Accessibility writes late the
+        // move had not landed by then, and the window was tiled on the display it opened on.
+        let destination = launchDisplay.flatMap { number in
+            areas.indices.contains(number - 1) ? areas[number - 1] : nil
         }
         Log.general.notice(
-            "launch arrangement: applying \(arrangement.rawValue, privacy: .public) to pid \(pid, privacy: .public)")
+            """
+            launch arrangement: applying \(arrangement.rawValue, privacy: .public) to pid \
+            \(pid, privacy: .public) on \
+            \(launchDisplay.map { "display \($0)" } ?? "its own display", privacy: .public)
+            """)
         // `cycleWidths: false` — the width cycle is a response to pressing the same chord twice, and
         // there is no second press here. Left on, a launch would consume the first step of the cycle
         // and the user's first real chord would land on the second.
         WindowTiler.apply(
             arrangement, pid: pid, areas: areas,
-            cycleWidths: false, gap: gap)
+            cycleWidths: false, gap: gap, destination: destination)
     }
 
     /// Whether the app owns a window worth tiling. The role filter is what keeps a splash screen or

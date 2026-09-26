@@ -303,10 +303,11 @@ enum ShortcutImport {
     /// What importing `result` would actually do, once it is checked against every chord already
     /// claimed in this app.
     ///
-    /// Pure and MainActor-free but for the type it lives on — `activeChords` is a plain snapshot
-    /// (`ShortcutAudit.entries()`'s chords, shift-blinded), not a live store, so this is testable
-    /// with a fabricated set standing in for "here is what Cmd-Tab already has bound". `current`
-    /// and `shadows` are snapshots in the same way, and default to "nothing" for the same reason.
+    /// Pure and MainActor-free but for the type it lives on — `activeChords` and `activeOpeners`
+    /// are plain snapshots of `ShortcutAudit.entries()`'s chords, not live stores, so this is
+    /// testable with fabricated sets standing in for "here is what Cmd-Tab already has bound".
+    /// `current` and `shadows` are snapshots in the same way, and default to "nothing" for the same
+    /// reason.
     struct Plan {
         var toApply: [ProposedChange] = []
         var droppedForCollision: [ProposedChange] = []
@@ -319,6 +320,11 @@ enum ShortcutImport {
     }
 
     /// - Parameters:
+    ///   - activeChords: the chords of the active bindings that match exactly, Shift included.
+    ///   - activeOpeners: the chords of the active openers, Shift removed — they claim every Shift
+    ///     variant. Two sets because an existing binding is compared by the same rule two imported
+    ///     ones are, `ShortcutAudit.collisions`' rule. One Shift-blind set refused Rectangle's ⌃⌘⇧↑
+    ///     because ⌃⌘↑ was bound, two chords every matcher here tells apart.
     ///   - current: each target's present chord, keyed by `ProposedChange.id` — which spells
     ///     targets the way `ShortcutAudit.entries()` spells its ids. A chord a target already has
     ///     is claimed *by that target*, and reporting it as "bound to something else" named a
@@ -330,6 +336,7 @@ enum ShortcutImport {
     ///     the recorder asks before moving the actions, and this has no one to ask mid-plan.
     nonisolated static func plan(
         from result: ImportResult, activeChords: Set<ShortcutEntry.Chord>,
+        activeOpeners: Set<ShortcutEntry.Chord> = [],
         current: [String: ShortcutEntry.Chord] = [:],
         shadows: (Hotkey) -> [String] = { _ in [] }
     ) -> Plan {
@@ -365,7 +372,9 @@ enum ShortcutImport {
             let clashesWithImport = accepted.contains { other in
                 same(other.chord, chord, blind: other.ignoresShift || ignoresShift)
             }
-            if activeChords.contains(chord.ignoringShift) || clashesWithImport {
+            let clashesWithExisting = activeOpeners.contains(chord.ignoringShift)
+                || activeChords.contains { same($0, chord, blind: ignoresShift) }
+            if clashesWithExisting || clashesWithImport {
                 plan.droppedForCollision.append(change)
                 return
             }
@@ -430,7 +439,14 @@ enum ShortcutImport {
         }
 
         let entries = ShortcutAudit.entries()
-        let activeChords = Set(entries.filter(\.isActive).compactMap { $0.chord?.ignoringShift })
+        // Not the App Shortcuts: they resolve inside the front app, after the tap has taken the
+        // key, so an imported chord on one of them wins rather than losing — see
+        // `ShortcutEntry.isAppShortcut`.
+        let claiming = entries.filter { $0.isActive && !$0.isAppShortcut }
+        let activeChords = Set(
+            claiming.filter { !$0.kind.ignoresShift }.compactMap(\.chord))
+        let activeOpeners = Set(
+            claiming.filter(\.kind.ignoresShift).compactMap { $0.chord?.ignoringShift })
         let current = Dictionary(
             entries.compactMap { entry in entry.chord.map { (entry.id, $0) } },
             uniquingKeysWith: { first, _ in first })
@@ -441,7 +457,8 @@ enum ShortcutImport {
             actions.isEnabled ? actions.shortcuts.actionsShadowed(by: trigger).map(\.title) : []
         } ?? []
         let plan = plan(
-            from: merged, activeChords: activeChords, current: current,
+            from: merged, activeChords: activeChords, activeOpeners: activeOpeners,
+            current: current,
             shadows: { _ in silenced })
 
         guard !plan.toApply.isEmpty || !plan.droppedForCollision.isEmpty

@@ -262,6 +262,21 @@ final class DragSnap {
 
     // MARK: - Geometry
 
+    /// Which families of zone a gesture may land in.
+    ///
+    /// The titlebar drag takes all three. The modifier-drag in `MouseWindowDrag` cannot: it grabs
+    /// the window *anywhere*, so its cursor is wherever the user happened to press rather than on a
+    /// titlebar being carried somewhere — and for a resize the cursor is the corner being dragged,
+    /// so an edge band or the centre box would turn "make this window reach the screen edge" into
+    /// "throw the resize away and tile it". See `MouseWindowDrag.snapZones(for:)`.
+    struct Zones: OptionSet {
+        let rawValue: Int
+        static let corners = Zones(rawValue: 1 << 0)
+        static let edges = Zones(rawValue: 1 << 1)
+        static let centre = Zones(rawValue: 1 << 2)
+        static let all: Zones = [.corners, .edges, .centre]
+    }
+
     /// The arrangement a cursor position is over, against an explicit screen frame, or nil away
     /// from every edge.
     ///
@@ -275,8 +290,11 @@ final class DragSnap {
     /// wrapper that used to sit above this is gone with its last caller — `mouseDragged` resolves
     /// the screen itself now, because it needs the index for `visibleArea(atScreen:)` anyway and
     /// two independent lookups could disagree at a boundary.
+    ///
+    /// `zones` narrows which families can answer; a point in a family left out is nil rather than
+    /// falling through to another.
     nonisolated static func zone(
-        for point: CGPoint, in frame: CGRect, threshold: CGFloat? = nil
+        for point: CGPoint, in frame: CGRect, threshold: CGFloat? = nil, zones: Zones = .all
     ) -> WindowArrangement? {
         let edge = threshold ?? edgeThreshold
         // `NSMouseInRect`, not `CGRect.contains`, and the difference is the whole top edge.
@@ -296,7 +314,8 @@ final class DragSnap {
         // The centre of the screen takes the whole screen. Tested before the edge bail-out but
         // after the edges are measured, so an edge always wins — the box is nowhere near one.
         let box = CGSize(width: frame.width * centerFraction, height: frame.height * centerFraction)
-        if abs(point.x - frame.midX) <= box.width / 2, abs(point.y - frame.midY) <= box.height / 2 {
+        if zones.contains(.centre), abs(point.x - frame.midX) <= box.width / 2,
+            abs(point.y - frame.midY) <= box.height / 2 {
             return .maximize
         }
         guard nearLeft || nearRight || nearTop || nearBottom else { return nil }
@@ -306,10 +325,13 @@ final class DragSnap {
         let inTop = frame.maxY - point.y <= cornerThreshold
         let inBottom = point.y - frame.minY <= cornerThreshold
 
-        if (nearTop || nearLeft) && inTop && inLeft { return .topLeft }
-        if (nearTop || nearRight) && inTop && inRight { return .topRight }
-        if (nearBottom || nearLeft) && inBottom && inLeft { return .bottomLeft }
-        if (nearBottom || nearRight) && inBottom && inRight { return .bottomRight }
+        if zones.contains(.corners) {
+            if (nearTop || nearLeft) && inTop && inLeft { return .topLeft }
+            if (nearTop || nearRight) && inTop && inRight { return .topRight }
+            if (nearBottom || nearLeft) && inBottom && inLeft { return .bottomLeft }
+            if (nearBottom || nearRight) && inBottom && inRight { return .bottomRight }
+        }
+        guard zones.contains(.edges) else { return nil }
         if nearLeft { return .leftHalf }
         if nearRight { return .rightHalf }
         // Top is maximize rather than "top half", matching every other platform's edge-snap and the

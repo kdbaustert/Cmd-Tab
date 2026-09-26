@@ -186,6 +186,35 @@ final class DesktopMoverLayoutTests: XCTestCase {
         XCTAssertEqual(DesktopMover.thumbnailCentres(of: [], in: .zero), [])
     }
 
+    /// A full-screen app's Space is a thumbnail in the same row, and the row is what Mission
+    /// Control centres. Four Desktops and one full-screen Space at the end, reported the macOS 27
+    /// way: each frame's left edge on its thumbnail's centre. Centring the Desktops alone moved
+    /// every aim by half a slot; with the full-screen thumbnail in the span each is back on `minX`.
+    func testAFullScreenSpaceInTheRowIsPartOfTheCentring() {
+        let bar = CGRect(x: 0, y: 0, width: 2056, height: 194)
+        let width: CGFloat = 169
+        let xs: [CGFloat] = [686, 857, 1028, 1199]
+        let desktops = xs.map { CGRect(x: $0, y: 125, width: width, height: 129) }
+        let fullScreen = CGRect(x: 1370, y: 125, width: width, height: 129)
+        let centres = DesktopMover.thumbnailCentres(of: desktops, in: bar, alongside: [fullScreen])
+        for (centre, x) in zip(centres, xs) {
+            XCTAssertEqual(centre, x, accuracy: 1)
+        }
+    }
+
+    /// Only thumbnails join the row. A button of another size, or on another line — an add-Desktop
+    /// control, anything else hung off the bar — leaves the centring as it was.
+    func testButtonsThatAreNotThumbnailsStayOutOfTheCentring() {
+        let bar = CGRect(x: 0, y: 0, width: 2056, height: 194)
+        let xs: [CGFloat] = [599, 771, 942, 1113, 1284, 1456]
+        let frames = xs.map { CGRect(x: $0, y: 125, width: 169, height: 129) }
+        let small = CGRect(x: 1990, y: 60, width: 40, height: 40)
+        let elsewhere = CGRect(x: 1700, y: 900, width: 169, height: 129)
+        XCTAssertEqual(
+            DesktopMover.thumbnailCentres(of: frames, in: bar, alongside: [small, elsewhere]),
+            DesktopMover.thumbnailCentres(of: frames, in: bar))
+    }
+
     // MARK: - Taking hold
 
     /// The midpoint leads, because it is what shipped and it is the title bar in every native

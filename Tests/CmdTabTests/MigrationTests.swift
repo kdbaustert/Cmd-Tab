@@ -17,22 +17,28 @@ import XCTest
 /// re-runs a completed migration against settings the user has since tuned by hand.
 final class MigrationTests: XCTestCase {
 
-    /// A throwaway domain per test. `removePersistentDomain` on the way in as well as out — a
-    /// crashed run leaves the suite behind, and a migration that reads a done-key from the *previous*
-    /// test would sit there doing nothing while every assertion still passed.
+    /// A throwaway domain per test. Cleared on the way in as well as out — a crashed run leaves the
+    /// suite behind, and a migration that reads a done-key from the *previous* test would sit there
+    /// doing nothing while every assertion still passed. See `ThrowawayDefaults` for the file.
+    private static let group = "migration"
     private var suiteName: String!
     private var defaults: UserDefaults!
 
+    override class func setUp() {
+        super.setUp()
+        ThrowawayDefaults.sweep(group)
+    }
+
     override func setUpWithError() throws {
         try super.setUpWithError()
-        suiteName = "com.cmdtab.tests.migration.\(UUID().uuidString)"
-        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        suiteName = ThrowawayDefaults.suiteName(in: Self.group)
+        ThrowawayDefaults.remove(suiteName)
         defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     }
 
     override func tearDownWithError() throws {
-        UserDefaults.standard.removePersistentDomain(forName: suiteName)
         defaults = nil
+        ThrowawayDefaults.remove(suiteName)
         suiteName = nil
         try super.tearDownWithError()
     }
@@ -46,6 +52,13 @@ final class MigrationTests: XCTestCase {
         var messages: [String] = []
         Migration.run(in: defaults) { messages.append($0) }
         return messages
+    }
+
+    /// What the suite itself holds. `object(forKey:)` falls through to the registration domain,
+    /// which is process-wide, so once any earlier test has touched a store that registers its
+    /// defaults, an absent key reads back as its default and a nil assertion fails for nothing.
+    private func stored(_ key: String) -> Any? {
+        UserDefaults.standard.persistentDomain(forName: suiteName)?[key]
     }
 
     // MARK: - Idempotence
@@ -106,8 +119,8 @@ final class MigrationTests: XCTestCase {
     func testABadgesOptInIsNotCarriedAcross() {
         defaults.set(true, forKey: "showBadges")
         migrate()
-        XCTAssertNil(defaults.object(forKey: "showDisplayBadges"))
-        XCTAssertNil(defaults.object(forKey: "showSpaceBadges"))
+        XCTAssertNil(stored("showDisplayBadges"))
+        XCTAssertNil(stored("showSpaceBadges"))
     }
 
     /// The retired key stays on disk: `retiredDefaultsKeys` sweeps it on the next reset, and removing
@@ -141,8 +154,8 @@ final class MigrationTests: XCTestCase {
 
     func testNothingIsSeededWhenTheRetiredColourWasNeverSet() {
         migrate()
-        XCTAssertNil(defaults.object(forKey: "windowSnapOutlineColorHex"))
-        XCTAssertNil(defaults.object(forKey: "windowSnapLandingColorHex"))
+        XCTAssertNil(stored("windowSnapOutlineColorHex"))
+        XCTAssertNil(stored("windowSnapLandingColorHex"))
     }
 
     // MARK: - windowLayouts
@@ -153,7 +166,7 @@ final class MigrationTests: XCTestCase {
     func testTheSavedLayoutsListIsDeleted() {
         defaults.set([["x": 0.0]], forKey: "windowLayouts")
         let messages = migrate()
-        XCTAssertNil(defaults.object(forKey: "windowLayouts"))
+        XCTAssertNil(stored("windowLayouts"))
         XCTAssertEqual(messages.filter { $0.contains("saved-layouts") }.count, 1)
     }
 
@@ -196,5 +209,44 @@ final class MigrationTests: XCTestCase {
         let upgraded = Migration.upgrade(["maxColumns": 4])
         XCTAssertEqual(upgraded.count, 1)
         XCTAssertEqual(upgraded["maxColumns"] as? Int, 4)
+    }
+}
+
+/// A `UserDefaults` suite a test can throw away without leaving a file behind.
+///
+/// `removePersistentDomain` empties a domain but does not delete it: cfprefsd leaves a 42-byte
+/// plist under the suite's name. With a fresh UUID per test — which is what keeps one test's
+/// leftovers out of the next — that was a new file in `~/Library/Preferences` per test per run,
+/// and they had reached the thousands.
+///
+/// Deleting the file afterwards is not enough, measured: cfprefsd writes the emptied domain on its
+/// own schedule, seconds later, and puts back a file deleted before it got there — with or
+/// without a synchronize first, and `defaults delete` does the same. So the suites are named by
+/// absolute path instead, which `CFPreferences` takes as the file to keep the domain in, and they
+/// live in a directory of their own under the temporary directory. Whatever cfprefsd writes late
+/// lands there, where the next run's `sweep` — and the system's own clean-up of temporary files —
+/// clears it, and nothing reaches `~/Library/Preferences` at all.
+enum ThrowawayDefaults {
+    private static func directory(_ group: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmdtab-tests", isDirectory: true)
+            .appendingPathComponent(group, isDirectory: true)
+    }
+
+    /// A fresh suite name in `group`'s directory.
+    static func suiteName(in group: String) -> String {
+        let directory = directory(group)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(UUID().uuidString).path
+    }
+
+    static func remove(_ suiteName: String) {
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(atPath: suiteName + ".plist")
+    }
+
+    /// Everything a previous run of `group` left, including a crashed one.
+    static func sweep(_ group: String) {
+        try? FileManager.default.removeItem(at: directory(group))
     }
 }

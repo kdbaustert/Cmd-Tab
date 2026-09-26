@@ -1482,22 +1482,56 @@ enum WindowTiler {
     ///
     /// Touched only on `queue`, which is what keeps them safe without a lock.
     ///
-    /// One entry per window and one level of undo, which is what makes the answer unambiguous. A
-    /// tile writes here only when there is nothing recorded, so the frame stays the one from before
-    /// any of this started rather than creeping forward a tile at a time; `.restore` is the single
-    /// arrangement that overwrites, with the frame it is about to replace, which is what makes it a
-    /// toggle rather than a one-shot. See `apply`.
+    /// One entry per window and one level of undo, which is what makes the answer unambiguous. See
+    /// `RestorePoint` for which presses write to it and why.
+    private nonisolated(unsafe) static var restorePoints: [WindowKey: RestorePoint] = [:]
+    private nonisolated(unsafe) static var restoreOrder: [WindowKey] = []
+    /// Where the last cycling arrangement left off: the window it applied to, which arrangement,
+    /// how far through `cycleFractions` it had got, and the frame that step left the window at —
+    /// see `continuesCycle`.
+    private nonisolated(unsafe) static var cycle:
+        (key: WindowKey, arrangement: WindowArrangement, step: Int, left: [CGRect])?
+
+    /// One window's restore slot: a frame to go back to, and what kind of frame it is.
+    ///
+    /// Normally it is the **anchor** — the frame the window had before any tiling started. A tile
+    /// writes it only when there is nothing recorded, so it stays the pre-tiling frame rather than
+    /// creeping forward a tile at a time. `.restore` swaps in the frame it is about to replace,
+    /// which is what makes restore a toggle rather than a one-shot.
+    ///
+    /// The swap is why `isRedo` exists. After a restore the slot holds the tile that was undone,
+    /// not an anchor — and "record only when empty" then kept it: tile left from F, restore to F,
+    /// maximize, and the next restore brought back the *left half*, not F. So a restore marks
+    /// what it writes, the next restore flips it back, and a tile that finds a redo entry knows the
+    /// window is sitting at its anchor now and records that instead.
     ///
     /// The desk the frame was recorded against is kept with it. Restore promises the exact
     /// rectangle back, and a rescue that tidies a window onto the nearest display breaks that
     /// promise for anyone who deliberately parked one half off an edge — so the rescue has to be
     /// able to tell "the display this was saved on is gone" from "this is where the user put it".
     /// Comparing the areas is enough: the rescue only exists for a desk that has changed.
-    private nonisolated(unsafe) static var restorePoints: [WindowKey: (frame: CGRect, desk: [CGRect])] = [:]
-    private nonisolated(unsafe) static var restoreOrder: [WindowKey] = []
-    /// Where the last cycling arrangement left off: the window it applied to, which arrangement,
-    /// and how far through `cycleFractions` it had got.
-    private nonisolated(unsafe) static var cycle: (key: WindowKey, arrangement: WindowArrangement, step: Int)?
+    ///
+    /// Pure and internal so the sequences can be tested without a window; `apply` holds the table.
+    struct RestorePoint: Equatable {
+        var frame: CGRect
+        var desk: [CGRect]
+        /// True when `frame` is a tile a restore undid, rather than the pre-tiling anchor.
+        var isRedo = false
+
+        /// The slot once a tile — anything but `.restore` — has been applied to a window at
+        /// `current`. An anchor is kept; nothing, or a redo entry, is replaced by `current`.
+        static func afterTile(_ slot: Self?, current: CGRect, desk: [CGRect]) -> Self {
+            if let slot, !slot.isRedo { return slot }
+            return Self(frame: current, desk: desk)
+        }
+
+        /// The slot once `.restore` has sent a window at `current` back to `slot.frame`: the frame
+        /// it replaced, flagged the opposite way. Undoing a tile leaves the tile as a redo; redoing
+        /// it leaves the frame it came back from as the anchor again.
+        static func afterRestore(_ slot: Self, current: CGRect, desk: [CGRect]) -> Self {
+            Self(frame: current, desk: desk, isRedo: !slot.isRedo)
+        }
+    }
 
     /// Bounded so a long session cannot accumulate a restore frame for every window ever tiled.
     /// Well past any plausible working set; this is a backstop, not a policy.
@@ -1574,6 +1608,12 @@ enum WindowTiler {
     /// the preview painted one monitor and the drop tiled the other — with the gap inset computed
     /// against the wrong area too. Keyboard chords pass nothing and keep the `homeDisplay` answer;
     /// they have no cursor to consult.
+    ///
+    /// The launch arrangement passes one too — the display an app rule names — and that is how a
+    /// window lands on another display at all: the arrangement is computed against the destination
+    /// and written once. It used to be a separate move queued first, with this re-reading the
+    /// window's frame on the assumption the move had landed; on the hosts that apply Accessibility
+    /// writes late it had not, and "display 2, left half" tiled onto display 1.
     static func apply(
         _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
         gap: CGFloat = 0, target: Target? = nil, destination: CGRect? = nil,
@@ -1606,6 +1646,14 @@ enum WindowTiler {
             // display at all gets tiled onto the first one rather than left where it is.
             let home = resolved ?? areas.startIndex
             let area = destination ?? areas[home]
+            // The frame the arrangement is measured from. The window's own, unless `destination`
+            // is another display — then it is carried there first, so the arrangements that keep
+            // part of the window (`.center`'s size, the two half-maximizes' preserved axis) keep it
+            // on the destination rather than mixing one display's x with another's y.
+            var measured = current
+            if let destination, destination != areas[home] {
+                measured = carried(current, from: areas[home], to: destination)
+            }
 
             let target: CGRect
             if let step = arrangement.displayStep {
@@ -1619,7 +1667,7 @@ enum WindowTiler {
                 // than `area`: a move counts from the display the window is on, and `destination`
                 // is a pointer gesture's answer, which this branch never has.
                 guard areas.count > 1 else { return }
-                let to = areas[((home + step) % areas.count + areas.count) % areas.count]
+                let to = areas[displayStepTarget(from: home, step: step, in: areas)]
                 target = carried(current, from: areas[home], to: to)
                 // A move is not a tile: it must not consume the restore point, and the width cycle
                 // has to start over on the new display.
@@ -1646,11 +1694,11 @@ enum WindowTiler {
                 // had undone by accident — and "undo" that cannot be undone is the one shape of
                 // this feature nobody expects.
                 //
-                // Restore is deliberately the *only* arrangement that overwrites an existing point.
-                // Every other one records only when there is nothing there (see the branch below),
-                // so the anchor stays the frame the window had before any of this started rather
-                // than creeping forward one tile at a time.
-                restorePoints[key] = (frame: current, desk: areas)
+                // Restore is the only arrangement that overwrites an *anchor*. Every other keeps
+                // it (see the branch below), so it stays the frame the window had before any of
+                // this started rather than creeping forward one tile at a time — and replaces only
+                // the redo entry a restore leaves behind. See `RestorePoint`.
+                restorePoints[key] = RestorePoint.afterRestore(saved, current: current, desk: areas)
                 // Back to the end of the queue: a window being restored is one the user is working
                 // with, and eviction is oldest-*touched* first, not oldest-recorded.
                 restoreOrder.removeAll { $0 == key }
@@ -1659,9 +1707,19 @@ enum WindowTiler {
                 target = restoreTarget(
                     saved.frame, savedOn: saved.desk, desk: areas, fallback: area)
             } else {
+                let fraction = nextFraction(
+                    for: arrangement, key: key, cycleWidths: cycleWidths, current: current)
+                guard let frame = arrangement.frame(
+                    in: area, current: measured, fraction: fraction) else { return }
+                // Recorded only once there is a frame to write — a press that changes nothing (an
+                // edge already against the screen) has nothing to undo, and must not spend a redo
+                // entry on the way to finding that out.
+                //
                 // Saved once per window and not overwritten by later tiles, so restore goes back to
                 // where the window was before any of this started rather than to the previous tile.
-                if restorePoints[key] == nil {
+                let existing = restorePoints[key]
+                let updated = RestorePoint.afterTile(existing, current: current, desk: areas)
+                if existing == nil {
                     // Evict the *oldest* rather than clearing the table. Wiping it wholesale meant
                     // tiling one more window than the cap silently threw away the restore frame of
                     // every window the user was still working with, and ⌃⌘Z then did nothing at all.
@@ -1669,13 +1727,12 @@ enum WindowTiler {
                         restoreOrder.removeFirst()
                         restorePoints.removeValue(forKey: oldest)
                     }
-                    restorePoints[key] = (frame: current, desk: areas)
+                    restoreOrder.append(key)
+                } else if existing != updated {
+                    restoreOrder.removeAll { $0 == key }
                     restoreOrder.append(key)
                 }
-                let fraction = nextFraction(
-                    for: arrangement, key: key, cycleWidths: cycleWidths)
-                guard let frame = arrangement.frame(
-                    in: area, current: current, fraction: fraction) else { return }
+                restorePoints[key] = updated
                 // Applied last, to the finished tile: the gap is about where a window ends up, not
                 // about how the arrangement divides the screen, so the fraction maths above stays
                 // exactly as it is at any gap.
@@ -1690,6 +1747,15 @@ enum WindowTiler {
             // One call rather than three, so tiling this app's own settings window takes a single
             // hop onto the main thread instead of three — see `AX.onOwningThread`.
             AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
+
+            // Where this cycle step left the window, so the next press can tell whether it is
+            // still there — see `continuesCycle`. Both the frame written and the frame read back:
+            // a host that sizes to its own increments (a terminal's character cells) lands a few
+            // points off what was asked, and one that applies writes late still reports the old
+            // frame here. Only paid on the cycling arrangements, once per press.
+            if let last = cycle, last.key == key, last.arrangement == arrangement {
+                cycle?.left = [target] + (AX.frame(window).map { [$0] } ?? [])
+            }
 
             // Only the display moves offer this, and only when asked. Warped *after* the frame is
             // written rather than alongside it: the cursor is being sent to where the window now is,
@@ -1710,25 +1776,23 @@ enum WindowTiler {
         }
     }
 
-    /// Moves an app's first window onto a display, by the same 1-based numbering `display1…4` and
-    /// the tile badges already use — `displayNumber - 1` indexes straight into `areas`.
+    /// The display a previous/next-display move lands on, as an index into `areas`.
     ///
-    /// For `launchDisplay`, which has no chord to run out of and so is not capped at four the way
-    /// the bound arrangements are. A display that is not plugged in right now, or that the window
-    /// is already on, is silently skipped rather than treated as an error: `LaunchArrangementWatcher`
-    /// applies the arrangement itself immediately after, wherever the window actually lands.
+    /// Counted **left to right**, not in `areas`' own order. That order is `NSScreen.screens`,
+    /// the order macOS happens to enumerate the displays in — the primary first, the rest as the
+    /// hardware reports them — and has nothing to do with where they sit on the desk. Stepping
+    /// through it made "move to next display", bound to ⌃⇧⌘→, throw a window *left* on any desk
+    /// whose displays were not enumerated in the order they are arranged. Ties on x (displays
+    /// stacked one above the other) go top to bottom. Wraps at both ends, as it always has.
     ///
-    /// Enqueued on `queue` like `apply`, so a caller that runs both back to back is guaranteed the
-    /// move lands before the arrangement reads the window's new home display.
-    static func moveToLaunchDisplay(pid: pid_t, displayNumber: Int, areas: [CGRect]) {
-        let index = displayNumber - 1
-        guard areas.indices.contains(index) else { return }
-        queue.async {
-            guard let window = resolve(nil, pid: pid), let current = AX.frame(window) else { return }
-            guard let home = homeDisplay(of: current, in: areas), home != index else { return }
-            let target = carried(current, from: areas[home], to: areas[index])
-            AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
+    /// For the relative step only. The numbered targets `display1…4` and the tiles' badges keep
+    /// counting `NSScreen.screens`, because a number is a name and names must not reshuffle.
+    static func displayStepTarget(from home: Int, step: Int, in areas: [CGRect]) -> Int {
+        let order = areas.indices.sorted { a, b in
+            (areas[a].minX, areas[a].minY, a) < (areas[b].minX, areas[b].minY, b)
         }
+        guard let position = order.firstIndex(of: home) else { return home }
+        return order[((position + step) % order.count + order.count) % order.count]
     }
 
     /// Where `.restore` should put a window: the frame it saved, rescued only if the desk moved
@@ -1811,9 +1875,10 @@ enum WindowTiler {
     private static let minimumGrab: CGFloat = 60
 
     /// How much of the screen this press should take, advancing the cycle when the same arrangement
-    /// is applied to the same window twice running.
+    /// is applied to the same window twice running — and the window is still where the last press
+    /// put it.
     private static func nextFraction(
-        for arrangement: WindowArrangement, key: WindowKey, cycleWidths: Bool
+        for arrangement: WindowArrangement, key: WindowKey, cycleWidths: Bool, current: CGRect
     ) -> CGFloat {
         // The tables above are safe without a lock only while every touch is on `queue`; the
         // comment says so, this makes a caller from anywhere else fail where it stands.
@@ -1823,13 +1888,32 @@ enum WindowTiler {
             cycle = nil
             return fractions[0]
         }
-        if let cycle, cycle.key == key, cycle.arrangement == arrangement {
+        if let cycle, cycle.key == key, cycle.arrangement == arrangement,
+            continuesCycle(left: cycle.left, current: current) {
             let step = (cycle.step + 1) % fractions.count
-            self.cycle = (key, arrangement, step)
+            self.cycle = (key, arrangement, step, [])
             return fractions[step]
         }
-        cycle = (key, arrangement, 0)
+        cycle = (key, arrangement, 0, [])
         return fractions[0]
+    }
+
+    /// Whether a window at `current` is still where the last cycle step `left` it.
+    ///
+    /// The cycle used to advance whenever the same window got the same arrangement, full stop — so
+    /// ⌃⌘← on a window the user had since dragged somewhere else, or pressed again the next day,
+    /// gave two-thirds or a third where the press plainly meant "the left half". Only a press on a
+    /// window that has not been touched since is a *repeat*; anything else starts over at a half.
+    ///
+    /// Two points of slack, the tolerance the Accessibility harness already allows a real window's
+    /// round trip: hosts round frames, and a fractional backing scale lands a half-point off.
+    static func continuesCycle(left: [CGRect], current: CGRect) -> Bool {
+        let slack: CGFloat = 2
+        return left.contains { frame in
+            abs(frame.minX - current.minX) <= slack && abs(frame.minY - current.minY) <= slack
+                && abs(frame.width - current.width) <= slack
+                && abs(frame.height - current.height) <= slack
+        }
     }
 
     /// Visible frames — menu bar and Dock excluded — in Accessibility's top-left-origin space.

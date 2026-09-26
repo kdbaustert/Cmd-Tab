@@ -696,7 +696,9 @@ struct GeneralSettings: View {
                     isOn: Binding(
                         get: { config.isICloudSyncEnabled },
                         set: { config.setICloudSyncEnabled($0) }))
-                .disabled(!ConfigFile.isICloudAvailable)
+                // Only turning it *on* needs iCloud Drive. A Mac signed out since sync went on
+                // still has to be able to switch it off — disabled outright, it was stuck on.
+                .disabled(!ConfigFile.isICloudAvailable && !config.isICloudSyncEnabled)
                 // Verbatim only on the branch that *is* a path: the other is ordinary interface
                 // copy and should still be looked up and translated like the rest.
                 SettingsRow(

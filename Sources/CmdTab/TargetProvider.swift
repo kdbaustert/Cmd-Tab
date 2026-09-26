@@ -420,17 +420,47 @@ final class TargetProvider {
             // `expandWindows`) can only add or remove a whole app's tile, so a matching window
             // takes its whole app with it into the per-window list.
             var expanding = expandingByRule
+            // Titles this walk read or reused, put back after the splice below — which prunes the
+            // cache to the windows of the apps it expanded, and would otherwise throw away every
+            // title read here for an app that stayed a single tile, to be read again next pass.
+            var walkedTitles: [CGWindowID: (title: String, expiry: Date)] = [:]
             if hasExpandTitleRules {
                 let alreadyExpanding = Set(expanding.map(\.pid))
-                for app in apps where !alreadyExpanding.contains(app.pid) {
-                    let matches = AX.windows(of: AX.application(app.pid)).contains { window in
-                        AX.isSwitchableWindow(window)
-                            && CompiledTitleRule.matches(
-                                titleRules, bundleID: app.bundleID,
-                                title: AX.copyString(window, kAXTitleAttribute) ?? "",
-                                action: .expand)
+                let now = Date()
+                // Only the apps a rule could expand. Every app's windows used to be walked on every
+                // app-mode refresh the moment any `.expand` rule existed, for rules that almost
+                // always name one app — a per-window Accessibility read across the whole machine,
+                // every activation, to answer a question about one bundle.
+                for app in apps
+                where !alreadyExpanding.contains(app.pid)
+                    && Self.mayExpand(titleRules, bundleID: app.bundleID)
+                {
+                    for window in AX.windows(of: AX.application(app.pid)) {
+                        let wid = Self.windowID(window)
+                        let title: String
+                        if let wid, let cached = freshTitles[wid], cached.expiry > now {
+                            title = cached.title
+                            walkedTitles[wid] = cached
+                        } else {
+                            title = AX.copyString(window, kAXTitleAttribute) ?? ""
+                            if let wid {
+                                let entry = (
+                                    title: title,
+                                    expiry: now.addingTimeInterval(Self.titleCacheTTL))
+                                freshTitles[wid] = entry
+                                walkedTitles[wid] = entry
+                            }
+                        }
+                        // The title first: the rule is a local regex, and the switchable test is
+                        // up to four round trips, worth paying only for a window that matched.
+                        guard
+                            CompiledTitleRule.matches(
+                                titleRules, bundleID: app.bundleID, title: title, action: .expand),
+                            AX.isSwitchableWindow(window)
+                        else { continue }
+                        expanding.append(app)
+                        break
                     }
-                    if matches { expanding.append(app) }
                 }
             }
             switch mode {
@@ -481,6 +511,7 @@ final class TargetProvider {
                 freshTitles = built.titleCache
                 targets = Self.withSpaceBadges(built.targets)
             }
+            freshTitles.merge(walkedTitles) { current, _ in current }
             if pinning {
                 // The favourites take the front of the list, each running one bringing its own
                 // tiles with it and each one that isn't running contributing its launch tile, so
@@ -574,8 +605,13 @@ final class TargetProvider {
     }
 
     /// One tile per tab of the frontmost window of every switchable app that has one, for the
-    /// `.tabs` scoped trigger. Active tab first within each app, apps in the same order
-    /// `switchableApps()` returns them.
+    /// `.tabs` scoped trigger. Active tab first within each app, apps in most-recently-used order.
+    ///
+    /// MRU rather than `switchableApps()`'s own order, which is launch order, and the difference is
+    /// the budget: `TabEnumeration.enumerate` walks the apps in the order given and stops when the
+    /// time runs out, so whichever apps come first are the ones that get tiles. In launch order
+    /// that was Finder, first every time and with a tree wide enough to spend the whole budget
+    /// alone. In MRU order the apps the user was just in are walked first.
     ///
     /// Uncached and gathered only on demand, like `allWindowTargets`: the walk is
     /// `TabEnumeration.enumerate`, one Accessibility round trip per app plus a depth-bounded search
@@ -586,7 +622,8 @@ final class TargetProvider {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return handler([]) }
-                let apps = self.switchableApps()
+                let apps = Self.sorted(
+                    self.switchableApps(), by: self.mru.entries, sortOrder: .recentlyUsed)
                 self.axQueue.async {
                     let deadline = DispatchTime.now() + TabEnumeration.enumerationBudget
                     let refs = TabEnumeration.enumerate(pids: apps.map(\.pid), deadline: deadline)
@@ -754,6 +791,13 @@ final class TargetProvider {
         return pids
     }
 
+    /// Whether any `.expand` title rule could apply to an app with `bundleID` — one naming it, or
+    /// one naming no app at all. The gate on the expand walk in `performRefresh`: an app no rule
+    /// can expand has no window worth reading a title from.
+    nonisolated static func mayExpand(_ rules: [CompiledTitleRule], bundleID: String?) -> Bool {
+        rules.contains { $0.action == .expand && ($0.bundleID == nil || $0.bundleID == bundleID) }
+    }
+
     /// Parses the `CGWindowID` back out of a `"win:<id>"` target id, if it carries one.
     /// `SwitchTarget.windowID` forwards here so the format is understood in exactly one place.
     nonisolated static func windowID(fromTargetID id: String) -> CGWindowID? {
@@ -854,8 +898,15 @@ final class TargetProvider {
             guard !excluded.contains(id),
                 NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
             else { return nil }
+            // Checked against the disk before it is trusted. The cache is otherwise never
+            // revisited, so a favourite uninstalled or moved while this process ran kept a tile
+            // that could only fail to open. One `stat` per non-running favourite per pass, against
+            // the LaunchServices lookup and two disk reads it saves.
             if let cached = appInfoCache[id] {
-                return (id, Self.launchTarget(id: id, info: cached))
+                if FileManager.default.fileExists(atPath: cached.url.path) {
+                    return (id, Self.launchTarget(id: id, info: cached))
+                }
+                appInfoCache[id] = nil
             }
             // A failure is deliberately not cached: an app that isn't installed yet should be picked
             // up when it arrives, rather than being remembered as missing for the whole session.
@@ -863,6 +914,17 @@ final class TargetProvider {
             appInfoCache[id] = info
             return (id, Self.launchTarget(id: id, info: info))
         }
+    }
+
+    /// A launch tile's app would not open. Drops what was cached for it and rebuilds, so the next
+    /// session offers whatever LaunchServices says now — the same app at a new path, or no tile.
+    ///
+    /// Reported by `SwitchTarget.focus`'s completion handler rather than found here: the tile was
+    /// built from the cache, and only the open that failed knows the cache was wrong.
+    func launchFailed(targetID: String) {
+        guard targetID.hasPrefix("launch:") else { return }
+        appInfoCache[String(targetID.dropFirst("launch:".count))] = nil
+        refresh()
     }
 
     /// Moves the running favourites to the front of a built list, in the user's order, and leaves
@@ -905,11 +967,26 @@ final class TargetProvider {
     /// the second tile is whichever favourite the user put there. The previous app is then found
     /// through the MRU instead, which keeps ⌘-Tab's oldest habit working — tap to go back, tap
     /// again to come back — while the pinned block keeps the front of the list.
+    ///
+    /// `mode` is what the list in hand *is*, and it is the one that decides — not `self.mode`. A
+    /// same-app or scoped session is a window list whatever the setting says, and no window list is
+    /// ever pinned; asking `pinsFavoritesFirst`, which reads the setting, gave those lists the
+    /// pinned-list answer, so the opening highlight sat on the previous app's first window rather
+    /// than the tile after the front one.
     func tapIndex(in targets: [SwitchTarget], mode: SwitcherMode) -> Int {
+        Self.tapIndex(
+            in: targets, pinned: mode == .apps && pinsFavoritesFirst, mru: mru.entries)
+    }
+
+    /// The rule above over values: the second tile, unless the list was pinned, in which case the
+    /// previous app by MRU (falling back to the second tile).
+    nonisolated static func tapIndex(
+        in targets: [SwitchTarget], pinned: Bool, mru: [pid_t]
+    ) -> Int {
         guard !targets.isEmpty else { return 0 }
         let natural = min(1, targets.count - 1)
-        guard pinsFavoritesFirst else { return natural }
-        return Self.previousAppIndex(in: targets, mru: mru.entries) ?? natural
+        guard pinned else { return natural }
+        return previousAppIndex(in: targets, mru: mru) ?? natural
     }
 
     /// The tile for the app used before the current one, by MRU. Launch tiles are skipped: they all

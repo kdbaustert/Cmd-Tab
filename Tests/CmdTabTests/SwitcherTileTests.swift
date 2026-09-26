@@ -141,6 +141,23 @@ final class SwitcherTileTests: XCTestCase {
         XCTAssertFalse(model.showsClose(at: 0))
     }
 
+    /// A tab tile's only reachable close button is its window's, which closes every tab in it — so
+    /// the tile offers none.
+    func testATabTileNeverOffersToClose() {
+        let element = AX.application(4242)
+        let ref = TabEnumeration.TabRef(
+            pid: 4242, window: element, element: element, title: "Inbox", isActive: false)
+        let model = SwitcherModel()
+        model.begin([
+            SwitchTarget(
+                id: "tab:4242:0", kind: .tab(ref), title: "Inbox", appName: "Safari", icon: nil,
+                isMinimized: false, isHidden: false)
+        ])
+        model.showsCloseButton = true
+        model.hoverIndex = 0
+        XCTAssertFalse(model.showsClose(at: 0))
+    }
+
     /// A hover index left over from a longer list must not answer for a tile that no longer exists.
     func testAnOutOfRangeHoverIsRefused() {
         let model = SwitcherModel()

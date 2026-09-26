@@ -193,6 +193,38 @@ final class ShortcutImportTests: XCTestCase {
         XCTAssertEqual(ShortcutImport.plan(from: result, activeChords: []).toApply.count, 2)
     }
 
+    /// An existing exact binding is compared by the same rule two imported ones are. Rectangle's
+    /// ⌃⌘⇧↑ used to be refused because ⌃⌘↑ was bound, though the tiling matcher tells them apart.
+    func testPlanKeepsAnImportThatDiffersFromAnExistingExactBindingOnlyByShift() {
+        var result = ImportResult()
+        result.arrangements[.maximize] = Hotkey(
+            keyCode: 126,
+            modifierRaw: CGEventFlags([.maskControl, .maskCommand, .maskShift]).rawValue)
+        let plan = ShortcutImport.plan(
+            from: result, activeChords: [chord(126, [.maskControl, .maskCommand])])
+        XCTAssertEqual(plan.toApply.count, 1)
+        XCTAssertTrue(plan.droppedForCollision.isEmpty)
+    }
+
+    /// An existing opener still claims every Shift variant of its chord.
+    func testPlanDropsAnImportOnAShiftVariantOfAnExistingOpener() {
+        var result = ImportResult()
+        result.arrangements[.leftHalf] = Hotkey(
+            keyCode: 48, modifierRaw: CGEventFlags([.maskAlternate, .maskShift]).rawValue)
+        let plan = ShortcutImport.plan(
+            from: result, activeChords: [], activeOpeners: [chord(48, .maskAlternate)])
+        XCTAssertEqual(plan.droppedForCollision.count, 1)
+    }
+
+    /// And an imported opener claims every Shift variant of an existing exact binding.
+    func testPlanDropsAnImportedTriggerOnAShiftVariantOfAnExistingBinding() {
+        var result = ImportResult()
+        result.trigger = Hotkey(keyCode: 48, modifierRaw: CGEventFlags.maskAlternate.rawValue)
+        let plan = ShortcutImport.plan(
+            from: result, activeChords: [chord(48, [.maskAlternate, .maskShift])])
+        XCTAssertEqual(plan.droppedForCollision.count, 1)
+    }
+
     /// A target already on exactly this chord is not colliding with "something else" — it is
     /// colliding with itself, which is no collision.
     func testPlanReportsAChordTheTargetAlreadyHasAsAlreadySet() {

@@ -394,3 +394,120 @@ final class MouseWindowDragTests: XCTestCase {
             PointChord.step(previous: [], held: ctrl, chord: nil, isChord: false), .ignore)
     }
 }
+
+/// What a press at a point reaches, against a hand-built window list — front to back, in the window
+/// server's top-left space, as `CGWindowListCopyWindowInfo` reports it.
+///
+/// The rule under test: the first surface that is really there decides. Walking past everything
+/// above layer 0 made a floating window invisible to the gestures, which then grabbed, snapped or
+/// pressed the window underneath it.
+final class WindowHitTestTests: XCTestCase {
+    private typealias Surface = WindowHitTest.Surface
+
+    private let point = CGPoint(x: 500, y: 400)
+    private let ours: pid_t = 42
+
+    private func surface(
+        _ id: CGWindowID, pid: pid_t = 7, layer: Int = 0, alpha: Double = 1,
+        bounds: CGRect = CGRect(x: 0, y: 0, width: 1200, height: 900)
+    ) -> Surface {
+        Surface(id: id, pid: pid, layer: layer, alpha: alpha, bounds: bounds)
+    }
+
+    func testTheFrontmostOrdinaryWindowIsTheTarget() {
+        let list = [surface(1), surface(2)]
+        XCTAssertEqual(WindowHitTest.window(at: point, in: list, passingThrough: ours)?.id, 1)
+    }
+
+    /// The reported case: a float-on-top player over the window. The press is the player's, so the
+    /// gesture passes rather than grabbing what is underneath.
+    func testAFloatingWindowOverTheWindowMeansNoTarget() {
+        let list = [surface(9, pid: 8, layer: 3), surface(1)]
+        XCTAssertNil(WindowHitTest.window(at: point, in: list, passingThrough: ours))
+    }
+
+    /// Our own overlays are click-through, and the outline is drawn over the very window the press
+    /// is aimed at — so they are passed through rather than counted.
+    func testOurOwnOverlaysArePassedThrough() {
+        let list = [surface(9, pid: ours, layer: 3), surface(1)]
+        XCTAssertEqual(WindowHitTest.window(at: point, in: list, passingThrough: ours)?.id, 1)
+    }
+
+    /// But our own ordinary windows are targets: Settings is grabbed like any other.
+    func testOurOwnOrdinaryWindowIsATarget() {
+        let list = [surface(5, pid: ours), surface(1)]
+        XCTAssertEqual(WindowHitTest.window(at: point, in: list, passingThrough: ours)?.id, 5)
+    }
+
+    /// Focus-follows-mouse passes no pid of its own, and there our overlays count as covering.
+    func testWithoutAnOwnPIDEveryOverlayCovers() {
+        let list = [surface(9, pid: ours, layer: 3), surface(1)]
+        XCTAssertNil(WindowHitTest.window(at: point, in: list, passingThrough: nil))
+    }
+
+    /// Whole-screen effects at the screen-saver level and above, and fully transparent surfaces,
+    /// cover nothing.
+    func testScreenSaverLevelAndTransparentSurfacesAreLookedPast() {
+        let list = [
+            surface(9, pid: 8, layer: WindowHitTest.ceiling),
+            surface(8, pid: 8, layer: 3, alpha: 0),
+            surface(1),
+        ]
+        XCTAssertEqual(WindowHitTest.window(at: point, in: list, passingThrough: ours)?.id, 1)
+    }
+
+    /// A surface elsewhere on screen does not cover this point.
+    func testASurfaceNotUnderThePointIsIgnored() {
+        let list = [
+            surface(9, pid: 8, layer: 3, bounds: CGRect(x: 0, y: 0, width: 100, height: 100)),
+            surface(1),
+        ]
+        XCTAssertEqual(WindowHitTest.window(at: point, in: list, passingThrough: ours)?.id, 1)
+    }
+
+    /// Zero-area phantoms are not windows a click lands on.
+    func testAPhantomBackingWindowIsSkipped() {
+        let list = [
+            surface(9, bounds: CGRect(x: 500, y: 400, width: 1, height: 1)), surface(1),
+        ]
+        XCTAssertEqual(WindowHitTest.window(at: point, in: list, passingThrough: ours)?.id, 1)
+    }
+
+    func testBareDesktopIsNoTarget() {
+        XCTAssertNil(WindowHitTest.window(at: point, in: [], passingThrough: ours))
+    }
+}
+
+/// Focus-follows-mouse's rest timer: one wake-up in flight, re-armed for whatever is left of the
+/// delay when the pointer moved since it was scheduled.
+final class FocusRestTimerTests: XCTestCase {
+    private let delay: UInt64 = 250_000_000
+
+    func testAPointerStillForTheWholeDelayHasRested() {
+        XCTAssertNil(
+            FocusFollowsMouse.remainingRest(
+                now: 1_000_000_000, lastMove: 700_000_000, delay: delay))
+    }
+
+    func testExactlyTheDelayCountsAsRested() {
+        XCTAssertNil(
+            FocusFollowsMouse.remainingRest(
+                now: 950_000_000, lastMove: 700_000_000, delay: delay))
+    }
+
+    /// Moved 100ms before the wake-up: 150ms left, so it re-arms for that and no longer.
+    func testAMoveSinceSchedulingRearmsForTheRemainder() {
+        XCTAssertEqual(
+            FocusFollowsMouse.remainingRest(
+                now: 1_000_000_000, lastMove: 900_000_000, delay: delay),
+            150_000_000)
+    }
+
+    /// A move stamped after `now` — two reads racing — waits the full delay, not an underflow.
+    func testAMoveAfterNowWaitsTheWholeDelay() {
+        XCTAssertEqual(
+            FocusFollowsMouse.remainingRest(
+                now: 900_000_000, lastMove: 1_000_000_000, delay: delay),
+            delay)
+    }
+}

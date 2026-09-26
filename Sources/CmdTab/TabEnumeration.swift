@@ -177,15 +177,72 @@ enum TabEnumeration {
     /// at the node it had reached, see `findTabs` — and its tiles come back on the next tabs-scoped
     /// session, the same as any other app the switcher was too slow to reach.
     ///
+    /// Each app gets a slice of what is left rather than the whole of it — see `slice`. One budget
+    /// shared first-come was spent by whichever app came first with a wide tree, and a Finder list
+    /// view is wide enough to spend all of it: every app after it found nothing, on every session,
+    /// since the order never changed. `pids` should arrive most recently used first, so the slices
+    /// go to the apps the user is most likely to want tabs from.
+    ///
     /// Accessibility IPC throughout, so this belongs on the caller's background queue — same
     /// constraint as everything else in `AX`.
     static func enumerate(pids: [pid_t], deadline: DispatchTime) -> [TabRef] {
         var all: [TabRef] = []
-        for pid in pids {
-            guard DispatchTime.now() < deadline else { break }
-            guard let window = AX.frontWindow(ofApplication: pid) else { continue }
-            all += tabs(pid: pid, frontWindow: window, deadline: deadline)
+        for (offset, pid) in pids.enumerated() {
+            let now = DispatchTime.now()
+            guard now < deadline else { break }
+            let own = slice(now: now, deadline: deadline, appsLeft: pids.count - offset)
+            let isExpired = { DispatchTime.now() >= own }
+            guard let window = frontWindow(ofApplication: pid, isExpired: isExpired) else {
+                continue
+            }
+            all += tabs(pid: pid, frontWindow: window, deadline: own)
         }
         return all
+    }
+
+    /// The deadline for the next app: an even share of the time left, but never less than
+    /// `minimumSlice`, and never past the overall deadline.
+    ///
+    /// Shared out of what is *left*, not of the original budget, so an app that answers quickly
+    /// hands its unused time on to the ones after it.
+    ///
+    /// The floor is for the machine with twenty apps open: an even share there is seven
+    /// milliseconds, which would cut short the very walk the session is for — the browser the user
+    /// was just in, first in MRU order, whose tab group sits six groups down. With the floor, the
+    /// apps at the front of the MRU order get a walk worth having and the tail gets whatever is
+    /// left, which is the right way round. The number is a judgement, not a measurement.
+    static func slice(now: DispatchTime, deadline: DispatchTime, appsLeft: Int) -> DispatchTime {
+        guard appsLeft > 1, now < deadline else { return deadline }
+        let left = deadline.uptimeNanoseconds - now.uptimeNanoseconds
+        let share = max(left / UInt64(appsLeft), UInt64(minimumSlice * 1_000_000_000))
+        return min(deadline, now + .nanoseconds(Int(share)))
+    }
+
+    /// The least an app is given of the budget while there is that much left — see `slice`.
+    static let minimumSlice: TimeInterval = 0.03
+
+    /// `AX.frontWindow`, with the deadline checked between its reads.
+    ///
+    /// The lookup is up to three round trips — focused window, main window, the window list —
+    /// before the walk even starts, and it sat outside the budget entirely: an app hung past the
+    /// messaging timeout cost three of them, three quarters of a second, however little of the
+    /// budget was left. Checked between reads, the most one app can overrun its slice by is a
+    /// single timeout. The same order and the same fallbacks as `AX.frontWindow`, so the window
+    /// searched is the one the rest of the app treats as front.
+    private static func frontWindow(
+        ofApplication pid: pid_t, isExpired: () -> Bool
+    ) -> AXUIElement? {
+        let app = AX.application(pid)
+        var candidates: [AXUIElement] = []
+        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            guard !isExpired() else { return nil }
+            guard let window = AX.copyElement(app, attribute as String) else { continue }
+            if AX.isSwitchableWindow(window) { return window }
+            candidates.append(window)
+        }
+        guard !isExpired() else { return nil }
+        let windows = AX.windows(of: app)
+        if let window = windows.first(where: AX.isSwitchableWindow) { return window }
+        return candidates.first ?? windows.first(where: AX.isWindow)
     }
 }

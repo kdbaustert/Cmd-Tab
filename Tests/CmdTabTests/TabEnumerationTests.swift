@@ -167,4 +167,36 @@ final class TabEnumerationTests: XCTestCase {
         let tabs = TabEnumeration.findTabs(in: FakeNode(role: "AXWindow", children: [group]))
         XCTAssertEqual(tabs?.map(\.title), ["first", "second"])
     }
+
+    // MARK: - Sharing the budget
+
+    /// Each app gets an even share of what is left, so one wide tree cannot spend it all.
+    func testEachAppGetsAShareOfTheTimeLeft() {
+        let now = DispatchTime(uptimeNanoseconds: 1_000_000_000)
+        let deadline = now + .milliseconds(150)
+        XCTAssertEqual(
+            TabEnumeration.slice(now: now, deadline: deadline, appsLeft: 3),
+            now + .milliseconds(50))
+    }
+
+    /// With many apps open the even share is a sliver; the floor keeps the apps at the front of
+    /// the MRU order — the ones walked first — a usable walk.
+    func testManyAppsStillGiveEachAUsableSlice() {
+        let now = DispatchTime(uptimeNanoseconds: 1_000_000_000)
+        let deadline = now + .milliseconds(150)
+        XCTAssertEqual(
+            TabEnumeration.slice(now: now, deadline: deadline, appsLeft: 20),
+            now + .milliseconds(30))
+    }
+
+    /// The last app — and a lone one — gets everything left; nothing is ever given past the
+    /// overall deadline.
+    func testTheLastAppGetsWhateverIsLeft() {
+        let now = DispatchTime(uptimeNanoseconds: 1_000_000_000)
+        let deadline = now + .milliseconds(150)
+        XCTAssertEqual(TabEnumeration.slice(now: now, deadline: deadline, appsLeft: 1), deadline)
+        XCTAssertEqual(
+            TabEnumeration.slice(now: deadline + .milliseconds(5), deadline: deadline, appsLeft: 4),
+            deadline)
+    }
 }

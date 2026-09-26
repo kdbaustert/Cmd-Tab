@@ -270,9 +270,19 @@ final class ConfigFile: ObservableObject {
     /// had once mirrored and stopped is a leftover of arbitrary age: the import was reverted in the
     /// same turn it was applied. (The config file's own reads cannot land here with a switch
     /// changed; it does not apply `mirrorKeys`.)
+    ///
+    /// Sync arriving *on* is held to the same availability check the switch in Settings is. An
+    /// import from a Mac that synced went straight past it, and left this one "syncing" into a
+    /// folder that syncs nowhere — the state `setICloudSyncEnabled` exists to refuse. Refused here
+    /// the same way, and written back as off so the preference and the switch say the same thing.
     func reload() {
         let file = UserDefaults.standard.bool(forKey: Key.enabled)
-        let sync = UserDefaults.standard.bool(forKey: Key.iCloudSync)
+        var sync = UserDefaults.standard.bool(forKey: Key.iCloudSync)
+        if sync, !isICloudSyncEnabled, !Self.isICloudAvailable {
+            Log.general.error("config file: iCloud Drive is unavailable; imported sync not enabled")
+            UserDefaults.standard.set(false, forKey: Key.iCloudSync)
+            sync = false
+        }
         guard file != isFileEnabled || sync != isICloudSyncEnabled else { return }
         let before = state
         isFileEnabled = file
@@ -456,6 +466,19 @@ final class ConfigFile: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.writeDebounce, execute: work)
     }
 
+    /// Writes a debounced change now rather than when its timer fires. Called at quit.
+    ///
+    /// The timer never fires once the process is on its way out — ⌘Q, a SIGTERM, `build.sh
+    /// --install` quitting the old copy — so a change made in the last `writeDebounce` stayed in
+    /// `UserDefaults` only. The next launch then read the file, which wins at launch, and put the
+    /// old value back: the last thing changed before quitting was silently reverted.
+    func flushPendingWrite() {
+        guard let work = writeWorkItem else { return }
+        work.cancel()
+        writeWorkItem = nil
+        writeToDisk()
+    }
+
     /// Mirrors the live settings out to the file.
     ///
     /// - Parameter publishing: the caller means to put this Mac's settings over whatever is there —
@@ -493,9 +516,11 @@ final class ConfigFile: ObservableObject {
                 }
                 absorb(onDisk, read: disk)
             }
+            let owned = Set(BehaviorStore.ownedDefaultsKeys)
             let payload = Self.filePayload(
                 SettingsIO.currentPayload(ignoring: Self.mirrorKeys), preserving: onDisk,
-                known: Set(BehaviorStore.ownedDefaultsKeys + BehaviorStore.retiredDefaultsKeys))
+                known: owned.union(BehaviorStore.retiredDefaultsKeys),
+                clearable: owned.subtracting(Self.mirrorKeys))
             guard let data = SettingsIO.encode(payload) else {
                 Log.general.error("config file: the settings could not be encoded; nothing written")
                 return
@@ -515,12 +540,30 @@ final class ConfigFile: ObservableObject {
     /// newer one's settings from the shared copy. Keys this build *does* know are not carried
     /// forward: an owned key it has no value for is one that was deliberately cleared, and a
     /// retired one is dead by definition. Pure, so the rule can be checked without a file.
+    ///
+    /// A cleared key the file still has is written as `null` rather than left out — `clearable`
+    /// names the keys that may be. Every store says "back to the default" by removing its key, and
+    /// leaving the line out of the file said nothing at all to the other side: `changes` reads an
+    /// absent key as "leave alone", as it must for a hand edit that deletes a line, so a reset
+    /// never reached the other Mac, and that Mac's next write put the old value back into the file
+    /// and from there back onto this one. `null` is the one thing both readers already take as
+    /// "remove" — see `SettingsIO.apply`. Only for a key the file has: a key nobody ever set stays
+    /// out, so the file does not fill up with a `null` per setting. The `null` stays for as long
+    /// as the key stays cleared, since there is no knowing when every Mac has read it.
+    ///
+    /// Not the retired keys, which are dead here but may be live on an older build sharing the
+    /// file, and not the mirror switches, which the file does not carry either way.
     nonisolated static func filePayload(
-        _ settings: [String: Any], preserving onDisk: [String: Any]?, known: Set<String>
+        _ settings: [String: Any], preserving onDisk: [String: Any]?, known: Set<String>,
+        clearable: Set<String>
     ) -> [String: Any] {
         var out = settings
-        for (key, value) in onDisk ?? [:] where !known.contains(key) && out[key] == nil {
-            out[key] = value
+        for (key, value) in onDisk ?? [:] where out[key] == nil {
+            if !known.contains(key) {
+                out[key] = value
+            } else if clearable.contains(key) {
+                out[key] = NSNull()
+            }
         }
         return out
     }
@@ -590,8 +633,9 @@ final class ConfigFile: ObservableObject {
     }
 
     /// The entries of `payload` that differ from `base`. An entry `base` has and `payload` lacks is
-    /// not a change: absent means "leave alone" here, as it does in `SettingsIO.apply`. Pure, so
-    /// the merge can be checked without a file.
+    /// not a change: absent means "leave alone" here, as it does in `SettingsIO.apply`. A reset
+    /// arrives as `null` instead — see `filePayload` — which differs from any value and so is one.
+    /// Pure, so the merge can be checked without a file.
     nonisolated static func changes(
         from base: [String: Any]?, to payload: [String: Any]
     ) -> [String: Any] {

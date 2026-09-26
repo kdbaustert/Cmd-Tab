@@ -268,6 +268,20 @@ final class ShortcutAuditTests: XCTestCase {
         XCTAssertEqual(collisions.first?.losers.map(\.id), ["activate.something"])
     }
 
+    /// An App Shortcut resolves inside the front app, after the tap has taken the key, so it loses
+    /// to the Cmd-Tab binding — `entries()` lists it after them for exactly that. Told apart from a
+    /// symbolic hotkey by its id, which is what keeps the importer from refusing on it.
+    func testAnAppShortcutLosesToTheCmdTabBindingListedBeforeIt() {
+        let chord = CGEventFlags([.maskCommand, .maskShift])
+        let appShortcut = entry(
+            .systemOwned, ShortcutEntry.appShortcutPrefix + "Rename…", key: 15, chord)
+        let entries = [entry(.directActivation, "activate.something", key: 15, chord), appShortcut]
+        let collision = ShortcutAudit.collisions(in: entries).first
+        XCTAssertEqual(collision?.winner?.id, "activate.something")
+        XCTAssertTrue(appShortcut.isAppShortcut)
+        XCTAssertFalse(entry(.systemOwned, "system.64", key: 49, .maskCommand).isAppShortcut)
+    }
+
     /// A system chord that is present but disabled is not claimed by macOS at all — see
     /// `SystemShortcuts.decodeSymbolicHotKeys` — so `ShortcutAudit.entries()` never emits an entry
     /// for it in the first place. This test stands in for that by simply not including one: a
