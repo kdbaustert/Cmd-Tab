@@ -38,7 +38,7 @@ let package = Package(
             // Swift 6 language mode. This app runs four background queues doing Accessibility IPC
             // alongside a tap callback on the main run loop, and the cost of a threading mistake is
             // not a corrupted value but a stalled tap — which the system answers by killing it and
-            // taking every keystroke on the machine with it. See README, "Swift 6 language mode",
+            // taking every keystroke on the machine with it. See the docs, "Swift 6 language mode",
             // for the four places the compiler cannot check and why each is sound.
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),

@@ -49,7 +49,7 @@ esac
 if [[ "$ADHOC" == "1" ]]; then
     IDENTITY="-"
     echo "==> Ad-hoc release: no Developer ID, no notarisation. Gatekeeper will flag the download —"
-    echo "    the README's 'Ad-hoc releases' section has the one-line workaround for users."
+    echo "    docs/DOCUMENTATION.md's 'Ad-hoc releases' section has the one-line workaround for users."
 else
 
 # Matched on the certificate's common name rather than a hash, so the script keeps working when the
@@ -153,7 +153,7 @@ if [[ "$ADHOC" == "1" ]]; then
     echo "==> Built and ad-hoc signed: $APP"
     echo "    Not notarised — there is no Developer ID account to submit under. Gatekeeper will"
     echo "    quarantine the download; the workaround for users is right-click → Open, or"
-    echo "    xattr -cr on the .app. See README § 'Ad-hoc releases'."
+    echo "    xattr -cr on the .app. See docs/DOCUMENTATION.md § 'Ad-hoc releases'."
     # ditto, not zip: keeps symlinks and extended attributes intact, same reason as the notarised
     # path — and it means a later Developer ID release can reuse the same packaging step.
     echo "==> Packaging"

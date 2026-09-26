@@ -180,7 +180,7 @@ final class ConfigFile: ObservableObject {
     /// Local only, deliberately, even though `adopt` would handle the iCloud copy just as well.
     /// Turning the *local* mirror on is a file this Mac already has; turning sync on would start
     /// publishing into someone's iCloud Drive on their behalf, which is a liberty rather than a
-    /// convenience — and the README's own account of that switch describes it as opt-in-then-adopt,
+    /// convenience — and the docs' own account of that switch describes it as opt-in-then-adopt,
     /// where this one is the launch-time rule.
     ///
     /// A free function over the three facts so the table can be checked without a real

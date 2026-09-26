@@ -4,7 +4,7 @@ import CoreGraphics
 /// Which of the app's bindings claims a keystroke when the switcher is closed, and whether the
 /// keystroke is swallowed on the way.
 ///
-/// This is the precedence the README calls load-bearing, and it was previously expressed only as
+/// This is the precedence the docs call load-bearing, and it was previously expressed only as
 /// the order of a run of `if` statements inside `SwitcherController.handle` — a function that can
 /// only be reached through a live `CGEventTap`, which means it could only be checked by pressing
 /// keys and watching. The rules it encodes are not obvious and each one was paid for:

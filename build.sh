@@ -128,7 +128,7 @@ fi
 #
 # The certificate's common name is cryptographically part of it, so this is not a label that can be
 # edited: a certificate under a new name is a new designated requirement, and costs one
-# Accessibility re-grant. See README for how to create it. `release.sh` overrides it with a
+# Accessibility re-grant. See docs/DOCUMENTATION.md for how to create it. `release.sh` overrides it with a
 # Developer ID.
 IDENTITY="${CODESIGN_IDENTITY:-Cmd-Tab Local}"
 SIGN_ARGS=(--force)

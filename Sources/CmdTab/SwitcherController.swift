@@ -2100,7 +2100,7 @@ final class SwitcherController {
         // Cmd-Tab is `.accessory` and normally never becomes frontmost — the switcher panel is
         // non-activating precisely so that it does not, since being frontmost is what makes *us*
         // the app a ⌘-Tab measures itself from and shifts every target along by one. That is the
-        // effect the README already documents for the settings window being open, arriving here by
+        // effect the docs already record for the settings window being open, arriving here by
         // a different route: an alert cannot be shown without activating, and nothing gave the
         // activation back afterwards, so confirming a quit left the user frontmost in an app with
         // no windows.

@@ -2,7 +2,7 @@
 
 An Alfred workflow, kept here as source rather than a zipped
 `.alfredworkflow`, that drives Cmd-Tab's global actions through its
-`cmdtab://` URL scheme — see the main repo's README, "Driving it from a
+`cmdtab://` URL scheme — see the main repo's docs/DOCUMENTATION.md, "Driving it from a
 script", for the grammar.
 
 - **`tile`** — a Script Filter (`tile.sh`) that lists every `WindowArrangement`

@@ -27,7 +27,7 @@ jobs:
     #
     # That development now happens a major version ahead costs this job nothing: everything it runs
     # is OS-independent — the pure-logic suite, plus assembling the bundle. The version-dependent
-    # layer is the Accessibility harness, which is opt-in and never runs here (see README).
+    # layer is the Accessibility harness, which is opt-in and never runs here (see docs/DOCUMENTATION.md).
     runs-on: macos-26
     timeout-minutes: 20
 

@@ -1,7 +1,7 @@
 # Cmd-Tab for Raycast
 
 An unpublished Raycast extension that drives Cmd-Tab's global actions through
-its `cmdtab://` URL scheme — see the main repo's README, "Driving it from a
+its `cmdtab://` URL scheme — see the main repo's docs/DOCUMENTATION.md, "Driving it from a
 script", for the grammar. Nothing here talks to Cmd-Tab except `open`; there is
 no IPC of its own.
 

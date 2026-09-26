@@ -215,7 +215,7 @@ final class TargetProvider {
     /// `didActivateApplicationNotification`. A same-app pick fronts a window *within* the app that
     /// is already frontmost, so no activation fires and the pick went unrecorded. That is worse
     /// than not tracking it at all: the single stale entry ranks 0 while every sibling ranks
-    /// `Int.max`, so it outranks the AX z-order the README says this case falls back to, and stays
+    /// `Int.max`, so it outranks the AX z-order the docs say this case falls back to, and stays
     /// pinned at index 0. A second tap of the same-app chord then re-selected the window already in
     /// front and the third window of an app was unreachable by tapping.
     ///
