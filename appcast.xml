@@ -8,7 +8,7 @@
             <sparkle:version>139</sparkle:version>
             <sparkle:shortVersionString>0.5.1-beta</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/kdbaustert/Cmd-Tab/releases/download/v0.5.1-beta/Cmd-Tab-0.5.1-beta.zip" length="5233784" type="application/octet-stream" sparkle:edSignature="sFPw1bO01ruGyo/zkx/CN1pLFvqUultT8EruVoL7XI5I8XquSDARKf75Oi69VLrNbMN5GFmP6wwRDf1V0w/ADA=="/>
+            <enclosure url="https://github.com/kdbaustert/Cmd-Tab/releases/download/v0.5.1-beta/Cmd-Tab-0.5.1-beta.zip" length="5233784" type="application/octet-stream" sparkle:edSignature="FTR8m3eBv2/nUW05X/inO3Q/LTCM/RcZz8gaEKxdCihIBblZzEqORNVNbbgTBz3Q6ZqC2iM4VtIe4g6SWjX6Cg=="/>
         </item>
         <item>
             <title>0.5.0-beta</title>
