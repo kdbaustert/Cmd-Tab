@@ -435,10 +435,6 @@ GitHub Pages must be serving the `gh-pages` branch for `SUFeedURL` to resolve. T
 that branch on the first release and writes a `.nojekyll` alongside the appcast, which stops Pages
 running the XML through Jekyll and mangling it.
 
-**As of v0.5.1-beta this is not set up**: there is no `gh-pages` branch and Pages is not enabled, so
-`SUFeedURL` answers 404 and no install is offered an update. Until it is, every release is a manual
-download from the Releases page.
-
 ### Shortcuts
 
 | Setting | What it does | Default |
