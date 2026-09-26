@@ -222,7 +222,7 @@ secure timestamp, and notarisation:
 ```sh
 ./release.sh                          # build + Developer ID sign + verify
 ./release.sh --notarize               # ... and submit to Apple, staple, re-zip
-VERSION=1.2.0 BUILD=42 ./release.sh   # stamp a version into the built bundle only
+VERSION=1.2.0 BUILD=42 ./release.sh   # stamp a version into the bundle and Resources/Info.plist
 ```
 
 | Variable | What it does |

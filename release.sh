@@ -18,7 +18,7 @@
 #   ./release.sh                          build + Developer ID sign + verify
 #   ./release.sh --notarize               ... and submit to Apple, then staple
 #   ./release.sh --adhoc                  build + ad-hoc sign, no Developer ID, no notarisation
-#   VERSION=1.2.0 BUILD=34 ./release.sh   stamp a version into the built bundle
+#   VERSION=1.2.0 BUILD=34 ./release.sh   stamp a version into the bundle and Resources/Info.plist
 #
 # Environment:
 #   CODESIGN_IDENTITY  Signing identity. Defaults to the sole "Developer ID Application" in the
@@ -106,6 +106,28 @@ echo "==> Release identity: $IDENTITY"
 # of, so --adhoc skips both.
 HARDENED=1
 [[ "$ADHOC" == "1" ]] && HARDENED=0
+
+# The release's version is written into the tracked Info.plist as well as the built bundle, so the
+# tree records what was last shipped. Stamped into the bundle alone, it never reached the source:
+# every `./build.sh --install` build reported the template's 0.1.0 (1), which read as a stale install
+# next to the GitHub release. The edit is left uncommitted, for the maintainer to commit with the
+# release.
+#
+# A text substitution, not PlistBuddy: PlistBuddy re-serialises the whole file, sorting its keys and
+# dropping every comment in it — and those comments are where the plist says why each key is set.
+stamp_template() {
+    local key="$1" value="$2"
+    KEY="$key" VALUE="$value" perl -0pi -e \
+        's{(<key>\Q$ENV{KEY}\E</key>\s*<string>)[^<]*(</string>)}{$1$ENV{VALUE}$2}' \
+        Resources/Info.plist
+    if [[ "$(/usr/libexec/PlistBuddy -c "Print :$key" Resources/Info.plist)" != "$value" ]]; then
+        echo "==> ERROR: could not stamp $key=$value into Resources/Info.plist" >&2
+        exit 1
+    fi
+}
+[[ -n "${VERSION:-}" ]] && stamp_template CFBundleShortVersionString "$VERSION"
+[[ -n "${BUILD:-}" ]] && stamp_template CFBundleVersion "$BUILD"
+
 CODESIGN_IDENTITY="$IDENTITY" HARDENED="$HARDENED" RELEASE=1 UNIVERSAL=1 ./build.sh
 
 # ---------------------------------------------------------------- verify
