@@ -56,7 +56,7 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 While the switcher is open, just start typing to narrow the list. Matching is **fuzzy and ranked**:
 each space-separated word must match as a *subsequence*, so `vsc` finds Visual Studio Code and
 `saf 2` still finds Safari's second window. The match is on the tile's title *and* its app name,
-case-insensitively, and the better of the two scores wins so a strong title match is not diluted by
+case- and accent-insensitively (`cafe` finds *Café*, the way Spotlight does), and the better of the two scores wins so a strong title match is not diluted by
 the app name trailing after it.
 
 Ranking is the point of the scoring: a prefix beats a substring beats scattered characters, matches
@@ -85,7 +85,10 @@ A key held with ⌥ or ⌃ is taken as deliberate rather than typed, so it never
 digit still jumps to that tile when the filter is empty; once you have started a query, digits type
 into it instead (so you can find *1Password*). The number badges hide while a filter is active, since the jump is off. **Esc**
 backs out of the query first and only dismisses the switcher on a second press, the way a search
-field behaves.
+field behaves. Releasing the trigger, pressing **Return**, or the committing Tab while the query
+matches nothing closes the switcher **without switching** — there is no tile to switch to, and
+guessing one would land you somewhere you did not type. A click or ⌘-number still takes the tile it
+names.
 
 The mouse works too: while the switcher is open, **moving over a tile highlights it** (the highlight
 and caption follow the cursor) and **clicking a tile switches to it**. Neither goes through SwiftUI,
@@ -182,7 +185,7 @@ tooltip.
 | Import shortcuts | Carries the chords over from another switcher — see below. | — |
 | Reset to defaults | Clears every Cmd-Tab preference. | — |
 | Keep settings in a config file | Mirrors every preference to `~/.config/cmdtab/config.json` (honouring `XDG_CONFIG_HOME`). Two-way and live: edits to the file apply without a relaunch, changes made in Settings are written back. The file is written **in place** rather than atomically, so a symlink into a dotfiles repo survives every save — an atomic write replaces the inode and would quietly break it. On launch the file wins over local defaults, which is what makes a fresh checkout come up configured — and an install that has never touched either of these two switches turns this one on by itself when a `config.json` is already sitting there, so the checkout really is the whole of the setup. Only ever *never touched*: unticking writes the decision down, so a file left behind by someone who deliberately turned this off is not revived at the next launch. Unticking leaves the file on disk: it may be tracked, and deleting a tracked file because a checkbox changed is not ours to do. | Off |
-| Sync settings over iCloud | Keeps the settings file at `~/Library/Mobile Documents/com~apple~CloudDocs/Cmd-Tab/config.json` instead, where every Mac signed into the account reads and writes the same one — a change on any of them turns up on the others, picked up by the same watcher that notices an edit made in an editor. **Independent of the switch above**: turning this on alone starts mirroring, with no need to opt into a dotfiles file first. There is only ever one mirror, so with both switches on the file lives in iCloud Drive — a second copy under `~/.config` would diverge the moment either changed, leaving two files each claiming to be the settings and nothing to say which wins. Reached by its CloudDocs path rather than through `url(forUbiquityContainerIdentifier:)`, which wants the ubiquity-container entitlement and a provisioning profile naming a team; a plain file in iCloud Drive syncs just as well, needs no entitlement, and is visible in Finder — which for a config file whose point is being editable is the better side of the trade. Turning it on with nothing in iCloud yet seeds it from the file you were using, so your settings are published rather than blanked; turning it on where a file already exists lets that file win, the same rule launch follows. An undownloaded copy (iCloud's `.config.json.icloud` placeholder) suspends writing until it lands, which is what stops a second Mac overwriting the first's settings during setup. Turning it back off leaves the cloud copy alone — the other Macs are still syncing against it. Greyed out, with the reason given, when iCloud Drive is off. Simultaneous edits on two Macs are resolved by iCloud, which keeps both and leaves a conflicted copy. | Off |
+| Sync settings over iCloud | Keeps the settings file at `~/Library/Mobile Documents/com~apple~CloudDocs/Cmd-Tab/config.json` instead, where every Mac signed into the account reads and writes the same one — a change on any of them turns up on the others, picked up by the same watcher that notices an edit made in an editor. **Independent of the switch above**: turning this on alone starts mirroring, with no need to opt into a dotfiles file first. There is only ever one mirror, so with both switches on the file lives in iCloud Drive — a second copy under `~/.config` would diverge the moment either changed, leaving two files each claiming to be the settings and nothing to say which wins. Reached by its CloudDocs path rather than through `url(forUbiquityContainerIdentifier:)`, which wants the ubiquity-container entitlement and a provisioning profile naming a team; a plain file in iCloud Drive syncs just as well, needs no entitlement, and is visible in Finder — which for a config file whose point is being editable is the better side of the trade. Turning it on with nothing in iCloud yet seeds it from the file you were using, so your settings are published rather than blanked; turning it on where a file already exists lets that file win, the same rule launch follows. An undownloaded copy (iCloud's `.config.json.icloud` placeholder) suspends writing until it lands, which is what stops a second Mac overwriting the first's settings during setup. Turning it back off leaves the cloud copy alone — the other Macs are still syncing against it. Greyed out, with the reason given, when iCloud Drive is off. Simultaneous edits on two Macs are resolved by iCloud, which keeps both and leaves a conflicted copy. Neither this switch nor the one above is written into the file: they say how *this Mac* keeps its settings, so turning either on or off on one Mac changes nothing on another. | Off |
 | Restore macOS ⌘-Tab | Hands the system switcher back without quitting. The takeover is otherwise undone only by a clean quit, which is no help in the case that matters — the trigger is bound to something unreachable and ⌘-Tab does nothing. Cmd-Tab keeps its own trigger, so both respond until it is restarted. | — |
 
 Start at login lives in the system's Login Items, not our defaults.
@@ -319,7 +322,9 @@ compile. `build.sh` now has to:
    and two XPC services, each separately signable. Signatures nest, so an inner signature
    invalidates every seal already covering it. `--deep` is gone from both paths: Apple advises
    against it for distribution, and it re-signs nested code with the *outer* options, replacing
-   signatures that were built correctly with ones that were not. `build.sh` ends with
+   signatures that were built correctly with ones that were not. `Autoupdate` sits bare in
+   `Versions/B` and is re-signed like the rest — it used to keep Sparkle's own ad-hoc signature,
+   which passes a local verify and fails notarisation. `build.sh` ends with
    `codesign --verify --deep --strict`, which is the check that catches the mistake locally instead
    of several minutes into a notarisation run.
 
@@ -337,7 +342,7 @@ take. Set `APPCAST_URL` to have it fetch the live feed first.
 
 | Variable | What it does |
 | --- | --- |
-| `APPCAST_URL` | The published feed to append to. Skipped if unset, which starts a fresh appcast. |
+| `APPCAST_URL` | The published feed to append to. Skipped if unset, which starts a fresh appcast. A fetch that fails **stops the release**, rather than generating a feed listing this release alone and publishing it over the real one. |
 | `DOWNLOAD_URL_PREFIX` | What each `<enclosure url>` is built from. Defaults to this repo's release-download path for the version being built. |
 
 ## Continuous integration
@@ -430,6 +435,10 @@ GitHub Pages must be serving the `gh-pages` branch for `SUFeedURL` to resolve. T
 that branch on the first release and writes a `.nojekyll` alongside the appcast, which stops Pages
 running the XML through Jekyll and mangling it.
 
+**As of v0.5.1-beta this is not set up**: there is no `gh-pages` branch and Pages is not enabled, so
+`SUFeedURL` answers 404 and no install is offered an update. Until it is, every release is a manual
+download from the Releases page.
+
 ### Shortcuts
 
 | Setting | What it does | Default |
@@ -494,7 +503,7 @@ you are looking at, which is why they are not on the Shortcuts tab with the swit
 | Focus follows the pointer | Rest the cursor over a window and the keyboard goes to it, with no click. Off by default, with a rest delay you set. See [Focus follows the pointer](#focus-follows-the-pointer). | Off, 250 ms |
 | Move to previous / next desktop | Sends the focused window to the next **desktop** (Space) along, stopping at the first and last rather than wrapping. ⌥ on the halves' own arrows, one row along from the display moves' ⇧ — same key again, "further still". **Off by default**, and the only move with a switch of its own: macOS offers no way to move another app's window between desktops, so this performs the gesture instead — it picks the window up, opens Mission Control for a moment and drops it on the destination's thumbnail. That takes over the pointer for roughly six-tenths of a second, or about 1.3s with **Follow the window** on, which is still not something to claim on your behalf. It acts on the frontmost app's focused window, and because it has to *grab* that window it declines — with a line in the log rather than a half-move — if the title bar is covered at the moment it presses, or if the window is full screen or minimized. The synthetic drag is posted with the modifier flags explicitly cleared: a `leftMouseDown` inherits the live modifier state, and since the chord that triggered it is still under your fingers, a ⌃ riding along would make the press a Control-click — a right click — and nothing would move. Two settings sit with it. **Follow the window** (on) switches you to the desktop it landed on, by pressing that desktop's own thumbnail — a real transition performed by macOS, not the bookkeeping-only private Space switch. And the window is put back on the frame it started with: the drag genuinely carries it up to the Spaces Bar, so macOS drops it wherever the gesture ended, which read as the move shoving windows to the left. The synthetic drag is also stamped as ours (`SyntheticEvent`) so *Snap by dragging* and the modifier-drag ignore it — without that, the route across the top of the screen is the maximize snap zone, and a moved window arrived maximized or inset by the gap. Persisted as `windowTilingDesktopMoves` and `windowTilingFollowsDesktopMove`. | Off / On, ⌃⌥⌘ ← → |
 | Snap by dragging | Drag a window to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, **the centre of the screen gives full screen**, with a translucent preview of where it will land. Grab the window **anywhere**, not just its titlebar: what tells a window drag from a text selection is not where the press landed but whether the window actually *moved* — origin changed, size unchanged — which is also how Rectangle's `SnappingManager` decides. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
-| Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block are fixed at light grey on black — Rectangle's own footprint styling (`FootprintWindow`: `borderColor = .lightGray`, `fillColor = .black`, `borderWidth = 2`, alpha `0.3`) — and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
+| Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. Adding a modifier beyond the chord while it is armed **cancels** the gesture instead of snapping, so reaching for another shortcut mid-gesture does not move the window. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block are fixed at light grey on black — Rectangle's own footprint styling (`FootprintWindow`: `borderColor = .lightGray`, `fillColor = .black`, `borderWidth = 2`, alpha `0.3`) — and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
 | Maximize | Fills the *usable* area, so a maximized window sits under the menu bar rather than behind it. | ⌃⌘↩ |
 | Center | Keeps the window's size and centres it; a window bigger than the screen is clamped to it. | ⌃⌘C |
 | Restore previous size | Back to where the window was before you first tiled it — saved once per window, so it is not merely the previous tile. **Press it again and you go back to the tile you just undid**: restoring records the frame it is about to replace, so the chord toggles between the two rather than firing once and going quiet. One level of undo per window, which is what makes the second press unambiguous. It is the same *remember the frame before the change* mechanism every other arrangement uses, so it obeys the per-app **Never tile** rule like the rest of them, and `cmdtab://tile/restore` reaches it without a chord. | ⌃⌘Z |
@@ -548,7 +557,7 @@ window through every width.
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
 | Group windows by app | Window mode only. On keeps each app's windows in a run, which is what the list has always done — not by decision, but because it is built by walking the sorted *app* list. Off ranks every window against every other by when you last used it, so one tap of the trigger reaches the window you were in before this one whichever app it belongs to. That order was not previously reachable at all. Alphabetical always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them. Persists as `groupWindowsByApp`. | On |
 | Desktops | Which Desktops window tiles may come from — all of them, or only the one in front. Application tiles are never affected, since an app is not on a Desktop. Read **fresh each time the switcher opens** rather than when the list was built: a window's own Space does not change when you switch Desktops but which Space is in front does, and switching to an empty Desktop activates no app and so rebuilds nothing. Persists as `windowSpaceScope`. | All desktops |
-| Hide apps with no windows | An app whose windows are all minimized counts as empty. | Off |
+| Hide apps with no windows | Hides an app with no real window — one that owns only menu-bar or other helper windows. A window counts as real when it is on screen, placed on a Desktop, or window-sized; the last test is what keeps an app whose windows macOS fails to place on a Desktop (Ghostty, measured). An app whose windows are all minimized still shows — see *Known limitations*. | Off |
 | Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
 | Show on | Which displays get a panel. | Automatic |
 | Preview windows | See [Window preview](#window-preview). | Off |
@@ -595,6 +604,11 @@ Distance from an icon to the glass is `iconSpacing / 2 + panelPadding` — the t
 why tightening only one of them disappoints. The gap between neighbouring highlights is
 `iconSpacing + tileGap`, and `tileGap` is deliberately not adjustable down to zero: touching
 highlights read as one smeared blob rather than two tiles.
+
+When there are more tiles than the screen has room for at these settings, the panel **shrinks to
+fit** — icon size and the spacings step down together until the tiles fit or reach their floor — so
+a busy session never runs off the edge of the display. The sliders keep what you set; the shrink is
+worked out per screen each time the panel opens.
 
 The preview is a real panel — same glass, same metrics, real icons — because the switcher itself
 cannot be seen while the settings window is frontmost. Dragging a slider also resizes an
@@ -847,7 +861,8 @@ by the same downsampled-alpha check the window preview uses.
 
 **Per-app overrides** are the settings that only became askable once the switcher grew a global
 apps/windows mode and a window tiler: *always list this app window-by-window* even in application
-mode, and *never let a tiling shortcut touch this app* (which the drag gesture honours too). Only
+mode, and *never let a tiling shortcut touch this app* (which the drag gesture honours too — the press is passed
+on before it is swallowed, so the app keeps any use of its own it had for that modifier-drag). Only
 apps carrying an override are stored, and a row whose overrides are all switched off deletes itself.
 
 An override can also snap an app's first window to an arrangement as it opens, and — first — move it
@@ -876,9 +891,9 @@ Two of the three actions have an honest limit. **Always list individually** wide
 into per-window tiles rather than singling out just the matching window — an app with a matching
 window shows all of its windows individually, not that one alone, because the switcher's per-app
 expansion has no finer-grained way to say "this one, not its siblings". And **never tile** matched by
-title only protects a window from the tiling chords, the titlebar drag, and the modifier-drag — it
-does not yet reach the window-swap chord or a desktop's restored layout, both of which still check
-only the per-app override.
+title protects a window from the tiling chords, the titlebar drag, the modifier-drag, a restored
+display layout, a launch arrangement and a Desktop assignment — it does not yet reach the
+window-swap chord, which still checks only the per-app override.
 
 **Direct activation** gives an app its own chord: pressing it jumps straight there, launching the
 app if it isn't running. For the handful of apps you reach for all day the switcher is pure
@@ -1195,6 +1210,10 @@ after that. Remove the identity in Keychain Access to undo it.
 - The settings window is the one place Cmd-Tab activates, so while it is frontmost *we* are the
   frontmost app and a ⌘-Tab lands one target further along than usual. Close it and ordering is
   normal again.
+- **Hide apps with no windows still lists an app whose windows are all minimized.** A minimized
+  window is neither on screen nor on a Desktop, and the window server reports it at full size — which
+  is exactly what an unplaced real window looks like, the case the size test exists to keep. The window
+  server gives nothing to tell the two apart, so for now both stay listed.
 - **Tab search does not reach VS Code or Xcode.** VS Code's tab strip is not built from an
   `AXTabGroup` within the search's depth bound, so it is never found; Xcode is slow enough answering
   Accessibility that walking it on every tabs-scoped session was not worth the wait. Both are the
