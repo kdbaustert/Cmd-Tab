@@ -1,0 +1,33 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Cmd-Tab</title>
+        <item>
+            <title>0.5.1-beta</title>
+            <pubDate>Sat, 26 Sep 2026 06:33:46 -0400</pubDate>
+            <sparkle:version>139</sparkle:version>
+            <sparkle:shortVersionString>0.5.1-beta</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/kdbaustert/Cmd-Tab/releases/download/v0.5.1-beta/Cmd-Tab-0.5.1-beta.zip" length="5233784" type="application/octet-stream" sparkle:edSignature="sFPw1bO01ruGyo/zkx/CN1pLFvqUultT8EruVoL7XI5I8XquSDARKf75Oi69VLrNbMN5GFmP6wwRDf1V0w/ADA=="/>
+        </item>
+        <item>
+            <title>0.5.0-beta</title>
+            <pubDate>Fri, 18 Sep 2026 12:59:46 -0400</pubDate>
+            <sparkle:version>137</sparkle:version>
+            <sparkle:shortVersionString>0.5.0-beta</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/kdbaustert/Cmd-Tab/releases/download/v0.5.0-beta/Cmd-Tab-0.5.0-beta.zip" length="5130402" type="application/octet-stream" sparkle:edSignature="ICuqYo+eDM9htX64MUbSARdDIZpz8iH5bXkoaHWI8K439RA6b6Neo1Fhf7tOrWGio1YemNSIKzQAyOPJOBGVDQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/kdbaustert/Cmd-Tab/releases/download/v0.5.0-beta/Cmd-Tab137-126.delta" sparkle:deltaFrom="126" length="1129634" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="943248" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="OY186rdPO0wplZefzHrVyyCz2SK5AfdYNiBlOD8wmMOUfs6IPx+kOryiQ8SVawwUBb+R+h8cUHj+uGF/YLuUCg=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>0.4.0-beta</title>
+            <pubDate>Sat, 12 Sep 2026 06:07:21 -0400</pubDate>
+            <sparkle:version>126</sparkle:version>
+            <sparkle:shortVersionString>0.4.0-beta</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/kdbaustert/Cmd-Tab/releases/download/v0.4.0-beta/Cmd-Tab-0.4.0-beta.zip" length="4815684" type="application/octet-stream" sparkle:edSignature="96Y5Fvlr26uPOyubeEDIWtT0SWLe5UplDMABqou98Xj2CGqGJQ1zSyHAl/Z/BC0giRShPM3jco+22uXbCDgRAw=="/>
+        </item>
+    </channel>
+</rss>
