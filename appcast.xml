@@ -3,6 +3,14 @@
     <channel>
         <title>Cmd-Tab</title>
         <item>
+            <title>1.0.1</title>
+            <pubDate>Sat, 26 Sep 2026 11:06:18 -0400</pubDate>
+            <sparkle:version>147</sparkle:version>
+            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/kdbaustert/Cmd-Tab/releases/download/v1.0.1/Cmd-Tab-1.0.1.zip" length="5286395" type="application/octet-stream" sparkle:edSignature="0yP+QvTAXZSLOAhW4ILWtrqtpLi7ehGG4647Mn/5MdswULvlLDqmHB84t/v2N+AT1rj/uTbBRvfHQcKllGxiCg=="/>
+        </item>
+        <item>
             <title>1.0.0</title>
             <pubDate>Sat, 26 Sep 2026 08:53:50 -0400</pubDate>
             <sparkle:version>144</sparkle:version>
