@@ -186,12 +186,14 @@ fi # notarize
 # it a release is a file on GitHub that existing installs know nothing about, which is exactly the
 # state this app was in before Sparkle.
 #
-# `generate_appcast` reads every archive in the releases directory, signs each with the EdDSA
+# `generate_appcast` reads every archive in the directory it is given, signs each with the EdDSA
 # private key from the login keychain, and writes an appcast.xml listing them. The key is the same
 # one whose public half is baked into Info.plist as SUPublicEDKey: if they ever disagree, every
 # client silently rejects every update, which is the failure mode worth being loud about.
 RELEASES="build/releases"
 APPCAST="$RELEASES/appcast.xml"
+# Rebuilt on every run and holding exactly two things — see "Generating appcast" below.
+STAGING="build/appcast-staging"
 GENERATE_APPCAST="$(find .build/artifacts -type f -name generate_appcast -perm -u+x -print -quit || true)"
 
 if [[ -z "$GENERATE_APPCAST" ]]; then
@@ -204,16 +206,47 @@ fi
 # the filename to tell archives apart — two releases both called Cmd-Tab.zip are one entry that
 # changes underneath the feed.
 STAMPED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+ARCHIVE="Cmd-Tab-$STAMPED_VERSION.zip"
 mkdir -p "$RELEASES"
-cp "$ZIP" "$RELEASES/Cmd-Tab-$STAMPED_VERSION.zip"
+cp "$ZIP" "$RELEASES/$ARCHIVE"
 
 # Carried forward from the published feed when there is one, so the history of older versions
 # survives. A regenerated appcast that listed only this release would strand anyone more than one
 # version behind — Sparkle offers the newest item its client can run, and an item it cannot see is
 # an update it will never take.
+#
+# A failed fetch stops the release. It used to fall through with nothing but curl's own one line,
+# and generate_appcast, finding no feed to extend, wrote one listing this release alone — which
+# the publish step then put over the real one. The first release is the one case with nothing to
+# fetch, and it says so by leaving APPCAST_URL unset.
 if [[ -n "${APPCAST_URL:-}" ]] && [[ ! -f "$APPCAST" ]]; then
     echo "==> Fetching the published appcast to append to"
-    curl -fsSL "$APPCAST_URL" -o "$APPCAST" || rm -f "$APPCAST"
+    if ! curl -fsSL "$APPCAST_URL" -o "$APPCAST"; then
+        rm -f "$APPCAST"
+        echo "==> ERROR: could not fetch the published appcast from $APPCAST_URL" >&2
+        echo "    Generating without it would publish a feed that lists only this release." >&2
+        echo "    Put the published feed at $APPCAST yourself, or, for the very first" >&2
+        echo "    release, unset APPCAST_URL." >&2
+        exit 1
+    fi
+fi
+
+# generate_appcast is shown this release's archive and the feed so far, and nothing else.
+#
+# Everything it can see an archive for, it rewrites — and it builds every enclosure URL from the one
+# prefix below, which names *this* release. With older zips lying beside the new one in
+# $RELEASES, every older item was re-pointed at this release's tag, where its zip does not exist
+# (measured: the 0.4.0-beta item rewritten to .../download/v0.5.0-beta/Cmd-Tab-0.4.0-beta.zip). The
+# same older archives were also what it built delta updates against, each referenced under this
+# release's URL and none of them ever uploaded. Seeing a single archive, it adds or updates this
+# release's item and leaves every older one exactly as it was published. `--maximum-deltas 0`
+# states the no-deltas rule outright rather than leaving it to what happens to be in the folder:
+# the only assets a release uploads are its zip and the feed.
+rm -rf "$STAGING"
+mkdir -p "$STAGING"
+cp "$RELEASES/$ARCHIVE" "$STAGING/"
+if [[ -f "$APPCAST" ]]; then
+    cp "$APPCAST" "$STAGING/appcast.xml"
 fi
 
 echo "==> Generating appcast"
@@ -223,9 +256,11 @@ DOWNLOAD_PREFIX="${DOWNLOAD_URL_PREFIX:-https://github.com/kdbaustert/Cmd-Tab/re
 "$GENERATE_APPCAST" \
     --download-url-prefix "$DOWNLOAD_PREFIX" \
     --maximum-versions 0 \
-    "$RELEASES"
+    --maximum-deltas 0 \
+    "$STAGING"
+cp "$STAGING/appcast.xml" "$APPCAST"
 
 echo "==> Appcast written: $APPCAST"
 echo
-echo "    Publish by uploading $RELEASES/Cmd-Tab-$STAMPED_VERSION.zip to the v$STAMPED_VERSION"
+echo "    Publish by uploading $RELEASES/$ARCHIVE to the v$STAMPED_VERSION"
 echo "    GitHub release, and $APPCAST to the branch GitHub Pages serves."

@@ -161,4 +161,40 @@ final class MigrationTests: XCTestCase {
         let messages = migrate()
         XCTAssertTrue(messages.filter { $0.contains("saved-layouts") }.isEmpty, "\(messages)")
     }
+
+    // MARK: - Incoming payloads
+
+    /// `run` only sees this install's own defaults, and a config file from an older build arrives
+    /// after it. The same rewrites, applied to the payload.
+    func testAnOldPayloadsBadgesOptOutReachesBothNewKeys() {
+        let upgraded = Migration.upgrade(["showBadges": false])
+        XCTAssertEqual(upgraded["showDisplayBadges"] as? Bool, false)
+        XCTAssertEqual(upgraded["showSpaceBadges"] as? Bool, false)
+    }
+
+    /// Only false, for the reason `testABadgesOptInIsNotCarriedAcross` gives.
+    func testAnOldPayloadsBadgesOptInIsNotCarriedAcross() {
+        let upgraded = Migration.upgrade(["showBadges": true])
+        XCTAssertNil(upgraded["showDisplayBadges"])
+        XCTAssertNil(upgraded["showSpaceBadges"])
+    }
+
+    /// Within one payload the successor key is the later statement, as a key set on this build is
+    /// in `run`.
+    func testASuccessorKeyThePayloadAlreadyCarriesWins() {
+        let upgraded = Migration.upgrade([
+            "showBadges": false, "showDisplayBadges": true,
+            "windowSnapHighlightColorHex": "#4E545A", "windowSnapOutlineColorHex": "#123456",
+        ])
+        XCTAssertEqual(upgraded["showDisplayBadges"] as? Bool, true)
+        XCTAssertEqual(upgraded["showSpaceBadges"] as? Bool, false)
+        XCTAssertEqual(upgraded["windowSnapOutlineColorHex"] as? String, "#123456")
+        XCTAssertEqual(upgraded["windowSnapLandingColorHex"] as? String, "#4E545A")
+    }
+
+    func testAPayloadWithNothingRetiredComesBackAsItWas() {
+        let upgraded = Migration.upgrade(["maxColumns": 4])
+        XCTAssertEqual(upgraded.count, 1)
+        XCTAssertEqual(upgraded["maxColumns"] as? Int, 4)
+    }
 }

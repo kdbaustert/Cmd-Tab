@@ -279,4 +279,41 @@ final class ShortcutAuditTests: XCTestCase {
         ]
         XCTAssertTrue(ShortcutAudit.collisions(in: entries).isEmpty)
     }
+
+    // MARK: - A trigger with no modifier
+
+    /// `hotkeyKeyCode` alone in a hand-edited config leaves the modifiers at 0 — a bare-key trigger
+    /// that swallowed that key machine-wide. `loadHotkey` falls back to the default instead.
+    func testAStoredTriggerWithNoPrimaryModifierIsNotUsable() {
+        XCTAssertNil(BehaviorStore.usableHotkey(keyCode: 50, modifiers: 0))
+        XCTAssertNil(
+            BehaviorStore.usableHotkey(
+                keyCode: 48, modifiers: Int(CGEventFlags.maskShift.rawValue)),
+            "Shift is the go-backwards modifier, not one a trigger can be held on")
+        XCTAssertNil(
+            BehaviorStore.usableHotkey(
+                keyCode: -1, modifiers: Int(CGEventFlags.maskCommand.rawValue)))
+    }
+
+    func testAStoredTriggerWithAModifierIsKept() {
+        let hotkey = BehaviorStore.usableHotkey(
+            keyCode: 48, modifiers: Int(CGEventFlags.maskAlternate.rawValue))
+        XCTAssertEqual(
+            hotkey, Hotkey(keyCode: 48, modifierRaw: CGEventFlags.maskAlternate.rawValue))
+    }
+
+    /// Stored but refused by every matcher is not the same as unbound. It is listed as what it
+    /// says, with no chord and inactive — "Not set" told the user nothing was there.
+    func testABindingWithNoModifierIsListedAsItselfButInert() {
+        let bare = ShortcutAudit.entry(
+            .scopedTrigger, "scoped.1", "Scoped", Hotkey(keyCode: 48, modifierRaw: 0), active: true)
+        XCTAssertEqual(bare.display, "⇥")
+        XCTAssertNil(bare.chord)
+        XCTAssertFalse(bare.isActive)
+
+        let unbound = ShortcutAudit.entry(
+            .scopedTrigger, "scoped.2", "Scoped", Hotkey(keyCode: -1, modifierRaw: 0), active: true)
+        XCTAssertEqual(unbound.display, "Not set")
+        XCTAssertNil(unbound.chord)
+    }
 }

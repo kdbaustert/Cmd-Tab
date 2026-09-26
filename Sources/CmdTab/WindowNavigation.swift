@@ -179,6 +179,36 @@ enum WindowNavigator {
         }
     }
 
+    /// The layer of the frontmost surface drawn at `point`, whatever its level — nil over bare
+    /// desktop.
+    ///
+    /// The companion `onScreen` needs for hit-testing. That list keeps to layer 0 on purpose, which
+    /// makes it the wrong one to ask "what is under the pointer" of on its own: an open menu, the
+    /// Dock, the menu bar and a floating panel all sit above layer 0, so a point on any of them
+    /// resolved to whichever ordinary window happened to lie underneath. Asking this first is how
+    /// a caller tells "over a window" from "over something drawn on top of one".
+    ///
+    /// Surfaces at the screen-saver level and above are skipped, and so are fully transparent ones.
+    /// That is where tools draw their whole-screen overlays — dimming, cursor highlights — and
+    /// counting those would put every point on the display under something.
+    static func frontmostLayer(at point: CGPoint) -> Int? {
+        guard
+            let info = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+        let ceiling = Int(CGWindowLevelForKey(.screenSaverWindow))
+        for window in info {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer < ceiling,
+                ((window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
+                let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let frame = CGRect(dictionaryRepresentation: raw as CFDictionary),
+                frame.contains(point)
+            else { continue }
+            return layer
+        }
+        return nil
+    }
+
     /// The frontmost window of `pid`, and every other window that could be a destination.
     ///
     /// The origin is taken as the first window of the frontmost app in z-order rather than read back

@@ -18,11 +18,7 @@ final class TapRoutingTests: XCTestCase {
     private func down(_ code: Int, _ flags: CGEventFlags, repeat isRepeat: Bool = false)
         -> TapRouting.Event
     {
-        TapRouting.Event(type: .keyDown, keyCode: code, flags: flags, isAutorepeat: isRepeat)
-    }
-
-    private func up(_ code: Int, _ flags: CGEventFlags) -> TapRouting.Event {
-        TapRouting.Event(type: .keyUp, keyCode: code, flags: flags)
+        TapRouting.Event(keyCode: code, flags: flags, isAutorepeat: isRepeat)
     }
 
     /// Every binding in the app pointed at one chord, so precedence questions have a single answer
@@ -94,24 +90,7 @@ final class TapRoutingTests: XCTestCase {
             .open(backwards: true))
     }
 
-    // MARK: - Key edges
-
-    /// Openers are keydown-only. A key-up on the trigger chord is not an opener and must not open a
-    /// second session.
-    func testAKeyUpDoesNotOpenTheSwitcher() {
-        let bindings = TapRouting.Bindings(openerMatches: { c, _ in c == self.tab })
-        XCTAssertEqual(TapRouting.idle(up(tab, cmd), bindings: bindings, isAppActive: false), .pass)
-    }
-
-    /// Global actions match on **both** edges, and the key-up is swallowed even though it does
-    /// nothing. Swallowing only the keydown left an unpaired key-up heading for the frontmost app,
-    /// which virtualisers, VNC and RDP clients read as a release with no press.
-    func testAGlobalActionSwallowsItsKeyUpWithoutFiring() {
-        let bindings = TapRouting.Bindings(tilingMatch: { c, _ in c == self.tab ? .leftHalf : nil })
-        let decision = TapRouting.idle(up(tab, ctrlCmd), bindings: bindings, isAppActive: false)
-        XCTAssertEqual(decision, .consume)
-        XCTAssertTrue(decision.swallows, "the key-up must not escape to the app in front")
-    }
+    // MARK: - Key repeat
 
     /// Key repeat is swallowed but not acted on: cycling ½ → ⅔ → ⅓ under autorepeat would strobe a
     /// window through every width in a fraction of a second.
@@ -147,6 +126,30 @@ final class TapRoutingTests: XCTestCase {
         XCTAssertEqual(
             TapRouting.idle(down(tab, cmd), bindings: bindings, isAppActive: true),
             .openSameApp(backwards: false))
+    }
+
+    /// …until a recorder is listening. Recording the same-app trigger as the main trigger's chord
+    /// (or the other way round) never reached the recorder: the live trigger swallowed it first.
+    func testTheBuiltInTriggersStandDownWhileARecorderIsListening() {
+        var bindings = allClaiming(tab, cmd)
+        bindings.scopedMatch = { _, _ in nil }
+        bindings.activationMatch = { _, _ in nil }
+        bindings.allWindowsMatch = { _, _ in nil }
+        bindings.tilingMatch = { _, _ in nil }
+        let decision = TapRouting.idle(
+            down(tab, cmd), bindings: bindings, isAppActive: true, isRecording: true)
+        XCTAssertEqual(decision, .pass)
+        XCTAssertFalse(decision.swallows, "the recorder has to see the chord it is recording")
+    }
+
+    /// A recorder hears keys only while Cmd-Tab is in front. One left armed behind another app is
+    /// not listening, and must not take ⌘-Tab away from that app.
+    func testAnArmedRecorderBehindAnotherAppDoesNotStandTheTriggersDown() {
+        let bindings = TapRouting.Bindings(openerMatches: { c, _ in c == self.tab })
+        XCTAssertEqual(
+            TapRouting.idle(
+                down(tab, cmd), bindings: bindings, isAppActive: false, isRecording: true),
+            .open(backwards: false))
     }
 
     /// Scoped triggers do *not*, unlike the built-ins: they are recorded in the settings window, so
@@ -203,5 +206,62 @@ final class TapRoutingTests: XCTestCase {
         for decision in [TapRouting.Decision.pass, .tilingInert(.leftHalf)] {
             XCTAssertFalse(decision.swallows, "\(decision) must reach the app in front")
         }
+    }
+}
+
+/// A key-up goes wherever its key-down went. Each case is a gesture where the switcher's state had
+/// moved on between the two edges, which is when deciding the key-up separately got it wrong.
+final class KeyPairingTests: XCTestCase {
+    private let tab = 48
+    private let letter = 0
+
+    /// ⌘ released a moment before Tab — the ordinary end of a ⌘-Tab. The session has already
+    /// committed when Tab comes up, and its key-up used to escape to the app with no press before
+    /// it.
+    func testAWithheldPressHasItsKeyUpWithheldAfterTheSessionEnds() {
+        var pairing = KeyPairing()
+        pairing.keyDown(tab, isAutorepeat: false, swallowed: true)
+        XCTAssertTrue(pairing.keyUp(tab))
+    }
+
+    /// A key already held when the panel opened reached the app on the way down, so its key-up must
+    /// too — withholding it left a key stuck down in a VNC or RDP session.
+    func testAPressThatReachedTheAppHasItsKeyUpDelivered() {
+        var pairing = KeyPairing()
+        pairing.keyDown(letter, isAutorepeat: false, swallowed: false)
+        XCTAssertFalse(pairing.keyUp(letter))
+    }
+
+    /// A key-up with no press seen at all — held before the tap started — belongs to the app.
+    func testAKeyUpWithNoRecordedPressIsDelivered() {
+        var pairing = KeyPairing()
+        XCTAssertFalse(pairing.keyUp(letter))
+    }
+
+    /// Once any key-down of a press reaches the app, the receiver has the key down, so the key-up
+    /// has to follow — including a repeat let through after the session that withheld the first
+    /// press has ended.
+    func testARepeatThatReachesTheAppReleasesTheKeyUp() {
+        var pairing = KeyPairing()
+        pairing.keyDown(tab, isAutorepeat: false, swallowed: true)
+        pairing.keyDown(tab, isAutorepeat: true, swallowed: false)
+        XCTAssertFalse(pairing.keyUp(tab))
+    }
+
+    /// And the other way: a withheld repeat of a press the app already has does not take the key-up
+    /// away from it.
+    func testAWithheldRepeatOfADeliveredPressDoesNotWithholdTheKeyUp() {
+        var pairing = KeyPairing()
+        pairing.keyDown(tab, isAutorepeat: false, swallowed: false)
+        pairing.keyDown(tab, isAutorepeat: true, swallowed: true)
+        XCTAssertFalse(pairing.keyUp(tab))
+    }
+
+    /// Each key-up settles its own press, so the next press starts clean.
+    func testAKeyUpClearsTheRecord() {
+        var pairing = KeyPairing()
+        pairing.keyDown(tab, isAutorepeat: false, swallowed: true)
+        XCTAssertTrue(pairing.keyUp(tab))
+        XCTAssertFalse(pairing.keyUp(tab))
     }
 }

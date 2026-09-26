@@ -314,7 +314,9 @@ final class SwitcherShortcutsStore: ObservableObject {
             self.stopRecording()
             // Hop off the handler before doing anything else: this tears down the very monitor that
             // is running, and `validate` may raise a modal — neither belongs inside event dispatch.
-            DispatchQueue.main.async {
+            // A run-loop block rather than a dispatch one, so the modal cannot freeze the main queue:
+            // see `MainRunLoop`.
+            MainRunLoop.perform {
                 guard validate(keyCode, extras) else { return }
                 self.set(
                     ActionShortcut(keyCode: keyCode, modifierRaw: extras.rawValue), for: action)

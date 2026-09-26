@@ -22,6 +22,32 @@ final class WindowPreviewTests: XCTestCase {
 
     private let now = Date()
 
+    // MARK: - The Accessibility supplement
+
+    /// A minimized window a `.hide` rule took out of ScreenCaptureKit's list is not one SC
+    /// *missed*, and must not come back through the supplement. It did: the supplement only asked
+    /// whether SC's filtered list had the id, and the rule is what had removed it.
+    func testAHiddenMinimizedWindowStaysHidden() {
+        let rules = [
+            CompiledTitleRule(
+                bundleID: nil, action: .hide,
+                regex: try? NSRegularExpression(pattern: "secret", options: [.caseInsensitive]))
+        ]
+        let kept = WindowCapture.supplementalMinimized(
+            [(id: 7, title: "Secret plans"), (id: 8, title: "Shopping list")], liveIDs: [],
+            titleRules: rules, bundleID: "com.example.notes")
+        XCTAssertEqual(kept.map(\.id), [8])
+    }
+
+    /// What SC did list is not repeated; what it missed is added — untitled included, since for
+    /// the app's own windows an empty title is usually a title Accessibility failed to read.
+    func testTheSupplementAddsOnlyWhatScreenCaptureKitMissed() {
+        let kept = WindowCapture.supplementalMinimized(
+            [(id: 1, title: "Listed"), (id: 2, title: "Missed"), (id: 3, title: "")],
+            liveIDs: [1], titleRules: [], bundleID: nil)
+        XCTAssertEqual(kept.map(\.id), [2, 3])
+    }
+
     // MARK: - Normalizing a title
 
     /// The menu and the window server are read a moment apart, and for a terminal that is long

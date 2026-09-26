@@ -11,31 +11,50 @@ enum SettingsIO {
     ///
     /// Shared with `ConfigFile`, which writes the same payload to disk continuously rather than on
     /// demand — the two must agree on what "your settings" means, or a config file would carry a
-    /// different set from an exported one.
-    static func currentPayload() -> [String: Any] {
+    /// different set from an exported one. The one difference is `ignoring`, which the config file
+    /// passes its own two switches through: see `ConfigFile.mirrorKeys`.
+    static func currentPayload(ignoring ignored: Set<String> = []) -> [String: Any] {
         let defaults = UserDefaults.standard
         var dict: [String: Any] = [:]
-        for key in keys where defaults.object(forKey: key) != nil {
+        for key in keys where !ignored.contains(key) && defaults.object(forKey: key) != nil {
             dict[key] = defaults.object(forKey: key)
         }
         return dict
     }
 
+    /// A settings file's bytes as a payload, or nil when they are not a JSON object.
+    ///
+    /// Run through `Migration.upgrade` on the way, so a file written by an older build says what it
+    /// meant in the keys this one reads. The one parser for every file-shaped payload, so the
+    /// config file's own copy and the copy it is compared against are always read the same way.
+    nonisolated static func decode(_ data: Data) -> [String: Any]? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        return Migration.upgrade(object)
+    }
+
     /// Writes an incoming payload into `UserDefaults`, ignoring anything not ours, and republishes
     /// every store. Keys absent from `payload` are left alone rather than reset: a hand-edited
-    /// config that mentions three settings means "change these three".
-    static func apply(_ payload: [String: Any]) {
-        let rejected = apply(payload, to: .standard)
+    /// config that mentions three settings means "change these three". An import is the exception,
+    /// and asks for `replacingAbsentKeys` — see the testable half below.
+    @discardableResult
+    static func apply(
+        _ payload: [String: Any], ignoring ignored: Set<String> = [],
+        replacingAbsentKeys: Bool = false
+    ) -> [String] {
+        let rejected = apply(
+            payload, to: .standard, ignoring: ignored, replacingAbsentKeys: replacingAbsentKeys)
         if !rejected.isEmpty {
             // `.public` because these are key names matched against our own allow-list, so nothing
             // that came from the file's *values* passes through here.
             Log.general.error(
                 """
                 config: ignored \(rejected.sorted().joined(separator: ", "), privacy: .public) \
-                — not a property list
+                — not a property list, or not the kind of value that setting holds
                 """)
         }
         reloadStores()
+        return rejected
     }
 
     /// The testable half, and the one that does the work.
@@ -45,11 +64,33 @@ enum SettingsIO {
     /// with a value it did not expect is part of the contract rather than an implementation detail.
     /// `reloadStores` stays with the caller because it drives the live UI.
     ///
+    /// - Parameters:
+    ///   - ignored: keys treated as not ours for this payload — neither written nor removed.
+    ///   - replacingAbsentKeys: removes every owned key the payload does not mention, so the result
+    ///     is the payload's settings rather than a merge of them over this Mac's. That is what an
+    ///     import means: an export only carries the keys that were set, so a merge left every
+    ///     setting that was at its default on the exporting Mac at whatever this one had, and "move
+    ///     your whole setup between Macs" did not. The config-file switches are exempt — a file
+    ///     that does not mention them says nothing about whether this Mac mirrors, so it must not
+    ///     turn that off.
     /// - Returns: the keys it refused, so the caller can say so. Nothing else reports them — a
     ///   silently dropped setting is the failure this whole guard exists to make visible.
     @discardableResult
-    static func apply(_ payload: [String: Any], to defaults: UserDefaults) -> [String] {
-        let allowed = Set(keys)
+    static func apply(
+        _ payload: [String: Any], to defaults: UserDefaults, ignoring ignored: Set<String> = [],
+        replacingAbsentKeys: Bool = false
+    ) -> [String] {
+        let allowed = Set(keys).subtracting(ignored)
+        if replacingAbsentKeys {
+            for key in allowed.subtracting(payload.keys).subtracting(ConfigFile.defaultsKeys) {
+                defaults.removeObject(forKey: key)
+            }
+        }
+        // What each setting holds, as far as it is written down anywhere: `Defaults` registers
+        // every `BehaviorStore` key's default in the registration domain. Read from there rather
+        // than from the stored value, which may itself be the malformed thing a corrected file is
+        // fixing.
+        let registered = defaults.volatileDomain(forName: UserDefaults.registrationDomain)
         var rejected: [String] = []
         for (key, value) in payload where allowed.contains(key) {
             // JSON has no way to spell "unset", so `null` is what a hand-edited config reaches for,
@@ -72,9 +113,30 @@ enum SettingsIO {
                 rejected.append(key)
                 continue
             }
+            // A string where a switch belongs, say. `Defaults` would read it back as the default
+            // with no word said, which leaves a hand edit apparently ignored; refused here, it is
+            // named in the log and the value it would have replaced stands.
+            if let expected = registered[key], kind(of: expected) != kind(of: value) {
+                rejected.append(key)
+                continue
+            }
             defaults.set(value, forKey: key)
         }
         return rejected
+    }
+
+    /// The property-list shape of a value, coarse on purpose: a JSON `true` and a stored `Int` are
+    /// both numbers, and only a value of a different shape entirely is worth refusing.
+    private nonisolated static func kind(of value: Any) -> String {
+        switch value {
+        case is String: return "string"
+        case is NSNumber: return "number"
+        case is [String: Any]: return "dictionary"
+        case is [Any]: return "array"
+        case is Data: return "data"
+        case is Date: return "date"
+        default: return "other"
+        }
     }
 
     /// Serialised the one way, so a byte comparison between what we wrote and what is on disk is
@@ -135,7 +197,7 @@ enum SettingsIO {
                     body: "\(url.lastPathComponent) is not a Cmd-Tab settings file.", detail: nil)
                 return
             }
-            dict = object
+            dict = Migration.upgrade(object)
         } catch {
             Log.general.error(
                 "settings import failed: \(error.localizedDescription, privacy: .public)")
@@ -145,7 +207,26 @@ enum SettingsIO {
                 detail: error)
             return
         }
-        apply(dict)
+        // Valid JSON that names none of our settings — a theme file, another app's export — is
+        // turned away before anything is touched. An import replaces, so going ahead would reset
+        // every setting to its default and report nothing, which reads as the file having worked.
+        guard dict.keys.contains(where: Set(keys).contains) else {
+            Log.general.error("settings import failed: no Cmd-Tab settings in the file")
+            report(
+                title: "That file has no Cmd-Tab settings in it",
+                body: "Nothing was changed. \(url.lastPathComponent) may be a theme or another "
+                    + "app's file.", detail: nil)
+            return
+        }
+        let rejected = apply(dict, replacingAbsentKeys: true)
+        // Logged by `apply` either way; said out loud here too, because someone is looking at the
+        // screen waiting to see whether the import worked.
+        if !rejected.isEmpty {
+            report(
+                title: "Some settings could not be imported",
+                body: "These were left as they were: \(rejected.sorted().joined(separator: ", ")).",
+                detail: nil)
+        }
     }
 
     /// The alert every failure above puts up. Split out so the shape stays identical between them;
@@ -162,6 +243,9 @@ enum SettingsIO {
 
     static func reset() {
         BehaviorStore.shared.resetAll()  // removes the owned keys
+        // Before the reload, which is what stops the mirror: see `recordResetDecision` for why the
+        // cleared switch cannot simply stay absent.
+        ConfigFile.recordResetDecision()
         reloadStores()
     }
 
@@ -177,6 +261,10 @@ enum SettingsIO {
         AppRulesStore.shared.reload()
         TitleRulesStore.shared.reload()
         SwitcherShortcutsStore.shared.reload()
+        // Sparkle's two exported keys move underneath it here, and neither the About pane nor the
+        // update schedule would otherwise hear about it. Only where an updater can exist at all —
+        // see `Updater.isConfigured` for why building one elsewhere is the wrong thing to do.
+        if Updater.isConfigured { Updater.shared.reload() }
         // Last: an import or reset can flip the config-file switch itself, and this re-reads it
         // rather than leaving a watcher running against a preference that has since changed.
         ConfigFile.shared.reload()

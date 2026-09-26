@@ -2,7 +2,8 @@ import Foundation
 
 /// One-off rewrites of settings a user already has, from the shape an earlier release stored them
 /// in to the shape this one reads. Each runs once per install, records that it ran, and can go once
-/// nobody is upgrading from the release that needed it.
+/// nobody is upgrading from the release that needed it. `upgrade` is the same set of rewrites for a
+/// payload arriving from a file, which can come from any earlier release at any time.
 ///
 /// ## Why everything here is parameterised
 ///
@@ -113,4 +114,37 @@ enum Migration {
     }
 
     private static let badgeSplitKey = "migratedBadgeSplit"
+
+    // MARK: - Incoming payloads
+
+    /// The same rewrites, applied to a settings payload on its way in — a config file or an
+    /// imported export — rather than to `UserDefaults`.
+    ///
+    /// `run` only ever sees this install's own defaults, and it runs before `ConfigFile.start`. A
+    /// payload written by an older build reaches the app afterwards, and `SettingsIO.apply` ignores
+    /// retired keys because they are not owned — so a fresh Mac adopting a dotfiles config that
+    /// still said `"showBadges": false` came up with both markers on, and the next write stripped
+    /// the old key out of the file for good.
+    ///
+    /// Judged within the payload rather than against `UserDefaults`: a payload describes one state,
+    /// and a successor key it already carries is the later statement of intent there, exactly as a
+    /// key the user set on this build is in `run`. The retired key is left in the dictionary —
+    /// `apply` ignores it, and the rewrite drops it — and `windowLayouts` needs nothing, since an
+    /// unowned key is never applied. Pure, so both branches can be checked without a domain.
+    static func upgrade(_ payload: [String: Any]) -> [String: Any] {
+        var out = payload
+        // Only false is carried across, for the reason `splitBadgeToggle` gives.
+        if let legacy = payload["showBadges"] as? Bool, !legacy {
+            for key in ["showDisplayBadges", "showSpaceBadges"] where out[key] == nil {
+                out[key] = false
+            }
+        }
+        if let legacy = payload["windowSnapHighlightColorHex"] as? String {
+            for key in ["windowSnapOutlineColorHex", "windowSnapLandingColorHex"]
+            where out[key] == nil {
+                out[key] = legacy
+            }
+        }
+        return out
+    }
 }

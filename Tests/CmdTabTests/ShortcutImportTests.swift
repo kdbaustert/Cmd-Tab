@@ -123,6 +123,22 @@ final class ShortcutImportTests: XCTestCase {
         XCTAssertEqual(Set(result.skipped), ["nextWindowShortcut", "previousWindowShortcut"])
     }
 
+    /// AltTab's trigger in two halves: the held modifier alone in `holdShortcut`, the key in
+    /// `nextWindowShortcut`. Read separately, the hold half was "unparsed" and nothing imported.
+    func testAltTabModifierOnlyHoldIsJoinedToTheNextWindowKey() {
+        let plist: [String: Any] = [
+            "holdShortcut": ["readableString": "⌥"],
+            "nextWindowShortcut": ["readableString": "⇥"],
+            "previousWindowShortcut": ["readableString": "⇧⇥"],
+        ]
+        let result = ShortcutImport.altTabBindings(from: plist)
+        XCTAssertEqual(result.trigger?.keyCode, 48)
+        XCTAssertEqual(result.trigger?.modifiers, [.maskAlternate])
+        XCTAssertTrue(result.unparsed.isEmpty)
+        XCTAssertEqual(
+            result.skipped, ["previousWindowShortcut"], "the next key was used, not skipped")
+    }
+
     func testAltTabActionsWithNoCounterpartAreSkipped() {
         let plist: [String: Any] = ["quitAppShortcut": ["readableString": "⌘Q"]]
         let result = ShortcutImport.altTabBindings(from: plist)
@@ -152,6 +168,63 @@ final class ShortcutImportTests: XCTestCase {
         XCTAssertTrue(plan.toApply.isEmpty)
         XCTAssertEqual(plan.droppedForCollision.count, 1)
         XCTAssertEqual(plan.droppedForCollision.first?.label, WindowArrangement.leftHalf.title)
+    }
+
+    /// Two imported bindings on one chord used to both apply, because only chords already bound
+    /// here were checked.
+    func testPlanDropsASecondImportedBindingOnTheSameChord() {
+        var result = ImportResult()
+        let hotkey = Hotkey(keyCode: 123, modifierRaw: CGEventFlags.maskCommand.rawValue)
+        result.arrangements[.leftHalf] = hotkey
+        result.arrangements[.leftThird] = hotkey
+        let plan = ShortcutImport.plan(from: result, activeChords: [])
+        XCTAssertEqual(plan.toApply.count, 1)
+        XCTAssertEqual(plan.droppedForCollision.count, 1)
+    }
+
+    /// Exact bindings keep Shift, as `ShortcutAudit.collisions` does: ⌃⌘← and ⌃⌘⇧← are two chords.
+    func testPlanKeepsTwoImportedBindingsThatDifferOnlyByShift() {
+        var result = ImportResult()
+        result.arrangements[.leftHalf] = Hotkey(
+            keyCode: 123, modifierRaw: CGEventFlags([.maskControl, .maskCommand]).rawValue)
+        result.arrangements[.previousDisplay] = Hotkey(
+            keyCode: 123,
+            modifierRaw: CGEventFlags([.maskControl, .maskCommand, .maskShift]).rawValue)
+        XCTAssertEqual(ShortcutImport.plan(from: result, activeChords: []).toApply.count, 2)
+    }
+
+    /// A target already on exactly this chord is not colliding with "something else" — it is
+    /// colliding with itself, which is no collision.
+    func testPlanReportsAChordTheTargetAlreadyHasAsAlreadySet() {
+        var result = ImportResult()
+        result.arrangements[.leftHalf] = Hotkey(
+            keyCode: 123, modifierRaw: CGEventFlags.maskCommand.rawValue)
+        let plan = ShortcutImport.plan(
+            from: result, activeChords: [chord(123, .maskCommand)],
+            current: ["tiling.leftHalf": chord(123, .maskCommand)])
+        XCTAssertTrue(plan.toApply.isEmpty)
+        XCTAssertTrue(plan.droppedForCollision.isEmpty)
+        XCTAssertEqual(plan.alreadySet.count, 1)
+    }
+
+    /// The trigger recorder refuses a trigger that silences window actions unless the user agrees
+    /// to move them; the import used to apply it with no question at all.
+    func testPlanRefusesATriggerThatWouldSilenceWindowActions() {
+        var result = ImportResult()
+        result.trigger = Hotkey(keyCode: 48, modifierRaw: CGEventFlags.maskAlternate.rawValue)
+        let plan = ShortcutImport.plan(
+            from: result, activeChords: [], shadows: { _ in ["Quit", "Close Window"] })
+        XCTAssertTrue(plan.toApply.isEmpty)
+        XCTAssertEqual(plan.droppedForShadowing.first?.actions, ["Quit", "Close Window"])
+    }
+
+    /// No ⌘, ⌥ or ⌃: every matcher refuses it, so importing it would look set and never fire.
+    func testPlanRefusesABindingWithNoPrimaryModifier() {
+        var result = ImportResult()
+        result.trigger = Hotkey(keyCode: 48, modifierRaw: 0)
+        let plan = ShortcutImport.plan(from: result, activeChords: [])
+        XCTAssertTrue(plan.toApply.isEmpty)
+        XCTAssertEqual(plan.unparsed.count, 1)
     }
 
     func testPlanCarriesSkippedAndUnparsedThrough() {

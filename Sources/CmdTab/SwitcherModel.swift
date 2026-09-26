@@ -74,8 +74,14 @@ final class SwitcherModel: ObservableObject {
 
     /// Toggles tile `index` in or out of the marked set. Out of range is a silent no-op, the same
     /// tolerance `jump(to:)` gives a stray keypress.
+    ///
+    /// A launch or fallback tile is refused, and here rather than at each caller. Every one of them
+    /// shares the -1 pid sentinel, so a marked set carrying one hands every set-capable action a
+    /// target that matches all of them: ⌥Q asked to "Quit 2 apps?" and then dropped every launch
+    /// tile from the list. The keyboard route was already guarded (`SwitcherController.perform`
+    /// refuses a launch selection); ⌥-click was not, and the model is the one place both reach.
     func toggleMark(at index: Int) {
-        guard targets.indices.contains(index) else { return }
+        guard targets.indices.contains(index), !targets[index].isLaunchable else { return }
         let id = targets[index].id
         if markedIDs.contains(id) { markedIDs.remove(id) } else { markedIDs.insert(id) }
     }
@@ -131,9 +137,11 @@ final class SwitcherModel: ObservableObject {
         targets.indices.contains(selection) ? targets[selection] : nil
     }
 
-    /// Whether the current query matched anything at all. Empty query counts as matching — there is
-    /// no filter to fail.
-    var matchesAnything: Bool { query.isEmpty || !matchingIndices.isEmpty }
+    /// Whether the current query matched anything at all. An empty or whitespace-only query counts
+    /// as matching — there is no filter to fail, which is also why `matches` answers it with none.
+    var matchesAnything: Bool {
+        query.trimmingCharacters(in: .whitespaces).isEmpty || !matchingIndices.isEmpty
+    }
 
     /// Whether the full list has anything in it, regardless of the current filter. Distinguishes
     /// "this app has no windows" from "the query matched nothing" — the panel stays up for the latter.
@@ -160,8 +168,16 @@ final class SwitcherModel: ObservableObject {
     ///
     /// Cleared by `begin` and by any query change that finds matches, so a stale suggestion from a
     /// previous keystroke can never sit at the end of the list.
+    ///
+    /// Compared on id *and* title before anything is replaced. The ids alone were enough for launch
+    /// tiles, whose id names the app, but a fallback tile's id names its slot rather than its query
+    /// (see `SwitcherController.fallbackID`) — so once the fallback tier appeared, every later
+    /// keystroke produced the same ids, was discarded here, and the tile went on showing and
+    /// running the query from the first keystroke that matched nothing: "Search for wikip" for
+    /// `wikipedia`. The title is built from the query, so it moves with it.
     func setLaunchSuggestions(_ new: [SwitchTarget]) {
-        guard new.map(\.id) != suggestions.map(\.id) else { return }
+        guard new.map(\.id) != suggestions.map(\.id) || new.map(\.title) != suggestions.map(\.title)
+        else { return }
         suggestions = new
         reapply(anchor: selected?.id)
     }

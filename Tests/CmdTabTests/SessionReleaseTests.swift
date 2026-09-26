@@ -73,30 +73,21 @@ final class SessionReleaseTests: XCTestCase {
         XCTAssertTrue(session(sticky: true).tabCommits(flags: none))
     }
 
-    /// No chord to hold at all — `stillHeld` says an empty chord is always held, so this needs its
-    /// own answer or Tab would be inert for the whole session.
-    func testTabCommitsInAMenuBarSession() {
-        XCTAssertTrue(session(sticky: true, held: []).tabCommits(flags: none))
-        XCTAssertTrue(session(sticky: true, held: []).tabCommits(flags: command))
-    }
-
     /// ⇧-Tab steps backwards everywhere else, and it is the *only* keyboard way to reverse-cycle once
     /// the chord is up. Promoting it to the go key along with plain Tab left an overshoot with no way
     /// back, in exactly the sessions that stay up long enough to overshoot.
     func testShiftTabNeverCommits() {
         XCTAssertFalse(session(sticky: true).tabCommits(flags: shift))
         XCTAssertFalse(session(sticky: true).tabCommits(flags: command.union(shift)))
-        // Even with no chord to release at all.
-        XCTAssertFalse(session(sticky: true, held: []).tabCommits(flags: shift))
     }
 
-    // MARK: - Menu-bar sessions
+    // MARK: - An empty chord
 
-    /// Opened with no chord, so there is nothing to release. Every event looks like a release and
-    /// none of them may close it — it ends on a click, Return or Escape.
-    func testMenuBarSessionNeverCommitsOnRelease() {
+    /// No opener produces one any more — every trigger needs ⌘, ⌥ or ⌃ (`Hotkey.isUsableGlobally`)
+    /// — but were one to, an empty chord is always "still held", so no event may commit it on
+    /// release. It ends on Return, Escape or a click instead, rather than on the first keystroke.
+    func testAnEmptyChordNeverCommitsOnRelease() {
         XCTAssertFalse(session(sticky: true, held: []).shouldCommit(flags: none))
-        // Even were it somehow non-sticky, the empty chord is what has to save it.
         XCTAssertFalse(session(held: []).shouldCommit(flags: none))
     }
 

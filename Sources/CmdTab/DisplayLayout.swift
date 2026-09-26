@@ -52,18 +52,86 @@ enum DisplayLayout {
         metrics: Metrics, visibleSize: CGSize, cap: Int
     ) -> Int {
         guard targetCount > 0 else { return 1 }
+        let available = Self.available(in: visibleSize)
         if layout == .list {
             let row = metrics.listRow(for: mode)
-            let available = visibleSize.height * Metrics.maxScreenFraction - Metrics.panelPadding * 2
-            let perColumn = max(Int(available / (row.height + Metrics.rowGap)), 1)
+            let perColumn = max(Int(available.height / (row.height + Metrics.rowGap)), 1)
             var needed = Int((Double(targetCount) / Double(perColumn)).rounded(.up))
             if cap > 0 { needed = min(needed, cap) }
             return max(needed, 1)
         }
         let tileWidth = metrics.tile(for: mode, showsTitle: showsTitle).width + Metrics.tileGap
-        let available = visibleSize.width * Metrics.maxScreenFraction - Metrics.panelPadding * 2
-        var fits = max(Int(available / tileWidth), 1)
+        var fits = max(Int(available.width / tileWidth), 1)
         if cap > 0 { fits = min(fits, cap) }
         return min(targetCount, fits)
+    }
+
+    /// `base`, shrunk until `targetCount` targets fit this display's visible frame — or until the
+    /// icon-size slider's floor, past which there is nothing left to give.
+    ///
+    /// `columns` bounds one axis only: the grid wraps on width and lets its rows run down the
+    /// screen, the list wraps on height and lets its columns run across it, and the user's column
+    /// ceiling can push either past the edge by itself. The panel does not scroll, so a tile past
+    /// the edge was a tile nobody could see while the selection could still land on it. Against a
+    /// 13" laptop's visible frame that was a window-mode grid past roughly 80 windows at the
+    /// default size, a list past 24 targets at the largest icon size, and a three-column cap past
+    /// about 25 apps. Shrinking keeps the no-scroll design; the caption and search bar are paid for
+    /// by the margin `Metrics.maxScreenFraction` already leaves, exactly as they are in `columns`.
+    ///
+    /// Stepwise rather than solved: the column count moves as tiles narrow, and the list's row
+    /// width and icon are clamped independently of the icon size, so no one formula covers every
+    /// case. A couple of dozen steps of arithmetic is nothing beside the layout pass that follows.
+    static func fitted(
+        _ base: Metrics, targetCount: Int, mode: SwitcherMode, layout: SwitcherLayout,
+        showsTitle: Bool, visibleSize: CGSize, cap: Int
+    ) -> Metrics {
+        var metrics = base
+        // Bounded as well as floored, so no input can spin here: 0.92 per step takes the largest
+        // icon to the smallest in 17.
+        for _ in 0..<32 {
+            if fits(
+                metrics, targetCount: targetCount, mode: mode, layout: layout,
+                showsTitle: showsTitle, visibleSize: visibleSize, cap: cap)
+            {
+                return metrics
+            }
+            guard metrics.iconSize > Metrics.iconSizeRange.lowerBound else { break }
+            // All three together, so the tile keeps its proportions as it shrinks. Whole points for
+            // the icon, which is drawn from a bitmap; `Metrics.init` re-clamps to the floor.
+            metrics = Metrics(
+                iconSize: (metrics.iconSize * 0.92).rounded(.down),
+                iconSpacing: metrics.iconSpacing * 0.92,
+                titleSpacing: metrics.titleSpacing * 0.92)
+        }
+        return metrics
+    }
+
+    /// Whether `targetCount` targets laid out with `metrics` fit this display's visible frame, in
+    /// both axes — the same rows and columns `SwitcherView` draws: a row-major grid, or a list
+    /// split into `columns` runs of `ceil(count / columns)` rows.
+    static func fits(
+        _ metrics: Metrics, targetCount: Int, mode: SwitcherMode, layout: SwitcherLayout,
+        showsTitle: Bool, visibleSize: CGSize, cap: Int
+    ) -> Bool {
+        guard targetCount > 0 else { return true }
+        let columns = Self.columns(
+            targetCount: targetCount, mode: mode, layout: layout, showsTitle: showsTitle,
+            metrics: metrics, visibleSize: visibleSize, cap: cap)
+        let rows = Int((Double(targetCount) / Double(columns)).rounded(.up))
+        let isList = layout == .list
+        let cell = isList
+            ? metrics.listRow(for: mode) : metrics.tile(for: mode, showsTitle: showsTitle)
+        let rowGap = isList ? Metrics.rowGap : Metrics.tileGap
+        let width = CGFloat(columns) * (cell.width + Metrics.tileGap) - Metrics.tileGap
+        let height = CGFloat(rows) * (cell.height + rowGap) - rowGap
+        let available = Self.available(in: visibleSize)
+        return width <= available.width && height <= available.height
+    }
+
+    /// The share of the visible frame the tiles may cover, inside the glass's own padding.
+    private static func available(in visibleSize: CGSize) -> CGSize {
+        CGSize(
+            width: visibleSize.width * Metrics.maxScreenFraction - Metrics.panelPadding * 2,
+            height: visibleSize.height * Metrics.maxScreenFraction - Metrics.panelPadding * 2)
     }
 }

@@ -210,6 +210,32 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertEqual(current.minX, window.minX, accuracy: 0.001)
     }
 
+    /// An edge already past the screen is not pulled back to it. A window reaching down under the
+    /// Dock took "grow bottom edge" as a cut back to the screen's bottom — the press that shrank
+    /// it.
+    func testGrowingAnEdgeAlreadyPastTheScreenLeavesItAlone() {
+        let underTheDock = CGRect(x: 400, y: 300, width: 800, height: 900)  // maxY 1200 > 1025
+        XCTAssertNil(
+            WindowArrangement.growDown.frame(in: area, current: underTheDock, fraction: 0.5))
+        let offTheLeft = CGRect(x: -100, y: 300, width: 800, height: 600)
+        XCTAssertNil(WindowArrangement.growLeft.frame(in: area, current: offTheLeft, fraction: 0.5))
+        // The edges that are on screen still grow as usual.
+        let grown = WindowArrangement.growRight.frame(in: area, current: offTheLeft, fraction: 0.5)
+        XCTAssertGreaterThan(grown?.maxX ?? 0, offTheLeft.maxX)
+        XCTAssertEqual(grown?.minX, offTheLeft.minX)
+    }
+
+    /// A window already narrower or shorter than the floor is not stretched up to it by a *shrink*,
+    /// which used to widen it past its own far edge.
+    func testShrinkingAWindowAlreadyUnderTheFloorDoesNothing() {
+        let sliver = CGRect(x: 700, y: 500, width: 100, height: 80)
+        for arrangement in [WindowArrangement.shrinkLeft, .shrinkRight, .shrinkUp, .shrinkDown] {
+            XCTAssertNil(
+                arrangement.frame(in: area, current: sliver, fraction: 0.5),
+                "\(arrangement.rawValue) moved an edge outward")
+        }
+    }
+
     // MARK: - Gaps
 
     /// The whole gap against a screen edge, half of it at a seam — so two neighbours end up exactly
@@ -666,6 +692,38 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertEqual(tiling.conflicts(with: .center), [])
     }
 
+    // MARK: - Stored bindings
+
+    /// Nothing at its default is written, so a chord this app later changes still reaches every
+    /// install that never changed it.
+    func testTheDefaultChordsStoreNothing() {
+        XCTAssertEqual(
+            WindowTilingStore.storedBindings(WindowTilingBindings.defaults.bindings), [:])
+    }
+
+    /// A cleared chord is the one absence that has to be written down — left out, it would read
+    /// back as its default and the clear would not stick.
+    func testAClearedDefaultIsStoredAndReadsBackCleared() {
+        var bindings = WindowTilingBindings.defaults.bindings
+        bindings[.leftHalf] = nil
+        let stored = WindowTilingStore.storedBindings(bindings)
+        XCTAssertEqual(stored, ["leftHalf": []])
+        XCTAssertEqual(WindowTilingStore.bindings(stored: stored), bindings)
+    }
+
+    /// A changed chord and a newly bound one — an arrangement that ships unbound — both round-trip,
+    /// and are all that is written.
+    func testChangedAndNewlyBoundChordsRoundTrip() throws {
+        var bindings = WindowTilingBindings.defaults.bindings
+        let cmdOpt = CGEventFlags([.maskCommand, .maskAlternate]).rawValue
+        bindings[.leftHalf] = Hotkey(keyCode: 0, modifierRaw: cmdOpt)
+        XCTAssertNil(WindowArrangement.nudgeLeft.defaultHotkey)
+        bindings[.nudgeLeft] = Hotkey(keyCode: 1, modifierRaw: cmdOpt)
+        let stored = WindowTilingStore.storedBindings(bindings)
+        XCTAssertEqual(Set(stored.keys), ["leftHalf", "nudgeLeft"])
+        XCTAssertEqual(WindowTilingStore.bindings(stored: stored), bindings)
+    }
+
     // MARK: - Trigger collisions
 
     /// A chord the switcher trigger claims can never reach the tiling branch — the tap matches the
@@ -895,6 +953,28 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertNil(
             WindowArrangement.smaller.frame(in: area, current: tiny, fraction: 0.5),
             "a press that would take the window under the floor should do nothing")
+    }
+
+    /// "Larger" on a window taller than the usable area — one reaching under the Dock — grows it
+    /// across and leaves its height alone, rather than cutting it back to the screen.
+    func testLargerNeverShrinksAnAxisTheWindowAlreadyOverflows() throws {
+        let tall = CGRect(x: 400, y: 25, width: 800, height: 1100)
+        let grown = try XCTUnwrap(
+            WindowArrangement.larger.frame(in: area, current: tall, fraction: 0.5))
+        XCTAssertEqual(grown.minY, tall.minY)
+        XCTAssertEqual(grown.height, tall.height)
+        XCTAssertEqual(
+            grown.width, tall.width + area.width * WindowArrangement.sizeStepFraction,
+            accuracy: 0.001)
+    }
+
+    /// The floor is on shrinking. A window that starts under it can still be made larger.
+    func testLargerGrowsAWindowStartingUnderTheFloor() throws {
+        let tiny = CGRect(x: 700, y: 500, width: 60, height: 40)
+        let grown = try XCTUnwrap(
+            WindowArrangement.larger.frame(in: area, current: tiny, fraction: 0.5))
+        XCTAssertGreaterThan(grown.width, tiny.width)
+        XCTAssertGreaterThan(grown.height, tiny.height)
     }
 
     // MARK: - Nudges

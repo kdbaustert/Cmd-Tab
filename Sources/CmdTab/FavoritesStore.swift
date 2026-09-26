@@ -21,7 +21,7 @@ final class FavoritesStore: ObservableObject {
     var onChange: (([String]) -> Void)?
 
     private init() {
-        favorites = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
+        favorites = UserDefaults.standard.bundleIDs(forKey: Self.defaultsKey)
     }
 
     func isFavorite(_ bundleID: String) -> Bool { favorites.contains(bundleID) }
@@ -74,7 +74,7 @@ final class FavoritesStore: ObservableObject {
 
     /// Re-reads the set after an import or reset and notifies so the switcher rebuilds.
     func reload() {
-        favorites = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
+        favorites = UserDefaults.standard.bundleIDs(forKey: Self.defaultsKey)
         onChange?(favorites)
     }
 
@@ -92,5 +92,31 @@ final class FavoritesStore: ObservableObject {
     private func persist() {
         UserDefaults.standard.set(favorites, forKey: Self.defaultsKey)
         onChange?(favorites)
+    }
+}
+
+extension UserDefaults {
+    /// A stored list of bundle identifiers, read an entry at a time. Shared by `FavoritesStore` and
+    /// `ExclusionStore`, whose lists have the same shape and the same failure.
+    ///
+    /// `stringArray(forKey:)` answers nil for the *whole* list when one element is not a string — a
+    /// number or a nested list left in a hand-edited config — and both stores read nil as "none".
+    /// One bad entry therefore emptied the list with nothing logged, and the next star or exclusion
+    /// persisted the empty list over the real one. Now the strings survive and the rest is named.
+    func bundleIDs(forKey key: String) -> [String] {
+        guard let raw = object(forKey: key) else { return [] }
+        guard let entries = raw as? [Any] else {
+            Log.general.error("\(key, privacy: .public): the stored value is not a list; ignored")
+            return []
+        }
+        let ids = entries.compactMap { $0 as? String }
+        if ids.count != entries.count {
+            Log.general.error(
+                """
+                \(key, privacy: .public): ignored \(entries.count - ids.count, privacy: .public) \
+                entries that are not bundle identifiers
+                """)
+        }
+        return ids
     }
 }

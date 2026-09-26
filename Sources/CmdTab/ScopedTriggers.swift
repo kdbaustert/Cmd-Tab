@@ -160,7 +160,8 @@ final class ScopedTriggersStore: ObservableObject {
             }
             let candidate = Hotkey(keyCode: Int(event.keyCode), modifierRaw: mods.rawValue)
             self.stopRecording()
-            DispatchQueue.main.async {
+            // A run-loop hop, not a dispatch one: `validate` may raise a modal. See `MainRunLoop`.
+            MainRunLoop.perform {
                 guard validate(candidate) else { return }
                 self.setHotkey(candidate, for: id)
             }

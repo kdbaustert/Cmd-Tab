@@ -302,7 +302,12 @@ final class SwitcherPanel: NSPanel {
         // Resolved against *this* screen's own backing scale, not the shared model's raw sliders —
         // see `DisplayLayout` for why a panel mirrored onto a low-DPI external needs a different tile
         // size than the one on the laptop lid beside it, even though both read the same settings.
-        let metrics = DisplayLayout.metrics(base: model.metrics, backingScale: screen.backingScaleFactor)
+        // Then shrunk, if need be, until this many targets fit this screen at all — the panel does
+        // not scroll, so a tile past the edge is one nobody can see. See `DisplayLayout.fitted`.
+        let metrics = DisplayLayout.fitted(
+            DisplayLayout.metrics(base: model.metrics, backingScale: screen.backingScaleFactor),
+            targetCount: model.targets.count, mode: model.mode, layout: model.layout,
+            showsTitle: model.showsTitle, visibleSize: screen.visibleFrame.size, cap: maxColumns)
         let columns = Self.columns(for: model, metrics: metrics, on: screen, cap: maxColumns)
         // Recorded from the value the view is about to be built with, so the arrows and the grid can
         // never disagree about where a row ends. See `rowStride` for why the list's answer is 1.

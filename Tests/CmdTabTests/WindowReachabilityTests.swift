@@ -64,4 +64,51 @@ final class WindowReachabilityTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Finding the window in its app's Window menu
+
+    /// The caller's title is tried first, and a match there never asks for the fresh reading —
+    /// which is a round trip to the window server and, failing that, to the app.
+    func testTheCallersTitleMatchesWithoutAskingForTheFreshOne() {
+        var askedForFresh = false
+        let match = SwitchTarget.windowMenuMatch(
+            in: ["inbox", "drafts"],
+            titles: [
+                { "Drafts" },
+                {
+                    askedForFresh = true
+                    return "Inbox"
+                },
+            ])
+        XCTAssertEqual(match.index, 1)
+        XCTAssertFalse(askedForFresh)
+    }
+
+    /// A tile's title is from the last refresh. When the window has moved on since — a browser
+    /// on another tab — the stale one misses and the window server's current one finds it.
+    func testAStaleTitleFallsBackToTheFreshOne() {
+        let match = SwitchTarget.windowMenuMatch(
+            in: ["new tab", "pull requests"], titles: [{ "Issues" }, { "Pull requests" }])
+        XCTAssertEqual(match.index, 1)
+        XCTAssertEqual(match.titlesTried, 2)
+    }
+
+    /// Normalized the way the menu's own titles are, so a status glyph the two readings disagree on
+    /// does not stand between them.
+    func testATitleIsNormalizedBeforeItIsCompared() {
+        let match = SwitchTarget.windowMenuMatch(
+            in: ["features and improvements"], titles: [{ "◐ Features and improvements" }])
+        XCTAssertEqual(match.index, 0)
+    }
+
+    /// "Nothing to match with" and "matched nothing" are different lines in the log, and a title
+    /// that comes back twice is one attempt, not two.
+    func testNoTitleIsToldApartFromNoMatch() {
+        let untitled = SwitchTarget.windowMenuMatch(in: ["a"], titles: [{ nil }, { "  " }])
+        XCTAssertNil(untitled.index)
+        XCTAssertEqual(untitled.titlesTried, 0)
+        let missed = SwitchTarget.windowMenuMatch(in: ["a"], titles: [{ "b" }, { "B" }])
+        XCTAssertNil(missed.index)
+        XCTAssertEqual(missed.titlesTried, 1)
+    }
 }

@@ -47,12 +47,14 @@ final class SettingsIOTests: XCTestCase {
     @MainActor
     @discardableResult
     private func applying(
-        _ json: String, file: StaticString = #filePath, line: UInt = #line
+        _ json: String, ignoring ignored: Set<String> = [], replacing: Bool = false,
+        file: StaticString = #filePath, line: UInt = #line
     ) throws -> [String] {
         let data = try XCTUnwrap(json.data(using: .utf8), file: file, line: line)
         let payload = try XCTUnwrap(
             JSONSerialization.jsonObject(with: data) as? [String: Any], file: file, line: line)
-        return SettingsIO.apply(payload, to: defaults)
+        return SettingsIO.apply(
+            payload, to: defaults, ignoring: ignored, replacingAbsentKeys: replacing)
     }
 
     /// What the suite *itself* holds, as opposed to what reading through it resolves to.
@@ -171,5 +173,84 @@ final class SettingsIOTests: XCTestCase {
         try applying(##"{"highlightColorHex": "#123456"}"##)
 
         XCTAssertEqual(defaults.integer(forKey: "maxColumns"), 9)
+    }
+
+    // MARK: - The kind of value a setting holds
+
+    /// A switch written as a string. `Defaults` would read it back as its default and say nothing,
+    /// which leaves the hand edit apparently ignored; refused, it is named and the old value
+    /// stands.
+    @MainActor
+    func testAValueOfTheWrongKindForARegisteredSettingIsRefused() throws {
+        defaults.register(defaults: ["stickyMode": false])
+        defaults.set(true, forKey: "stickyMode")
+
+        let rejected = try applying(##"{"stickyMode": "yes"}"##)
+
+        XCTAssertEqual(rejected, ["stickyMode"])
+        XCTAssertEqual(stored("stickyMode") as? Bool, true)
+    }
+
+    // MARK: - Import replaces; the config file ignores its own switches
+
+    /// An export carries only the keys that were set, so an import that merged left every setting
+    /// at its default on the exporting Mac at whatever this one had. It replaces instead — except
+    /// the two mirror switches, which a file that does not mention them must not turn off.
+    @MainActor
+    func testAnImportRemovesWhatTheFileDoesNotMentionButNotTheMirrorSwitches() throws {
+        defaults.set(9, forKey: "maxColumns")
+        defaults.set(true, forKey: "useConfigFile")
+
+        try applying(##"{"highlightColorHex": "#123456"}"##, replacing: true)
+
+        XCTAssertNil(stored("maxColumns"))
+        XCTAssertEqual(stored("useConfigFile") as? Bool, true)
+        XCTAssertEqual(defaults.string(forKey: "highlightColorHex"), "#123456")
+    }
+
+    /// What the config file passes through `ignoring`: a key it names is neither written nor, under
+    /// `null`, removed — the file does not get to say how this Mac mirrors.
+    @MainActor
+    func testAnIgnoredKeyIsNeitherWrittenNorRemoved() throws {
+        defaults.set(true, forKey: "useConfigFile")
+
+        let rejected = try applying(
+            ##"{"useConfigFile": null, "syncSettingsViaICloud": true}"##,
+            ignoring: ["useConfigFile", "syncSettingsViaICloud"])
+
+        XCTAssertEqual(stored("useConfigFile") as? Bool, true)
+        XCTAssertNil(stored("syncSettingsViaICloud"))
+        XCTAssertEqual(rejected, [])
+    }
+
+    // MARK: - Decoding a file
+
+    /// A file from an older build says what it meant in the keys this one reads. Without it a fresh
+    /// Mac adopting an old config came up with both markers on.
+    func testDecodingCarriesARetiredKeyIntoItsSuccessors() {
+        let payload = SettingsIO.decode(Data(##"{"showBadges": false}"##.utf8))
+        XCTAssertEqual(payload?["showDisplayBadges"] as? Bool, false)
+        XCTAssertEqual(payload?["showSpaceBadges"] as? Bool, false)
+    }
+
+    func testDecodingSomethingThatIsNotAnObjectIsNil() {
+        XCTAssertNil(SettingsIO.decode(Data("[1, 2]".utf8)))
+        XCTAssertNil(SettingsIO.decode(Data(##"{"a": 1"##.utf8)))
+    }
+
+    // MARK: - Bundle identifier lists
+
+    /// `stringArray(forKey:)` answers nil for a whole list with one non-string in it, and both
+    /// stores read nil as "none" — one stray number emptied the favourites.
+    func testOneBadEntryNoLongerEmptiesABundleIDList() {
+        defaults.set(["com.apple.Safari", 5, "com.apple.Mail"], forKey: "favoriteBundleIDs")
+        XCTAssertEqual(
+            defaults.bundleIDs(forKey: "favoriteBundleIDs"), ["com.apple.Safari", "com.apple.Mail"])
+    }
+
+    func testABundleIDListThatIsNotAListReadsAsEmpty() {
+        defaults.set("com.apple.Safari", forKey: "excludedBundleIDs")
+        XCTAssertEqual(defaults.bundleIDs(forKey: "excludedBundleIDs"), [])
+        XCTAssertEqual(defaults.bundleIDs(forKey: "neverSet"), [])
     }
 }

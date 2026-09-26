@@ -53,6 +53,32 @@ final class ThemeCodingTests: XCTestCase {
         XCTAssertTrue(theme.showNumbers)
     }
 
+    /// The three numbers nothing downstream clamps are clamped here, to their sliders' ranges: a
+    /// shared file carrying a 400pt title size drew a caption that grew the panel off the screen.
+    func testOutOfRangeNumbersAreClampedToTheSliders() throws {
+        let huge = try decode(
+            #"{"name":"Loud","titleFontSize":400,"tileCorner":900,"blurRadius":1000}"#)
+        XCTAssertEqual(huge.titleFontSize, Theme.titleFontSizeRange.upperBound)
+        XCTAssertEqual(huge.tileCorner, Theme.tileCornerRange.upperBound)
+        XCTAssertEqual(huge.blurRadius, Theme.blurRadiusRange.upperBound)
+
+        let negative = try decode(
+            #"{"name":"Quiet","titleFontSize":-20,"tileCorner":-1,"blurRadius":-5}"#)
+        XCTAssertEqual(negative.titleFontSize, Theme.titleFontSizeRange.lowerBound)
+        XCTAssertEqual(negative.tileCorner, Theme.tileCornerRange.lowerBound)
+        XCTAssertEqual(negative.blurRadius, Theme.blurRadiusRange.lowerBound)
+    }
+
+    /// Every preset has to survive its own clamp, or a built-in theme would stop matching itself.
+    @MainActor
+    func testThePresetsAreWithinTheClampedRanges() {
+        for preset in ThemeStore.presets {
+            XCTAssertTrue(Theme.titleFontSizeRange.contains(preset.titleFontSize), preset.name)
+            XCTAssertTrue(Theme.tileCornerRange.contains(preset.tileCorner), preset.name)
+            XCTAssertTrue(Theme.blurRadiusRange.contains(preset.blurRadius), preset.name)
+        }
+    }
+
     /// An encode/decode round trip has to be lossless, or saving and reloading would quietly drift.
     func testRoundTripPreservesEveryField() throws {
         let original = Theme(

@@ -21,7 +21,7 @@ final class ExclusionStore: ObservableObject {
     var onChange: ((Set<String>) -> Void)?
 
     private init() {
-        excluded = Set(UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? [])
+        excluded = Set(UserDefaults.standard.bundleIDs(forKey: Self.defaultsKey))
     }
 
     func isExcluded(_ bundleID: String) -> Bool { excluded.contains(bundleID) }
@@ -46,7 +46,7 @@ final class ExclusionStore: ObservableObject {
     /// Re-reads the excluded set from `UserDefaults` after an import or reset, and notifies so the
     /// switcher rebuilds its list.
     func reload() {
-        excluded = Set(UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? [])
+        excluded = Set(UserDefaults.standard.bundleIDs(forKey: Self.defaultsKey))
         onChange?(excluded)
     }
 

@@ -53,6 +53,19 @@ final class MarkedTilesTests: XCTestCase {
         XCTAssertTrue(model.markedIDs.isEmpty)
     }
 
+    /// A not-running favourite shares the -1 pid with every other launch tile, so a marked set
+    /// carrying one would hand a set-capable action a target matching all of them. ⌥-click reached
+    /// the model with no launch-tile guard of its own, so the model refuses it.
+    func testALaunchTileCannotBeMarked() {
+        let launch = SwitchTarget(
+            id: "launch:com.example.Notes",
+            kind: .launch(URL(fileURLWithPath: "/Applications/Notes.app")), title: "Notes",
+            appName: "Notes", icon: nil, isMinimized: false, isHidden: false)
+        let model = model(with: [app("Safari", pid: 1), launch])
+        model.toggleMark(at: 1)
+        XCTAssertTrue(model.markedIDs.isEmpty)
+    }
+
     func testMarkingSeveralTilesBuildsTheMarkedSet() {
         let model = model(with: [app("Safari", pid: 1), app("Mail", pid: 2), app("Notes", pid: 3)])
         model.toggleMark(at: 0)

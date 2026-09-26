@@ -117,15 +117,27 @@ final class FocusFollowsMouse {
         guard NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
         else { return }
 
-        let windows = WindowNavigator.onScreen()
         let point = Self.cursorInWindowSpace()
+        // Resting on something drawn *over* the windows — an open menu, the Dock, the menu bar, a
+        // floating panel — is not resting on the window beneath it. The ordinary-window list below
+        // cannot see any of those, so on its own it answered with whatever lay underneath: rest on
+        // a menu item that happened to overlap another app's window and that app was brought
+        // forward, dismissing the menu out from under the pointer.
+        guard WindowNavigator.frontmostLayer(at: point) == 0 else { return }
+        let windows = WindowNavigator.onScreen()
         guard let index = windows.firstIndex(where: { $0.frame.contains(point) }) else { return }
-        // Already at the front, so there is nothing to do. This is also what makes the watcher
-        // self-correcting after a click: the answer comes from live z-order rather than from a
-        // record of what this object last focused, so focus changed by any other means is simply
-        // the new baseline.
-        guard index != windows.startIndex else { return }
         let target = windows[index]
+        // Already at the front *and* already focused, so there is nothing to do. This is also what
+        // makes the watcher self-correcting after a click: the answer comes from live state rather
+        // than from a record of what this object last focused, so focus changed by any other means
+        // is simply the new baseline.
+        //
+        // Both halves, not the z-order alone. The frontmost window is not necessarily the focused
+        // one: click the desktop and Finder is active with no window of its own, while the window
+        // on top still belongs to whatever was in front before — and resting on it did nothing.
+        guard index != windows.startIndex
+            || target.pid != NSWorkspace.shared.frontmostApplication?.processIdentifier
+        else { return }
         // Our own windows are left alone. Every other app here is one you were reaching for; this
         // one is an accessory that spends its life without a Dock tile, and hovering over Settings
         // on the way somewhere else should not make Cmd-Tab the frontmost application — which,

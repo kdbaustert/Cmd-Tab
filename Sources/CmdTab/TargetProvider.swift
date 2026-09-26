@@ -438,14 +438,18 @@ final class TargetProvider {
                 targets = Self.appTargets(
                     apps, order: order, sortOrder: sortOrder, badges: badges)
                 // Windows on ANY Space, so a fullscreen app (which lives on its own Space) still
-                // counts as non-empty rather than being dropped. A nil answer is the window list
-                // refusing to be read, not a machine with no windows on it — filtering against it
+                // counts as non-empty rather than being dropped. A nil answer is a window-server
+                // reading that failed, not a machine with no windows on it — filtering against it
                 // would remove every app there is, and an empty refresh landing under an open
                 // switcher dismisses the session outright (`finishListMutation`). Leaving the list
                 // unfiltered for one pass shows at worst a few empty apps; the alternative is the
                 // panel vanishing a moment after it opened.
+                //
+                // A hidden app stays whatever it owns. Its windows are ordered out, and while the
+                // size test in `windowOwningPIDs` would usually vouch for them, that is not measured
+                // — and dropping a hidden app drops the one tile a ⌘-H user comes to ⌘-Tab back to.
                 if hideEmptyApps, let owning = Self.windowOwningPIDs() {
-                    targets.removeAll { !owning.contains($0.pid) }
+                    targets.removeAll { !$0.isHidden && !owning.contains($0.pid) }
                 }
                 // Splice each expanded app's windows in where its single tile was, so the list keeps
                 // the order the sort produced rather than gathering them at one end.
@@ -678,20 +682,73 @@ final class TargetProvider {
         return nil
     }
 
-    /// PIDs owning at least one real window on ANY Space (no on-screen restriction). Used by the
-    /// "hide apps with no open windows" filter so fullscreen / other-Space apps are not dropped.
+    /// PIDs owning at least one window a user could switch to, wherever it is — on screen, on
+    /// another Desktop, or on a fullscreen app's own Space. Used by the "hide apps with no windows"
+    /// filter.
     ///
-    /// nil when the window list could not be read at all, which is a different answer from "nobody
-    /// owns a window" and has to stay distinguishable: the caller filters every app out of the
-    /// switcher on an empty set, and this read does fail transiently — across a Space switch, on
-    /// wake, and under window-server pressure.
+    /// Not every layer-0 window, which is what this used to count and why the setting hid next to
+    /// nothing. Measured: every regular app, a Finder with no window open among them, owns four
+    /// full-width 39pt menu-bar backing windows at y=0, plus 64×64 and 1×1 helper surfaces — see
+    /// `SwitchTarget.placedFrontWindow` for the same phantoms. None of them is on screen and none
+    /// is placed on a Space.
+    ///
+    /// On screen or placed is not the whole of the test, though, because the Space query does not
+    /// place every real window. Measured on this machine, 2026-09-26: Ghostty owned two real
+    /// 2024×1258 windows at the same frame, neither on screen and neither minimized — its Window
+    /// menu named both, unmarked — and the query placed one of them on Desktop 1 and the other on
+    /// no Space at all. `restoreFromDock` records the same for VS Code. A Ghostty whose placed
+    /// window happened to be the one closed would have had nothing left that passed, and would
+    /// have vanished from the switcher of a user who has this setting on and uses it daily.
+    ///
+    /// So a window that is neither also counts when it is window-sized: at least
+    /// `MouseDragGeometry.minimumSize`, the size this app already holds to be the smallest a real
+    /// window can usefully be. That floor is what separates the two sides of the measurement above.
+    /// The menu-bar backings are 39pt tall and fall under its 90 — no separate test for their shape
+    /// at y=0 is needed — and so do the 64×64 and 1×1 surfaces, while the unplaced Ghostty window
+    /// clears it by a factor of ten.
+    ///
+    /// What it costs, and it is a real cost rather than a detail: a *minimized* window is off
+    /// screen, on no Space and window-sized too, and nothing in the window server's list tells it
+    /// from Ghostty's unplaced one. So an app whose windows are all minimized is listed again, as it
+    /// was before any of this — which is not what the setting's own subtitle promises. Keeping
+    /// Ghostty is the side of that trade taken; separating the two needs Accessibility per app, per
+    /// refresh. Helper surfaces that are window-sized — the 500×500 ones Ghostty and Alfred keep,
+    /// Alfred Preferences' placed one in `FrontWindowSelectionTests` — keep an otherwise empty app
+    /// listed as well, the direction this can afford to be wrong in.
+    ///
+    /// nil when either reading failed, which is a different answer from "nobody owns a window" and
+    /// has to stay distinguishable: the caller filters every app out of the switcher on an empty
+    /// set, and both reads fail transiently — across a Space switch, on wake, and under
+    /// window-server pressure. An empty placement map is treated as a failure too, since a machine
+    /// with windows on it always places some; filtering against one would lose every small window
+    /// that is not on screen.
     private nonisolated static func windowOwningPIDs() -> Set<pid_t>? {
         guard let info = CGWindowListCopyWindowInfo(
             [.excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        let placed = SpaceMover.windowSpaces()
+        guard !placed.isEmpty else { return nil }
+        return windowOwners(in: info, placed: Set(placed.keys))
+    }
+
+    /// The rule above over values, so it can be pinned by a test: the owners of the layer-0 windows
+    /// in `info` that are on screen, in `placed`, or window-sized.
+    nonisolated static func windowOwners(
+        in info: [[String: Any]], placed: Set<CGWindowID>
+    ) -> Set<pid_t> {
+        let floor = MouseDragGeometry.minimumSize
         var pids = Set<pid_t>()
         for window in info {
             guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
-                  let pid = window[kCGWindowOwnerPID as String] as? pid_t else { continue }
+                let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                let number = window[kCGWindowNumber as String] as? CGWindowID
+            else { continue }
+            let onScreen = window[kCGWindowIsOnscreen as String] as? Bool == true
+            let bounds = (window[kCGWindowBounds as String] as? [String: CGFloat])
+                .flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
+            let windowSized = bounds.map {
+                $0.width >= floor.width && $0.height >= floor.height
+            } ?? false
+            guard onScreen || placed.contains(number) || windowSized else { continue }
             pids.insert(pid)
         }
         return pids

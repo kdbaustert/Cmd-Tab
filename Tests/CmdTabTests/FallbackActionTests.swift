@@ -10,6 +10,39 @@ final class FallbackActionTests: XCTestCase {
         offerURL: true, offerSearch: true, offerShell: true,
         searchTemplate: SwitcherFallbacks.defaultSearchTemplate)
 
+    // MARK: - What the filter lets through
+
+    /// `host:port` is the shape the URL fallback exists to catch, and a path is most of what a
+    /// shell command is written in — but the filter refused `:` and `/`, so none of it could be
+    /// typed.
+    func testPunctuationTypesIntoTheQueryOnlyWhileAFallbackIsOn() {
+        for character in ":/|~" {
+            let scalar = character.unicodeScalars.first!
+            XCTAssertTrue(SwitcherController.isTypable(scalar, allowsPunctuation: true))
+            XCTAssertFalse(
+                SwitcherController.isTypable(scalar, allowsPunctuation: false),
+                "\(character) can only ever make a name filter match nothing")
+        }
+    }
+
+    /// What names are written in types either way.
+    func testNameCharactersTypeWhetherOrNotAFallbackIsOn() {
+        for character in "aZ7 -_.'" {
+            let scalar = character.unicodeScalars.first!
+            XCTAssertTrue(SwitcherController.isTypable(scalar, allowsPunctuation: false))
+            XCTAssertTrue(SwitcherController.isTypable(scalar, allowsPunctuation: true))
+        }
+    }
+
+    func testAnyEnabledReportsEachFallbackOnItsOwn() {
+        var settings = SwitcherFallbacks.Settings(
+            offerURL: false, offerSearch: false, offerShell: false, searchTemplate: "")
+        XCTAssertFalse(settings.anyEnabled)
+        settings.offerShell = true
+        XCTAssertTrue(settings.anyEnabled)
+        XCTAssertTrue(allOn.anyEnabled)
+    }
+
     // MARK: - URL detection
 
     func testADottedHostWithNoSchemeIsURLLike() {

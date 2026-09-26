@@ -32,6 +32,9 @@ final class LaunchArrangementWatcher {
 
     /// Per-app rules, pushed by the controller.
     var appRules: [String: AppRule] = [:]
+    /// Per-window rules, unioned with `appRules`'s `neverTile`: a first window whose title a rule
+    /// marks `.neverTile` is left where its app put it, even on an app with a launch arrangement.
+    var titleRules: [CompiledTitleRule] = []
     /// Gap to leave around the tiled window, from the tiling settings.
     var gap: CGFloat = 0
 
@@ -94,10 +97,17 @@ final class LaunchArrangementWatcher {
             watching.remove(pid)
             return
         }
+        let bundleID = app.bundleIdentifier
+        let titleRules = self.titleRules
         // The check leaves the main thread; only its answer comes back, to `resume`, where the
         // state it acts on lives. See `axQueue`.
         Self.axQueue.async { [weak self] in
             let isReady = Self.hasSwitchableWindow(pid: pid)
+            // Asked only once there is a window to have a title — the app-level `neverTile` was
+            // settled before the poll began, but a title rule is about the window, and the window
+            // did not exist until now.
+            let isProtected =
+                isReady && Self.titleProtects(pid: pid, bundleID: bundleID, rules: titleRules)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     // `watching` is what says this poll is still wanted: every way one ends —
@@ -106,7 +116,7 @@ final class LaunchArrangementWatcher {
                     guard let self, self.watching.contains(pid) else { return }
                     self.resume(
                         pid: pid, arrangement: arrangement, launchDisplay: launchDisplay,
-                        remaining: remaining, isReady: isReady)
+                        remaining: remaining, isReady: isReady, isProtected: isProtected)
                 }
             }
         }
@@ -115,7 +125,7 @@ final class LaunchArrangementWatcher {
     /// The readiness answer, back on the main thread: tile now, or wait out `delay` and ask again.
     private func resume(
         pid: pid_t, arrangement: WindowArrangement, launchDisplay: Int?, remaining: Int,
-        isReady: Bool
+        isReady: Bool, isProtected: Bool
     ) {
         guard isReady else {
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay) { [weak self] in
@@ -126,6 +136,11 @@ final class LaunchArrangementWatcher {
             return
         }
         watching.remove(pid)
+        guard !isProtected else {
+            Log.general.notice(
+                "launch arrangement: pid \(pid, privacy: .public) window set to never tile; skipped")
+            return
+        }
         let areas = WindowTiler.visibleAreas()
         // Enqueued before `apply`, on the same serial tiling queue, so the move is guaranteed to
         // land before the arrangement reads the window's home display — "display 2, left half"
@@ -152,5 +167,18 @@ final class LaunchArrangementWatcher {
     /// thread by accident: it touches no instance state, and the pid is all it needs.
     private nonisolated static func hasSwitchableWindow(pid: pid_t) -> Bool {
         AX.windows(of: AX.application(pid)).contains(where: AX.isSwitchableWindow)
+    }
+
+    /// Whether a title rule protects the window the tile would land on — `AX.frontWindow`, the same
+    /// one `WindowTiler.apply` resolves when it is handed no target. `axQueue` only, like the check
+    /// above it, and skipped without a read when no rule could apply to this app.
+    private nonisolated static func titleProtects(
+        pid: pid_t, bundleID: String?, rules: [CompiledTitleRule]
+    ) -> Bool {
+        guard rules.mayNeverTile(bundleID), let window = AX.frontWindow(ofApplication: pid)
+        else { return false }
+        return CompiledTitleRule.matches(
+            rules, bundleID: bundleID, title: AX.copyString(window, kAXTitleAttribute) ?? "",
+            action: .neverTile)
     }
 }

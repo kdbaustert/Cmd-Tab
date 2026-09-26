@@ -43,6 +43,9 @@ final class DisplayLayouts {
     /// moved by this either: the rule says "do not rearrange my windows", and a rescue is a
     /// rearrangement however well meant.
     var appRules: [String: AppRule] = [:]
+    /// Per-window rules, unioned with `appRules` for the same guard: a window a title rule marks
+    /// `.neverTile` is left where macOS put it, whatever app it belongs to.
+    var titleRules: [CompiledTitleRule] = []
 
     /// The layout under each desk we have seen, keyed by that desk's signature.
     ///
@@ -145,7 +148,23 @@ final class DisplayLayouts {
     }
 
     /// Reads where every window currently is, in fractions of the display it is on.
+    ///
+    /// Only under the desk it will be filed as. `latest` is filed under `latestDesk` the moment the
+    /// desk changes, and nothing used to check the two still agreed when it was taken: a tick
+    /// landing after the displays had changed but before the notification saying so — first thing
+    /// after a wake, when the timer is overdue, is exactly that moment — photographed the windows
+    /// macOS had just scrambled, and the next desk change filed them as the *old* desk's layout,
+    /// overwriting the one worth restoring. A desk found to have changed here is handled as the
+    /// change it is, and the notification that follows finds nothing left to do.
+    ///
+    /// What this cannot catch is the window server moving windows before `NSScreen` reports the
+    /// new desk at all; the signature is all there is to compare, and for that moment it has not
+    /// changed yet.
     private func capture() {
+        guard MainLoopMonitor.marking("desk signature", { Self.signature() }) == latestDesk else {
+            deskMayHaveChanged()
+            return
+        }
         // Labelled because this is one of the two pieces of main-thread work that run while the
         // app is otherwise idle — every five seconds, and first thing after a wake when the timer
         // is overdue. A stall reported during "unlabelled work" with nothing else in the log was
@@ -234,28 +253,27 @@ final class DisplayLayouts {
             displays.compactMap { display in display.id.map { ($0, display.area) } },
             uniquingKeysWith: { first, _ in first })
         let live = WindowNavigator.onScreen()
-        var moves: [(window: WindowNavigator.Window, frame: CGRect)] = []
+        var moves: [Move] = []
         for window in live {
             guard let stored = saved[window.id], let area = areas[stored.display] else { continue }
             // The lookup is skipped entirely when nobody has set a rule, which is the common case:
             // `NSRunningApplication(processIdentifier:)` per window, per desk change, to ask a
             // question whose answer is always no.
-            if !appRules.isEmpty,
-                let id = NSRunningApplication(processIdentifier: window.pid)?.bundleIdentifier,
-                appRules[id]?.neverTile == true {
-                continue
-            }
+            let id =
+                appRules.isEmpty && titleRules.isEmpty
+                ? nil : NSRunningApplication(processIdentifier: window.pid)?.bundleIdentifier
+            if let id, appRules[id]?.neverTile == true { continue }
             let frame = WindowTiler.clamp(Self.absolute(stored.fraction, in: area), into: area)
             // A window macOS has already left where it belongs needs no write, and every write is
             // Accessibility IPC to another process. On a two-display desk this is usually most of
             // the list.
             guard !Self.matches(window.frame, frame) else { continue }
-            moves.append((window, frame))
+            moves.append(Move(window: window, frame: frame, bundleID: id))
         }
         guard !moves.isEmpty else { return }
         Log.general.notice(
             "display layouts: restoring \(moves.count, privacy: .public) window(s)")
-        Self.write(moves)
+        Self.write(moves, titleRules: titleRules)
         // Deliberately no capture here. `write` hands the frames to a background queue and returns,
         // and each `AX.setFrame` is itself a request to another process rather than a move that has
         // happened — so a snapshot taken now records the scrambled positions macOS left behind, not
@@ -274,16 +292,47 @@ final class DisplayLayouts {
     /// queue thirty of them. Run on the main thread that is also the run loop servicing the keyboard
     /// event tap, one wedged app in that list is enough to overrun the tap's deadline and have the
     /// system disable it, which costs the user every keystroke on the machine.
-    private static func write(_ moves: [(window: WindowNavigator.Window, frame: CGRect)]) {
+    ///
+    /// The title rules are checked here too, for the same reason: a title is Accessibility, and the
+    /// element it has to be read from is only resolved on this queue.
+    private static func write(_ moves: [Move], titleRules: [CompiledTitleRule]) {
         queue.async {
+            var unmatched = 0
             for move in moves {
                 guard
                     let element = AX.window(
                         ofApplication: move.window.pid, matching: move.window.frame)
-                else { continue }
+                else {
+                    unmatched += 1
+                    continue
+                }
+                if titleRules.mayNeverTile(move.bundleID),
+                    CompiledTitleRule.matches(
+                        titleRules, bundleID: move.bundleID,
+                        title: AX.copyString(element, kAXTitleAttribute) ?? "", action: .neverTile)
+                {
+                    continue
+                }
                 AX.setFrame(element, move.frame, sizing: true, repositionAfterSizing: true)
             }
+            // Said, because the line above it in the log has already promised a number of windows,
+            // and a window whose Accessibility frame has drifted from the window server's cannot be
+            // matched and is quietly left where macOS put it.
+            if unmatched > 0 {
+                Log.general.notice(
+                    """
+                    display layouts: \(unmatched, privacy: .public) window(s) not found over \
+                    Accessibility; left where macOS put them
+                    """)
+            }
         }
+    }
+
+    /// One window to put back, and the bundle it belongs to when a rule needed it read.
+    private struct Move {
+        let window: WindowNavigator.Window
+        let frame: CGRect
+        let bundleID: String?
     }
 
     private static let queue = DispatchQueue(label: "com.cmdtab.displaylayouts", qos: .utility)

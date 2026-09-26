@@ -536,13 +536,21 @@ final class PanelGroup {
         panels.lazy.compactMap { $0.tileIndex(at: point) }.first
     }
 
+    /// Points of precise scrolling that make one step of the selection.
+    private static let scrollStep: CGFloat = 20
+
     private func handleScroll(_ event: NSEvent) {
-        // A scroll on a real wheel (or a fast swipe) carries useful deltas; the trackpad posts many
-        // tiny ones. Accumulate until a full "step" has landed.
-        scrollAccumulator += event.scrollingDeltaY
-        let step = Int(scrollAccumulator / 20)
+        // A trackpad or Magic Mouse posts many tiny *point* deltas; accumulate until a full step
+        // has landed. A notched wheel reports in *lines* instead — about one per notch — and fed
+        // through the same threshold it took twenty notches to move the highlight once. So a line
+        // counts as a whole step: one notch, one tile, and a fast spin (which the system
+        // accelerates into several lines per event) moves several.
+        let delta = event.hasPreciseScrollingDeltas
+            ? event.scrollingDeltaY : event.scrollingDeltaY * Self.scrollStep
+        scrollAccumulator += delta
+        let step = Int(scrollAccumulator / Self.scrollStep)
         guard step != 0 else { return }
-        scrollAccumulator -= CGFloat(step) * 20
+        scrollAccumulator -= CGFloat(step) * Self.scrollStep
         onScroll?(-step)
     }
 

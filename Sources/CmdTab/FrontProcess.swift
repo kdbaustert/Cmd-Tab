@@ -79,18 +79,15 @@ enum FrontProcess {
     /// serial number.
     @discardableResult
     static func raise(window: CGWindowID, pid: pid_t) -> Bool {
-        guard let setFront, let getProcessForPID, window != 0 else { return false }
-        var psn = ProcessSerialNumber()
-        guard getProcessForPID(pid, &psn) == noErr else { return false }
-        return setFront(&psn, window, userGenerated) == .success
+        guard var psn = serialNumber(of: pid) else { return false }
+        return raise(window: window, psn: &psn)
     }
 
     /// Fronts `window` without disturbing the rest of `pid`'s windows. False when the private
     /// symbols are gone or the process has no serial number, both of which mean "fall back".
     static func focus(window: CGWindowID, pid: pid_t) -> Bool {
-        guard let postEvent, raise(window: window, pid: pid) else { return false }
-        var psn = ProcessSerialNumber()
-        guard let getProcessForPID, getProcessForPID(pid, &psn) == noErr else { return false }
+        guard let postEvent, var psn = serialNumber(of: pid), raise(window: window, psn: &psn)
+        else { return false }
         // The front change alone moves the window server's idea of what is in front; the app's own
         // idea follows only from the events a click would have sent it. Without these, apps that
         // track key state themselves (which is most of them) draw the window as inactive — focused
@@ -107,5 +104,17 @@ enum FrontProcess {
         bytes[0x08] = 0x02  // and is now key
         _ = postEvent(&psn, &bytes)
         return true
+    }
+
+    /// The window server's handle on `pid`, or nil when the lookup is gone or the process has none.
+    private static func serialNumber(of pid: pid_t) -> ProcessSerialNumber? {
+        guard let getProcessForPID else { return nil }
+        var psn = ProcessSerialNumber()
+        return getProcessForPID(pid, &psn) == noErr ? psn : nil
+    }
+
+    private static func raise(window: CGWindowID, psn: inout ProcessSerialNumber) -> Bool {
+        guard let setFront, window != 0 else { return false }
+        return setFront(&psn, window, userGenerated) == .success
     }
 }

@@ -143,6 +143,36 @@ jobs:
       - name: Test
         run: swift test
 
+      # The feed this release extends, read from the branch "Publish the appcast" pushes to rather
+      # than from the Pages URL that serves it. The URL was the weak link twice over: with Pages
+      # off it 404s, and with Pages on its CDN caches for ten minutes — so a second tag pushed
+      # soon after the first fetched a feed without the first's entry, and published over it,
+      # despite the `concurrency` group above. The branch is the thing actually written, and the
+      # group serialises every write to it. release.sh does no fetch of its own once this file
+      # exists, so APPCAST_URL is not set below.
+      - name: Seed the appcast from gh-pages
+        run: |
+          set -euo pipefail
+          mkdir -p build/releases
+          # --exit-code distinguishes "no such branch" (2: the first release, nothing to extend)
+          # from a failed query, which must stop the release rather than read as a first one.
+          status=0
+          git ls-remote --exit-code --heads origin gh-pages > /dev/null || status=$?
+          if [[ "$status" == 2 ]]; then
+            echo "No gh-pages branch yet; this release starts the feed."
+            exit 0
+          elif [[ "$status" != 0 ]]; then
+            echo "::error::could not query origin for gh-pages (git ls-remote exit $status)"
+            exit 1
+          fi
+          git fetch origin gh-pages
+          if git cat-file -e origin/gh-pages:appcast.xml 2> /dev/null; then
+            git show origin/gh-pages:appcast.xml > build/releases/appcast.xml
+            echo "Seeded build/releases/appcast.xml from gh-pages."
+          else
+            echo "gh-pages has no appcast.xml yet; this release starts the feed."
+          fi
+
       # Everything above is setup; this one line is the release. Deliberately the same script a
       # maintainer runs by hand — a CI-only build path is one that stops working without anyone
       # noticing until the day they need it. `--adhoc` vs `--notarize` is the only thing that
@@ -152,7 +182,6 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD: ${{ steps.version.outputs.build }}
           NOTARY_PROFILE: Cmd-Tab
-          APPCAST_URL: https://kdbaustert.github.io/Cmd-Tab/appcast.xml
           DOWNLOAD_URL_PREFIX: https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/
         run: |
           if [[ "${{ steps.mode.outputs.mode }}" == "notarize" ]]; then

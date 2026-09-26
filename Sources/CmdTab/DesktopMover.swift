@@ -110,18 +110,26 @@ enum DesktopMover {
     /// where a stall costs the user every keystroke on the machine, and this gesture takes seconds.
     /// `follow` switches the display to the destination once the window lands, so you arrive with
     /// the window instead of watching it leave. `completion` runs on `queue` once the gesture is
-    /// over and Mission Control is gone, landed or not.
+    /// over and Mission Control is gone, landed or not — and exactly once for every call, a refused
+    /// one included. `DesktopAssignments` chains its moves on this, and a refusal that never called
+    /// back ended the chain there with every move after it silently dropped.
     static func move(
         pid: pid_t, to destination: Destination, follow: Bool,
         completion: (@Sendable () -> Void)? = nil
     ) {
-        if case .step(0) = destination { return }
+        if case .step(0) = destination {
+            queue.async { completion?() }
+            return
+        }
         guard beginIfIdle() else {
             Log.general.notice("desktop move: already moving a window; ignoring")
+            // On `queue`, so behind the move that refused it: a caller chaining moves off this
+            // callback asks for its next one after that move has finished, not into the middle of
+            // it — which is the refusal all over again.
+            queue.async { completion?() }
             return
         }
         queue.async {
-            defer { end() }
             let landed = perform(pid: pid, to: destination, follow: follow)
             // Dropped on a Desktop, the window sits behind whatever was already there. Raised here
             // rather than inside `perform`: its `defer` has to close Mission Control and put the
@@ -129,6 +137,11 @@ enum DesktopMover {
             // the user is then looking at the destination, where a raise on a Desktop they are
             // not is exactly the travel `follow: false` was chosen to avoid.
             if follow, let landed { SwitchTarget.focusWindow(id: landed, pid: pid) }
+            // Released *before* the completion, not in a `defer` after it. The completion is where
+            // a caller asks for the next move, and asked from another thread that request could
+            // land while the claim was still held — `DesktopAssignments` hops to main and calls
+            // straight back in, and nothing ordered that hop after a `defer` still to run here.
+            end()
             completion?()
         }
     }
@@ -369,13 +382,22 @@ enum DesktopMover {
     /// `sizing: true` even though a move should not have resized anything: dropping onto a Desktop
     /// whose display has a different resolution can hand the window back a different size, and the
     /// promise here is the frame it had, not merely the origin.
+    ///
+    /// The frame written back is the one Accessibility read, not `plan.bounds`: the write goes
+    /// through Accessibility, and Electron and Catalyst hosts report Accessibility frames that
+    /// drift from the window server's — see `windowBounds`. Writing the window server's rectangle
+    /// back through the other coordinate reading moved those windows by the drift on every move.
+    /// The window server's rectangle is still what the guard below compares, since it is the one
+    /// the gesture moved.
     private static func restore(_ plan: Plan) {
         guard let now = windowBounds(plan.window), now != plan.bounds else { return }
         Log.general.notice(
             """
             desktop move: restoring window \(plan.window, privacy: .public) to its original frame
             """)
-        AX.setFrame(plan.element, plan.bounds, sizing: true, repositionAfterSizing: true)
+        AX.setFrame(
+            plan.element, plan.accessibilityFrame ?? plan.bounds, sizing: true,
+            repositionAfterSizing: true)
     }
 
     /// Switches the display to the Desktop the window landed on, by pressing its thumbnail.
@@ -442,9 +464,12 @@ enum DesktopMover {
         /// gesture. Resolving it again afterwards would be a second walk of the app's window list
         /// for a window we already have in hand.
         let element: AXUIElement
-        /// The frame the window had *before* the gesture. Both the reference `didGrab` compares
-        /// against and the frame restored at the end.
+        /// The frame the window had *before* the gesture, as the window server reports it. The
+        /// reference `didGrab` and `restore` compare against.
         let bounds: CGRect
+        /// The same frame as Accessibility reports it — what `restore` writes back, since the write
+        /// is an Accessibility one. nil when it could not be read, and `bounds` stands in.
+        let accessibilityFrame: CGRect?
         /// Where the window is and what its display is showing, as read when the plan was made.
         /// The gesture needs the window on the Desktop in front, and this is how `perform` knows
         /// whether it is — and which Desktop to put the user back on afterwards.
@@ -529,7 +554,8 @@ enum DesktopMover {
             return nil
         }
         return Plan(
-            window: window, element: element, bounds: bounds, state: state,
+            window: window, element: element, bounds: bounds,
+            accessibilityFrame: AX.frame(element), state: state,
             destination: destination, destinationSpace: spaces[destination],
             display: displayBounds(containing: bounds))
     }
@@ -892,13 +918,30 @@ enum DesktopMover {
     /// Both are returned rather than one picked by OS version: callers stop at the first host that
     /// yields anything, so on either OS only one tree is walked to completion, and a future macOS
     /// that moves it again degrades to "not found" rather than to a version table that is wrong.
+    ///
+    /// Each host carries `missionControlTimeout`, and `walk` hands it on to every element below.
     private static func missionControlHosts() -> [AXUIElement] {
         ["com.apple.WindowManager", "com.apple.dock"].compactMap { bundleID in
             NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first.map {
-                AXUIElementCreateApplication($0.processIdentifier)
+                let host = AXUIElementCreateApplication($0.processIdentifier)
+                AXUIElementSetMessagingTimeout(host, missionControlTimeout)
+                return host
             }
         }
     }
+
+    /// How long one read of Mission Control's tree may take, set on every element of it.
+    ///
+    /// Not `AX.application`'s quarter second, and not the six-second default these elements had
+    /// before anything set one. Too short is a wrong answer rather than a slow one: the host is
+    /// mid-animation while this reads it, `spacesBarFrame` reads a timed-out read as "no Spaces
+    /// Bar", and `closeMissionControlIfOpen` then leaves Mission Control standing. Too long is the
+    /// mouse button held down for as long as a wedged Dock cares to take — six seconds a read, with
+    /// the walk making dozens of them. A second is far above what a healthy tree needs — the whole
+    /// Spaces Bar is readable barely a frame after Mission Control is asked for, see the pacing
+    /// note under Constants — and a hard stop when it is not. Set per element because a timeout is
+    /// not inherited by the elements read through one.
+    private static let missionControlTimeout: Float = 1
 
     /// Depth-first walk of an Accessibility tree, handing each element to `visit` with the two
     /// attributes every caller here matches on.
@@ -919,7 +962,11 @@ enum DesktopMover {
             AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &raw)
                 == .success, let children = raw as? [AXUIElement]
         else { return }
-        for child in children { walk(child, depth: depth + 1, visit) }
+        for child in children {
+            // The host's timeout, handed down: see `missionControlTimeout`.
+            AXUIElementSetMessagingTimeout(child, missionControlTimeout)
+            walk(child, depth: depth + 1, visit)
+        }
     }
 
     private static func elementFrame(_ element: AXUIElement) -> CGRect? {

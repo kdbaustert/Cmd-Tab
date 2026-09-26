@@ -555,18 +555,30 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// screen, and one grown near an edge is pushed back on rather than left hanging off it. The
     /// floor is what stops repeated shrinking from ending at a window nobody can grab: at the point
     /// where a further press would take it under `minimumSize`, the press does nothing instead.
+    ///
+    /// Except on an axis the window *already* overflows — a window reaching down under the Dock is
+    /// the ordinary case. Clamped there, "larger" cut the window back to the screen and was the
+    /// press that shrank it; growing leaves that axis exactly as it was, and grows the other one.
+    /// Shrinking still takes it, which is at least the direction the press asked for.
     private func resized(_ current: CGRect, in area: CGRect) -> CGRect? {
         guard let step = sizeStep else { return nil }
         let dx = area.width * Self.sizeStepFraction * step
         let dy = area.height * Self.sizeStepFraction * step
+        let keepsWidth = step > 0 && current.width > area.width
+        let keepsHeight = step > 0 && current.height > area.height
         let size = CGSize(
-            width: min(current.width + dx, area.width),
-            height: min(current.height + dy, area.height))
-        guard size.width >= Self.minimumSize, size.height >= Self.minimumSize else { return nil }
+            width: keepsWidth ? current.width : min(current.width + dx, area.width),
+            height: keepsHeight ? current.height : min(current.height + dy, area.height))
+        // A floor on shrinking only. A window already under it is not one "larger" should refuse.
+        guard step > 0 || (size.width >= Self.minimumSize && size.height >= Self.minimumSize)
+        else { return nil }
         let grown = CGRect(
             x: current.midX - size.width / 2, y: current.midY - size.height / 2,
             width: size.width, height: size.height)
-        return WindowTiler.clamp(grown, into: area)
+        var frame = WindowTiler.clamp(grown, into: area)
+        if keepsWidth { (frame.origin.x, frame.size.width) = (current.minX, current.width) }
+        if keepsHeight { (frame.origin.y, frame.size.height) = (current.minY, current.height) }
+        return frame
     }
 
     /// `current` with one edge moved by a step, the opposite edge pinned, held inside `area`.
@@ -584,29 +596,43 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// `WindowTiler.clamp` is deliberately *not* used: it preserves the size and slides the frame
     /// back onto the screen, which for a one-edge resize would move the edge that was supposed to
     /// stay pinned. Clamping the edge itself is what keeps the promise.
+    ///
+    /// And the edge only ever moves the way the press says. Clamping it to a limit it is already
+    /// beyond drags it back *across* that limit: a window reaching under the Dock took "grow bottom
+    /// edge" as a cut back to the screen, and one already under `minimumSize` took "shrink" as a
+    /// stretch up to it. See `stepped`.
     private func edgeResized(_ current: CGRect, in area: CGRect) -> CGRect? {
         guard let (edge, sign) = edgeStep else { return nil }
         let dx = area.width * Self.sizeStepFraction * sign
         let dy = area.height * Self.sizeStepFraction * sign
+        let grows = sign > 0
         var frame = current
         switch edge {
         case .left:
             // Top-left origin: the left edge grows by moving to a smaller x, and the width has to
             // grow with it or the whole window would slide instead of stretching.
-            let minX = min(max(current.minX - dx, area.minX), current.maxX - Self.minimumSize)
+            let minX = Self.stepped(
+                current.minX, by: -dx,
+                stoppingAt: grows ? area.minX : current.maxX - Self.minimumSize)
             frame = CGRect(
                 x: minX, y: current.minY, width: current.maxX - minX, height: current.height)
         case .right:
-            let maxX = max(min(current.maxX + dx, area.maxX), current.minX + Self.minimumSize)
+            let maxX = Self.stepped(
+                current.maxX, by: dx,
+                stoppingAt: grows ? area.maxX : current.minX + Self.minimumSize)
             frame = CGRect(
                 x: current.minX, y: current.minY, width: maxX - current.minX,
                 height: current.height)
         case .up:
-            let minY = min(max(current.minY - dy, area.minY), current.maxY - Self.minimumSize)
+            let minY = Self.stepped(
+                current.minY, by: -dy,
+                stoppingAt: grows ? area.minY : current.maxY - Self.minimumSize)
             frame = CGRect(
                 x: current.minX, y: minY, width: current.width, height: current.maxY - minY)
         case .down:
-            let maxY = max(min(current.maxY + dy, area.maxY), current.minY + Self.minimumSize)
+            let maxY = Self.stepped(
+                current.maxY, by: dy,
+                stoppingAt: grows ? area.maxY : current.minY + Self.minimumSize)
             frame = CGRect(
                 x: current.minX, y: current.minY, width: current.width,
                 height: maxY - current.minY)
@@ -615,6 +641,14 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         // the frame untouched. Returning nil rather than the identity means `apply` writes nothing
         // at all, which is one fewer Accessibility round-trip per press of a held-down chord.
         return frame == current ? nil : frame
+    }
+
+    /// `value` moved by `delta`, stopping at `limit` — and never moved the other way. A value
+    /// already past `limit` stays where it is rather than being pulled back to it.
+    private static func stepped(
+        _ value: CGFloat, by delta: CGFloat, stoppingAt limit: CGFloat
+    ) -> CGFloat {
+        delta < 0 ? min(value, max(value + delta, limit)) : max(value, min(value + delta, limit))
     }
 
     /// How much of the usable area `almostMaximize` fills. Nine tenths, centred: enough of the
@@ -1190,7 +1224,9 @@ final class WindowTilingStore: ObservableObject {
             self.stopRecording()
             // Hop off the handler before doing anything else: this tears down the very monitor that
             // is running, and `validate` may raise a modal — neither belongs inside event dispatch.
-            DispatchQueue.main.async {
+            // A run-loop block rather than a dispatch one, so the modal cannot freeze the main queue:
+            // see `MainRunLoop`.
+            MainRunLoop.perform {
                 guard validate(candidate) else { return }
                 self.set(candidate, for: arrangement)
             }
@@ -1262,17 +1298,14 @@ final class WindowTilingStore: ObservableObject {
         return result
     }
 
-    /// Stored as `{ arrangementRawValue: [keyCode, modifierRaw] }`, which is plist-safe.
-    ///
-    /// A cleared arrangement is written as an **empty array** rather than left out. The two have to
-    /// be told apart: an absent key means "this install predates the binding", which takes the
-    /// default, while an empty one means the user removed it — and a cleared chord that came back
-    /// as its default on the next launch would be a setting that does not stick.
+    /// Every key is read the same way: absent means "at its default", whether because it was never
+    /// set or because it was set back — see `persist`, which removes a key rather than writing the
+    /// default into it.
     private static func load() -> WindowTilingBindings {
         let defaults = UserDefaults.standard
         var result = WindowTilingBindings.defaults
         result.isEnabled = defaults.bool(forKey: Key.enabled)
-        // Absent means "never set", which for this one is on — the cycle is the useful default and
+        // Absent means the default, which for this one is on — the cycle is the useful default and
         // `bool(forKey:)` reports false for a missing key.
         result.cycleWidths =
             defaults.object(forKey: Key.cycleWidths) != nil
@@ -1290,8 +1323,8 @@ final class WindowTilingStore: ObservableObject {
         result.pointerFollowsDisplayMove = defaults.bool(forKey: Key.pointerFollowsDisplay)
         result.restoresLayoutOnDisplayChange = defaults.bool(forKey: Key.restoreOnDisplayChange)
         result.restoresDesktopAssignments = defaults.bool(forKey: Key.restoreDesktopAssignments)
-        // Absent means never set, which is 0 — `double(forKey:)` already reports 0 for a missing
-        // key, so the two cases need no telling apart here.
+        // Absent means 0, the default — `double(forKey:)` already reports 0 for a missing key, so
+        // the two cases need no telling apart here.
         //
         // A setting made while the gap was four per-edge values collapses to the widest of them:
         // the gap is one number again, and the largest is the only choice that never tightens a
@@ -1304,52 +1337,118 @@ final class WindowTilingStore: ObservableObject {
             if let widest = perEdge.max() { gap = CGFloat(widest) }
         }
         result.gap = TilingGap.clamp(gap)
-        if let raw = defaults.dictionary(forKey: Key.shortcuts) {
-            for arrangement in WindowArrangement.allCases {
-                guard let pair = raw[arrangement.rawValue] as? [Int] else { continue }
-                guard pair.count == 2 else {
-                    result.bindings[arrangement] = nil  // explicitly cleared
-                    continue
-                }
-                result.bindings[arrangement] = Hotkey(
-                    keyCode: pair[0], modifierRaw: UInt64(bitPattern: Int64(pair[1])))
+        result.bindings = bindings(stored: defaults.dictionary(forKey: Key.shortcuts))
+        return result
+    }
+
+    /// The chords as stored: `{ arrangementRawValue: [keyCode, modifierRaw] }`, which is
+    /// plist-safe, holding **only the arrangements that differ from the chord they ship with**.
+    ///
+    /// Two absences have to be told apart, and this is how. An arrangement missing from the table
+    /// is at its default, and takes whatever default the running build has — so a chord this app
+    /// later changes reaches everyone who never changed it, instead of the one they happened to
+    /// have when they last touched any setting. A *cleared* arrangement whose default is a chord is
+    /// written as an **empty array**, because leaving it out would read back as that default — a
+    /// cleared chord that returned on the next launch would be a setting that does not stick.
+    nonisolated static func storedBindings(
+        _ bindings: [WindowArrangement: Hotkey]
+    ) -> [String: [Int]] {
+        var raw: [String: [Int]] = [:]
+        for arrangement in WindowArrangement.allCases {
+            let hotkey = bindings[arrangement]
+            guard hotkey != arrangement.defaultHotkey else { continue }
+            raw[arrangement.rawValue] =
+                hotkey.map { [$0.keyCode, Int(bitPattern: UInt($0.modifierRaw))] } ?? []
+        }
+        return raw
+    }
+
+    /// The inverse of `storedBindings`, read over the defaults.
+    nonisolated static func bindings(stored raw: [String: Any]?) -> [WindowArrangement: Hotkey] {
+        var result = WindowTilingBindings.defaults.bindings
+        guard let raw else { return result }
+        for arrangement in WindowArrangement.allCases {
+            guard let pair = raw[arrangement.rawValue] as? [Int] else { continue }
+            guard pair.count == 2 else {
+                result[arrangement] = nil  // explicitly cleared
+                continue
             }
+            result[arrangement] = Hotkey(
+                keyCode: pair[0], modifierRaw: UInt64(bitPattern: Int64(pair[1])))
         }
         return result
     }
 
+    /// Writes what differs from the defaults and removes what does not.
+    ///
+    /// It used to write every key on every change — all two dozen switches and every chord in the
+    /// table, the defaults included — so touching any one setting pinned this build's defaults for
+    /// all the others, and no later change to a default could reach that install again. The same
+    /// trap `BehaviorStore.isReloading` and `AppearanceStore` document; `load` reads an absent key
+    /// as the default, so removing one is how a setting goes back to following it.
     private func persist() {
         let defaults = UserDefaults.standard
-        defaults.set(mouseDrag.isEnabled, forKey: Key.mouseDrag)
-        defaults.set(Int(bitPattern: UInt(mouseDrag.move.rawValue)), forKey: Key.mouseMove)
-        defaults.set(Int(bitPattern: UInt(mouseDrag.resize.rawValue)), forKey: Key.mouseResize)
+        let mouse = MouseDragSettings()
+        let focus = FocusFollowsMouseSettings()
+        let base = WindowTilingBindings.defaults
+        Self.store(mouseDrag.isEnabled, default: mouse.isEnabled, at: Key.mouseDrag)
+        Self.store(
+            Int(bitPattern: UInt(mouseDrag.move.rawValue)),
+            default: Int(bitPattern: UInt(mouse.move.rawValue)), at: Key.mouseMove)
+        Self.store(
+            Int(bitPattern: UInt(mouseDrag.resize.rawValue)),
+            default: Int(bitPattern: UInt(mouse.resize.rawValue)), at: Key.mouseResize)
         onMouseDragChange?(mouseDrag)
-        defaults.set(focusFollows.isEnabled, forKey: Key.focusFollows)
-        defaults.set(focusFollows.delay, forKey: Key.focusFollowsDelay)
+        Self.store(focusFollows.isEnabled, default: focus.isEnabled, at: Key.focusFollows)
+        Self.store(focusFollows.delay, default: focus.delay, at: Key.focusFollowsDelay)
         onFocusFollowsChange?(focusFollows)
-        defaults.set(tiling.isEnabled, forKey: Key.enabled)
-        defaults.set(tiling.cycleWidths, forKey: Key.cycleWidths)
-        defaults.set(tiling.dragSnap, forKey: Key.dragSnap)
-        defaults.set(tiling.desktopMoves, forKey: Key.desktopMoves)
-        defaults.set(tiling.followsDesktopMove, forKey: Key.followsDesktopMove)
-        defaults.set(tiling.pointerFollowsDisplayMove, forKey: Key.pointerFollowsDisplay)
-        defaults.set(tiling.restoresLayoutOnDisplayChange, forKey: Key.restoreOnDisplayChange)
-        defaults.set(tiling.restoresDesktopAssignments, forKey: Key.restoreDesktopAssignments)
-        defaults.set(Double(tiling.gap), forKey: Key.gap)
+        Self.store(tiling.isEnabled, default: base.isEnabled, at: Key.enabled)
+        Self.store(tiling.cycleWidths, default: base.cycleWidths, at: Key.cycleWidths)
+        Self.store(tiling.dragSnap, default: base.dragSnap, at: Key.dragSnap)
+        Self.store(tiling.desktopMoves, default: base.desktopMoves, at: Key.desktopMoves)
+        Self.store(
+            tiling.followsDesktopMove, default: base.followsDesktopMove,
+            at: Key.followsDesktopMove)
+        Self.store(
+            tiling.pointerFollowsDisplayMove, default: base.pointerFollowsDisplayMove,
+            at: Key.pointerFollowsDisplay)
+        Self.store(
+            tiling.restoresLayoutOnDisplayChange, default: base.restoresLayoutOnDisplayChange,
+            at: Key.restoreOnDisplayChange)
+        Self.store(
+            tiling.restoresDesktopAssignments, default: base.restoresDesktopAssignments,
+            at: Key.restoreDesktopAssignments)
         // The four per-edge keys are deliberately not written back. They are a migration source
         // only — see `load()` — and left where they are, so a downgrade finds what it wrote.
-        // Every arrangement is written, so a cleared one is recorded as cleared rather than simply
-        // missing — see `load()`.
-        var raw: [String: [Int]] = [:]
-        for arrangement in WindowArrangement.allCases {
-            guard let hotkey = tiling.bindings[arrangement] else {
-                raw[arrangement.rawValue] = []
-                continue
-            }
-            raw[arrangement.rawValue] = [hotkey.keyCode, Int(bitPattern: UInt(hotkey.modifierRaw))]
+        //
+        // Which is also why the gap is the one key that cannot always be removed at its default:
+        // `load` reads an absent gap as "migrate from the per-edge keys", so while any of them is
+        // still there, a gap set back to 0 has to be written as 0 or the old spacing comes back.
+        let migrates = [Key.gapTop, Key.gapBottom, Key.gapLeft, Key.gapRight]
+            .contains { defaults.object(forKey: $0) != nil }
+        if migrates {
+            defaults.set(Double(tiling.gap), forKey: Key.gap)
+        } else {
+            Self.store(Double(tiling.gap), default: Double(base.gap), at: Key.gap)
         }
-        defaults.set(raw, forKey: Key.shortcuts)
+        let raw = Self.storedBindings(tiling.bindings)
+        if raw.isEmpty {
+            defaults.removeObject(forKey: Key.shortcuts)
+        } else {
+            defaults.set(raw, forKey: Key.shortcuts)
+        }
         onChange?(tiling)
+    }
+
+    /// Writes `value`, or removes the key when it equals `fallback` — see `persist`.
+    private static func store<Value: Equatable>(
+        _ value: Value, default fallback: Value, at key: String
+    ) {
+        if value == fallback {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else {
+            UserDefaults.standard.set(value, forKey: key)
+        }
     }
 }
 
@@ -1482,8 +1581,16 @@ enum WindowTiler {
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
-            guard let window = resolve(target, pid: pid), let current = AX.frame(window)
-            else { return }
+            guard let window = resolve(target, pid: pid), let current = AX.frame(window) else {
+                // Said, because the chord otherwise does nothing with no trace of why: an app that
+                // publishes no Accessibility window, or one too wedged to report a frame in time.
+                Log.general.notice(
+                    """
+                    tiling: no window with a readable frame for pid \(pid, privacy: .public); \
+                    \(arrangement.rawValue, privacy: .public) not applied
+                    """)
+                return
+            }
             let key = WindowKey(element: window)
 
             // The screen the window is mostly on, rather than the one it merely touches: a window
@@ -1825,4 +1932,15 @@ extension CGRect {
     /// way, and three private copies of the same two lines is three chances for one of them to
     /// answer differently.
     var area: CGFloat { isNull || isEmpty ? 0 : width * height }
+}
+
+extension Collection where Element == CompiledTitleRule {
+    /// Whether any `.neverTile` rule here could apply to a window of `bundleID` at all.
+    ///
+    /// Asked before a window's title is read, because the title is Accessibility IPC to that app —
+    /// and on most installs no rule could use the answer. Every path that honours the title rules
+    /// skips the read when this says no.
+    func mayNeverTile(_ bundleID: String?) -> Bool {
+        contains { $0.action == .neverTile && ($0.bundleID == nil || $0.bundleID == bundleID) }
+    }
 }

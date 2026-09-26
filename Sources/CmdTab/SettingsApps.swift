@@ -441,9 +441,9 @@ struct AppsSettings: View {
         } else if let display = rule.launchDisplay {
             parts.append("opens on display \(display)")
         }
-        // Clear them all and the row deletes itself on the next change, so say so rather than
-        // leaving a row that looks like it still does something.
-        return parts.isEmpty ? "No overrides left — this row will disappear." : parts.joined(separator: ", ")
+        // Empty only in passing: a rule cleared of every override is removed by the same change
+        // that cleared it (`AppRulesStore.set`), so its row is gone before this could be read.
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     private func addOverride() {
@@ -713,8 +713,12 @@ private struct AppOverrideControls: View {
     /// How many display rows to offer: at least whatever is plugged in right now, and at least the
     /// number already stored, so a rule set on a two-display desk still reads "Display 2" once that
     /// monitor is unplugged rather than silently losing its own choice from the list.
+    ///
+    /// And at least one. `NSScreen.screens` can be empty — mid-reconfiguration, or with every
+    /// display gone — and `1...0` is not an empty range but a trap, which took the settings window
+    /// and the whole app down with it.
     private var displayChoiceCount: Int {
-        max(NSScreen.screens.count, rules.rule(for: bundleID).launchDisplay ?? 0)
+        max(1, NSScreen.screens.count, rules.rule(for: bundleID).launchDisplay ?? 0)
     }
 
     var body: some View {

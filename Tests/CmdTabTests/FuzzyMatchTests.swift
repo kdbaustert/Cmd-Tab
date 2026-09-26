@@ -212,4 +212,36 @@ final class FuzzyMatchTests: XCTestCase {
     func testGreedyMatchingUnderratesInitialsAcrossRepeatedLetters() throws {
         XCTAssertLessThan(try score("BetterTouchTool", "btt"), try score("Bxx Txx Txx", "btt"))
     }
+
+    // MARK: - Accents
+
+    /// System Settings on a French Mac. Typed without the accent — which is how anyone types a
+    /// filter — this matched nothing at all: the prefix and substring tests stopped at the é, and
+    /// the walk spent the needle's e on the *second* e and never found a g after it.
+    func testAnUnaccentedQueryFindsAnAccentedName() throws {
+        let prefix = try score("Réglages Système", "reglages")
+        // As strong as the same name written without accents: it is a prefix match, not a
+        // consolation prize.
+        XCTAssertEqual(prefix, try score("Reglages Systeme", "reglages"))
+        XCTAssertNotNil(FuzzyMatch.score("Réglages Système", query: "systeme"), "substring")
+        XCTAssertNotNil(FuzzyMatch.score("Réglages Système", query: "rgsy"), "subsequence")
+    }
+
+    /// Both directions, as with case: an accent typed into the query must not be required of the
+    /// candidate either.
+    func testAnAccentedQueryFindsAnUnaccentedName() {
+        XCTAssertNotNil(FuzzyMatch.score("Resume Builder", query: "résumé"))
+    }
+
+    /// Folding drops accents, not letters: a query that is simply not in the name still fails.
+    func testFoldingDoesNotMakeEverythingMatch() {
+        XCTAssertNil(FuzzyMatch.score("Réglages Système", query: "zz"))
+    }
+
+    /// The walk reads word starts off the original candidate while matching against the folded
+    /// one, so an accented capital still counts as the start of a word.
+    func testAnAccentedCapitalIsStillAWordStart() throws {
+        // The needle's e lands on the É in both; only the first has a capital there.
+        XCTAssertGreaterThan(try score("PetitÉcran", "pte"), try score("Petitecran", "pte"))
+    }
 }

@@ -58,6 +58,20 @@ final class FilteringAndMetricsTests: XCTestCase {
         XCTAssertTrue(model.matchingIndices.isEmpty)
     }
 
+    /// `matchesAnything` is what lets releasing the trigger on a query that matched nothing close
+    /// the panel without switching — so a whitespace-only query, which filters nothing, must still
+    /// count as matching, or pressing space and letting go would stop switching at all.
+    func testMatchesAnythingSeparatesNoFilterFromNoMatch() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("  ")
+        XCTAssertTrue(model.matchesAnything)
+        model.setQuery("saf")
+        XCTAssertTrue(model.matchesAnything)
+        model.setQuery("zzzq")
+        XCTAssertFalse(model.matchesAnything)
+    }
+
     /// The space bar must not move the highlight.
     ///
     /// Space is an ordinary type-to-filter character, so it arrives as a query — and a query of one
@@ -143,6 +157,29 @@ final class FilteringAndMetricsTests: XCTestCase {
         XCTAssertEqual(model.targets.count, 4)
         XCTAssertEqual(model.targets.prefix(3).map(\.title), sample.map(\.title))
         XCTAssertTrue(model.targets[3].isLaunchable)
+    }
+
+    /// A fallback tile's id names its slot, not its query, so a later keystroke builds a tile with
+    /// the same id. It still has to replace the old one: when it did not, typing `wikipedia` left a
+    /// tile reading — and searching for — "wikip", the first prefix that matched nothing.
+    func testAFallbackTileFollowsTheQueryAcrossKeystrokes() {
+        func search(_ query: String) -> SwitchTarget {
+            let action = FallbackAction.search(
+                query: query, url: URL(string: "https://example.com/?q=\(query)")!)
+            return SwitchTarget(
+                id: "fallback:search", kind: .fallback(action), title: action.title,
+                appName: action.title, icon: nil, isMinimized: false, isHidden: false)
+        }
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setLaunchSuggestions([search("wikip")])
+        model.setLaunchSuggestions([search("wikipedia")])
+        XCTAssertEqual(model.targets.last?.title, "Search for wikipedia")
+        guard case .fallback(let action) = model.targets.last?.kind else {
+            return XCTFail("the fallback tile went missing")
+        }
+        XCTAssertEqual(action, .search(
+            query: "wikipedia", url: URL(string: "https://example.com/?q=wikipedia")!))
     }
 
     func testMatchIsASubstringNotAPrefix() {
@@ -354,6 +391,26 @@ final class FilteringAndMetricsTests: XCTestCase {
         XCTAssertEqual(huge.iconSize, Metrics.iconSizeRange.upperBound)
         XCTAssertEqual(huge.iconSpacing, Metrics.iconSpacingRange.upperBound)
         XCTAssertEqual(huge.titleSpacing, Metrics.titleSpacingRange.upperBound)
+    }
+
+    /// NaN is the value a plain min/max clamp cannot catch — every comparison against it is false,
+    /// so both hand it straight back — and a `<real>nan</real>` in a hand-edited defaults plist
+    /// reads as exactly that. It used to reach `DisplayLayout.columns` and trap in `Int(_:)`.
+    func testMetricsClampNaNToTheFloor() {
+        let metrics = Metrics(iconSize: .nan, iconSpacing: .nan, titleSpacing: .nan)
+        XCTAssertEqual(metrics.iconSize, Metrics.iconSizeRange.lowerBound)
+        XCTAssertEqual(metrics.iconSpacing, Metrics.iconSpacingRange.lowerBound)
+        XCTAssertEqual(metrics.titleSpacing, Metrics.titleSpacingRange.lowerBound)
+        // And the layout that used to trap on it now answers.
+        XCTAssertGreaterThanOrEqual(
+            DisplayLayout.columns(
+                targetCount: 10, mode: .apps, layout: .grid, showsTitle: false, metrics: metrics,
+                visibleSize: CGSize(width: 1440, height: 900), cap: 0),
+            1)
+    }
+
+    func testClampingANaNGivesTheLowerBound() {
+        XCTAssertEqual(CGFloat.nan.clamped(to: 2...5), 2)
     }
 
     /// A titled app tile has to be paid for in both axes, or the title renders outside the tile the

@@ -258,14 +258,14 @@ final class MouseWindowDragTests: XCTestCase {
 
         let space = 49  // ⌃⌘Space — Emoji & Symbols
         let unclaimed = TapRouting.idle(
-            TapRouting.Event(type: .keyDown, keyCode: space, flags: chord.flags),
+            TapRouting.Event(keyCode: space, flags: chord.flags),
             bindings: TapRouting.Bindings(), isAppActive: false)
         XCTAssertEqual(unclaimed, .pass)
         XCTAssertFalse(unclaimed.swallows, "a system chord we do not claim swallows nothing")
 
         let left = 123  // ⌃⌘← — Left half, pressed while Settings has focus
         let inert = TapRouting.idle(
-            TapRouting.Event(type: .keyDown, keyCode: left, flags: chord.flags),
+            TapRouting.Event(keyCode: left, flags: chord.flags),
             bindings: TapRouting.Bindings(tilingMatch: { _, _ in .leftHalf }), isAppActive: true)
         XCTAssertEqual(inert, .tilingInert(.leftHalf))
         XCTAssertFalse(inert.swallows, "an inert tiling chord swallows nothing either")
@@ -315,5 +315,82 @@ final class MouseWindowDragTests: XCTestCase {
         let justOutside = CGSize(width: 34, height: 34)  // 48.1pt
         XCTAssertEqual(PointDirection.zone(for: justInside), .maximize)
         XCTAssertEqual(PointDirection.zone(for: justOutside), .topRight)
+    }
+
+    // MARK: - Hold-and-point chord transitions
+
+    private let ctrl = CGEventFlags.maskControl
+    private let ctrlCmd: CGEventFlags = [.maskControl, .maskCommand]
+    private let ctrlOpt: CGEventFlags = [.maskControl, .maskAlternate]
+
+    /// Whether a run of modifier states, fed through `PointChord` the way `ModifierTargetHighlight`
+    /// does, ends in a snap — with the shipped chords, and the cursor never having moved, so any
+    /// snap is the `.maximize` of whatever window the pointer rests on.
+    private func snaps(_ sequence: [CGEventFlags]) -> Bool {
+        let settings = MouseDragSettings(isEnabled: true)
+        var previous: CGEventFlags = []
+        var chord: CGEventFlags?
+        for held in sequence {
+            switch PointChord.step(
+                previous: previous, held: held, chord: chord,
+                isChord: settings.action(for: held) != nil)
+            {
+            case .arm, .hold: chord = held
+            case .complete: return true
+            case .cancel: chord = nil
+            case .ignore: break
+            }
+            previous = held
+        }
+        return false
+    }
+
+    /// The gesture itself: press the chord, let it go, and the window snaps.
+    func testPressingAndReleasingTheChordSnaps() {
+        XCTAssertTrue(snaps([ctrl, ctrlCmd, ctrl, []]))
+        XCTAssertTrue(snaps([ctrl, ctrlOpt, []]))
+    }
+
+    /// ⌃⇧⌘← — this app's own display move — pressed ⌃, ⌘, ⇧ and let go in reverse. The ⇧ landing
+    /// on an armed ⌃⌘ used to read as the chord coming up and maximized the window under the
+    /// pointer, and letting go of the ⇧ landed back on ⌃⌘ and armed a second snap for the ⌘.
+    func testAddingAModifierToTheChordNeverSnaps() {
+        let shifted = ctrlCmd.union(.maskShift)
+        XCTAssertFalse(snaps([ctrl, ctrlCmd, shifted, ctrlCmd, ctrl, []]))
+        // ⌃⌥⌘ — the Desktop moves — reached through the move chord.
+        XCTAssertFalse(snaps([ctrl, ctrlOpt, ctrlOpt.union(.maskCommand), ctrlOpt, ctrl, []]))
+    }
+
+    /// A Hyper key posts its four modifiers one at a time, passing through ⌃⌘ on the way.
+    func testAHyperKeyNeverSnaps() {
+        let hyper: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+        let cmd = CGEventFlags.maskCommand
+        XCTAssertFalse(snaps([cmd, ctrlCmd, ctrlCmd.union(.maskAlternate), hyper, []]))
+    }
+
+    func testEachTransitionIsReadTheRightWay() {
+        let shifted = ctrlCmd.union(.maskShift)
+        XCTAssertEqual(
+            PointChord.step(previous: ctrl, held: ctrlCmd, chord: nil, isChord: true), .arm)
+        XCTAssertEqual(
+            PointChord.step(previous: shifted, held: ctrlCmd, chord: nil, isChord: true),
+            .ignore, "landing back on the chord by letting go of something is not a press")
+        XCTAssertEqual(
+            PointChord.step(previous: ctrlCmd, held: ctrl, chord: ctrlCmd, isChord: false),
+            .complete)
+        XCTAssertEqual(
+            PointChord.step(previous: ctrlCmd, held: shifted, chord: ctrlCmd, isChord: false),
+            .cancel)
+        // One up and another down in a single event is not a release either.
+        XCTAssertEqual(
+            PointChord.step(
+                previous: ctrlCmd, held: [.maskControl, .maskShift], chord: ctrlCmd,
+                isChord: false),
+            .cancel)
+        XCTAssertEqual(
+            PointChord.step(previous: ctrlOpt, held: shifted, chord: ctrlOpt, isChord: true),
+            .hold, "moving between two bound chords keeps the gesture")
+        XCTAssertEqual(
+            PointChord.step(previous: [], held: ctrl, chord: nil, isChord: false), .ignore)
     }
 }

@@ -221,12 +221,21 @@ extension SwitchTarget {
             let parsed = windowID
             let wasMinimized = isMinimized
             let pid = self.pid
+            // For the Window-menu route, which matches a window by title and nothing else. The
+            // tile's own title, unless it is the app-name placeholder a window with no title gets —
+            // matching that against the menu would pick whichever entry happens to share the app's
+            // name. `focusWindow` asks the window server for a fresh one as well, since this is
+            // from the last refresh.
+            let title = self.title == appName ? nil : self.title
             // `nonisolated(unsafe)` rather than relying on `Kind`'s conformance: the element is
             // bound out of the pattern match above, so it arrives as a bare `AXUIElement` with no
             // `Sendable` of its own. Crossing onto `focusQueue` is the point — every Accessibility
             // call in this app is IPC that must not run on the thread servicing the event tap.
             nonisolated(unsafe) let window = window
+            // Claimed here, not in the block: see `focusGeneration`.
+            let generation = Self.beginFocus()
             Self.focusQueue.async {
+                guard Self.isCurrent(generation) else { return }
                 let resolved = Self.windowID(of: window, parsed: parsed, pid: pid)
                 guard let id = resolved, !wasMinimized else {
                     // Either no id to look a Space up with, or a minimized window — which sits in
@@ -246,12 +255,11 @@ extension SwitchTarget {
                             "window pick: raising pid \(pid, privacy: .public) blind — no window id, Space unchecked"
                         )
                     }
-                    Self.beginFocus()
                     Self.raise(element: window)
                     Self.activate(pid: pid)
                     return
                 }
-                Self.focusWindow(id: id, pid: pid)
+                Self.focusWindow(id: id, pid: pid, title: title)
             }
 
         case .tab(let ref):
@@ -261,17 +269,22 @@ extension SwitchTarget {
             // on — `AXPress` on a tab acts on the app directly and does not need the window's Desktop
             // travel (if any) to have landed first, and a failed press is meant to leave the window
             // raised with no fallback (see the file-header note on `TabEnumeration`).
+            //
+            // No title is handed on for the Window-menu route, unlike a window tile's: this tile's
+            // title is the *tab's*, and the menu names the window by whichever tab is active in it.
+            // `focusWindow` reads the window's own title instead.
             let parsed = windowID
             let wasMinimized = isMinimized
             let pid = self.pid
             nonisolated(unsafe) let window = ref.window
             nonisolated(unsafe) let tabElement = ref.element
+            let generation = Self.beginFocus()
             Self.focusQueue.async {
+                guard Self.isCurrent(generation) else { return }
                 let resolved = Self.windowID(of: window, parsed: parsed, pid: pid)
                 if let id = resolved, !wasMinimized {
                     Self.focusWindow(id: id, pid: pid)
                 } else {
-                    Self.beginFocus()
                     Self.raise(element: window)
                     Self.activate(pid: pid)
                 }
@@ -293,9 +306,12 @@ extension SwitchTarget {
     /// shortcuts in `GlobalActions` mean the same thing and used to spell it `activate(options:
     /// .activateAllWindows)`, which is precisely the call that rearranges Desktops.
     static func focusApp(pid: pid_t, bundleURL: URL?) {
+        // An app pick supersedes any window pick still waiting for its Desktop — claimed here
+        // rather than in the block, so a pick still blocking the queue sees it: see
+        // `focusGeneration`.
+        let generation = beginFocus()
         focusQueue.async {
-            // An app pick supersedes any window pick still waiting for its Desktop.
-            let generation = beginFocus()
+            guard isCurrent(generation) else { return }
 
             // One placement read, shared by every question below. Each of them used to take its own
             // — and the whole-window-group check took one *per window* — where a read walks every
@@ -411,7 +427,7 @@ extension SwitchTarget {
     private static func restoreMinimized(
         pid: pid_t, attempts: Int, bundleURL: URL?, generation: UInt64
     ) {
-        guard generation == focusGeneration else { return }
+        guard isCurrent(generation) else { return }
         let windows = AX.windows(of: AX.application(pid)).filter(AX.isWindow)
         guard let target = windows.first(where: AX.isMinimized) else {
             // It has windows, just none in the Dock. Nothing to restore, and nothing to reopen for
@@ -690,35 +706,82 @@ extension SwitchTarget {
             .first(where: { TargetProvider.windowID($0) == id })
     }
 
-    /// Presses the entry for `window` in its app's own Window menu. False when no entry matched,
-    /// which leaves the pick where it was: declined, with nothing touched.
+    /// The entry for `window` in its app's own Window menu, or nil — having said why — when it has
+    /// none. Found before anything is pressed or fronted, so a pick with no entry to press can stop
+    /// with nothing touched.
     ///
-    /// Matched by title, because a menu item names its window by nothing else. The caller's title
-    /// is preferred — a preview pick carries the one ScreenCaptureKit gave the strip — and the
-    /// lookups in `windowTitle` are the fallback. Measured on the first real pick: both lookups
-    /// came back empty for a Chrome window on another Desktop, the window server's name included,
-    /// while the strip had been showing that very title a moment earlier. Two windows with one
-    /// title match the first item, which is also what the menu itself would do for a person; a
-    /// wrong twin is still a window of the right app on the right Desktop.
-    private static func pressWindowMenuItem(window id: CGWindowID, pid: pid_t, title: String?)
-        -> Bool
+    /// Matched by title, because a menu item names its window by nothing else. Two titles are
+    /// tried, in order, the second only when the first misses: the caller's, and then the one
+    /// `windowTitle` reads now. The caller's leads because a preview pick carries the one
+    /// ScreenCaptureKit gave the strip a moment ago; a tile's is from the last refresh and can be
+    /// seconds stale — a browser window whose active tab has changed since is exactly that — which
+    /// is why the fresh reading is still asked for. Measured on the first real pick: both lookups
+    /// in `windowTitle` came back empty for a Chrome window on another Desktop, the window server's
+    /// name included, while the strip had been showing that very title a moment earlier. The
+    /// window server's half of that was this app's bug rather than the window server's — see
+    /// `windowTitle` — and the tile picks were not passing a title at all.
+    ///
+    /// Two windows with one title match the first item, which is also what the menu itself would do
+    /// for a person; a wrong twin is still a window of the right app on the right Desktop.
+    private static func windowMenuItem(window id: CGWindowID, pid: pid_t, title: String?)
+        -> AXUIElement?
     {
-        guard let title = title ?? windowTitle(id, pid: pid) else {
+        let items = WindowCapture.windowMenuItems(for: pid)
+        // Before any title is asked for: the second one is a round trip, and against an app whose
+        // menu names no windows at all — Spotify is one — there is nothing for it to match.
+        guard !items.isEmpty else {
+            Log.general.notice(
+                """
+                focus window \(id, privacy: .public): the Window menu of pid \(pid, privacy: .public) \
+                lists no windows
+                """)
+            return nil
+        }
+        let match = windowMenuMatch(
+            in: items.map(\.title), titles: [{ title }, { windowTitle(id, pid: pid) }])
+        if let index = match.index { return items[index].item }
+        if match.titlesTried == 0 {
             Log.general.notice(
                 "focus window \(id, privacy: .public): no title to match against the Window menu")
-            return false
-        }
-        let wanted = WindowCapture.normalizedTitle(title)
-        let items = WindowCapture.windowMenuItems(for: pid)
-        guard let match = items.first(where: { $0.title == wanted }) else {
+        } else {
             Log.general.notice(
                 """
                 focus window \(id, privacy: .public): the Window menu of pid \(pid, privacy: .public) \
                 lists \(items.count, privacy: .public) window(s), none with this title
                 """)
-            return false
         }
-        let result = AXUIElementPerformAction(match.item, kAXPressAction as CFString)
+        return nil
+    }
+
+    /// Which of `items` — normalized Window-menu titles — one of `titles` names. Each title is
+    /// asked for only when every one before it has missed, since the later ones cost a round trip;
+    /// a title that normalizes to nothing, or to one already tried, is skipped. `titlesTried`
+    /// counts the ones actually compared, so the caller can tell "no title" from "no match" in the
+    /// log. Pure, so the order and the laziness can be pinned by a test.
+    static func windowMenuMatch(
+        in items: [String], titles: [() -> String?]
+    ) -> (index: Int?, titlesTried: Int) {
+        var tried: Set<String> = []
+        for lookup in titles {
+            guard let title = lookup() else { continue }
+            let wanted = WindowCapture.normalizedTitle(title)
+            guard !wanted.isEmpty, tried.insert(wanted).inserted else { continue }
+            if let index = items.firstIndex(of: wanted) { return (index, tried.count) }
+        }
+        return (nil, tried.count)
+    }
+
+    /// Presses a Window-menu entry `windowMenuItem` found. False when the app refused it, which
+    /// leaves the pick where it was: declined, with nothing else touched.
+    ///
+    /// Given a timeout of its own, longer than the quarter second `AX.application` installs for
+    /// everything else. A press is not a question the app answers from memory: it is the app
+    /// ordering its window front, and the reply can wait on that work. Under the shared cap a slow
+    /// success read as a failure, and the pick went on down its fallbacks with the transition it
+    /// had started still running.
+    private static func pressWindowMenuItem(_ item: AXUIElement, window id: CGWindowID) -> Bool {
+        AXUIElementSetMessagingTimeout(item, menuPressTimeout)
+        let result = AXUIElementPerformAction(item, kAXPressAction as CFString)
         Log.general.notice(
             """
             focus window \(id, privacy: .public): pressed its Window menu item, \
@@ -726,6 +789,8 @@ extension SwitchTarget {
             """)
         return result == .success
     }
+
+    private static let menuPressTimeout: Float = 1
 
     /// Brings `pid` forward by a window it already has on screen, and waits — briefly — for it to
     /// become the active app. Nothing is touched when it has no such window, which cannot happen on
@@ -766,8 +831,15 @@ extension SwitchTarget {
     }
 
     /// The window's title as the window server reports it, falling back to Accessibility.
+    ///
+    /// `CGWindowListCopyWindowInfo` with `.optionIncludingWindow`, the form
+    /// `DesktopMover.windowBounds` uses. This used to call `CGWindowListCreateDescriptionFromArray`
+    /// with `[id] as CFArray`, and that never answered: the call wants the raw window ids as the
+    /// array's values, and the bridge hands it `NSNumber`s. Measured, it returned no entry for any
+    /// id it was given, where the same ids in a raw `CFArray` came back one each. `kCGWindowName`
+    /// still needs Screen Recording; without it this is the Accessibility reading or nothing.
     private static func windowTitle(_ id: CGWindowID, pid: pid_t) -> String? {
-        if let info = CGWindowListCreateDescriptionFromArray([id] as CFArray) as? [[String: Any]],
+        if let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
             let name = info.first?[kCGWindowName as String] as? String, !name.isEmpty
         {
             return name
@@ -853,7 +925,7 @@ extension SwitchTarget {
             return
         }
         focusQueue.asyncAfter(deadline: deadline) {
-            guard generation == focusGeneration else { return }
+            guard isCurrent(generation) else { return }
             activate(pid: pid)
         }
     }
@@ -864,14 +936,37 @@ extension SwitchTarget {
     /// be synchronous with the pick, which made that impossible by construction; the wait for the
     /// Space transition is what opened the gap.
     ///
-    /// Only ever touched from `focusQueue`, which is serial — no lock needed, and
-    /// `nonisolated(unsafe)` is exactly that claim stated to the compiler rather than to a reader.
-    private nonisolated(unsafe) static var focusGeneration: UInt64 = 0
+    /// A pick claims its generation when it is *enqueued*, on the caller's thread, and that is why
+    /// this is locked rather than confined to `focusQueue`. It used to be claimed inside the queued
+    /// block, which made every check against it blind to exactly one thing: a pick waiting behind a
+    /// block that was still running. `settleBySystemSwitch` blocks the queue for up to a second, so
+    /// its per-turn check could never see the pick that replaced it — `.superseded` was
+    /// unreachable, and a replaced pick went on to re-activate its app and fall back to the private
+    /// switch before its replacement got a turn, which then started from the wrong Desktop.
+    private static let focusGeneration = GenerationCounter()
 
-    @discardableResult
+    /// The pick counter and its lock, kept together the way `SpaceChangeCounter` keeps its own.
+    private final class GenerationCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: UInt64 = 0
+
+        func next() -> UInt64 {
+            lock.withLock {
+                value &+= 1
+                return value
+            }
+        }
+
+        func isCurrent(_ generation: UInt64) -> Bool { lock.withLock { value == generation } }
+    }
+
     private static func beginFocus() -> UInt64 {
-        focusGeneration &+= 1
-        return focusGeneration
+        focusGeneration.next()
+    }
+
+    /// Whether `generation` is still the latest pick — false once any later one has been enqueued.
+    private static func isCurrent(_ generation: UInt64) -> Bool {
+        focusGeneration.isCurrent(generation)
     }
 
     /// Focuses a specific window of an app by its `CGWindowID` — used when a hover-preview thumbnail
@@ -893,8 +988,10 @@ extension SwitchTarget {
         id: CGWindowID, pid: pid_t, placement known: [CGWindowID: SpaceMover.SpaceState]? = nil,
         title: String? = nil
     ) {
+        // Claimed on the caller's thread, before the hop: see `focusGeneration`.
+        let generation = beginFocus()
         focusQueue.async {
-            let generation = beginFocus()
+            guard isCurrent(generation) else { return }
 
             // A minimized window sits in the Dock, on no Desktop at all: there is nothing to switch
             // to first, it can never join the on-screen list the gate below waits on, and the
@@ -927,6 +1024,12 @@ extension SwitchTarget {
             // fresher reading; everything after that point must use the new one.
             var placed = known ?? SpaceMover.windowSpaces()
             var placement = placed[id]
+            // The window's Window-menu entry, looked up at most once per pick: both menu routes
+            // below can be reached by one pick, a decline and then the on-screen veto, and the
+            // second lookup can only repeat the first — same app, same titles, a walk of every menu
+            // in the bar. `menuSearched` tells "looked, and there is none" from "not looked yet".
+            var menuItem: AXUIElement?
+            var menuSearched = false
             if SpaceMover.isAvailable, !isHidden, placement == nil, !isOnScreen(window: id) {
                 restoreFromDock(window: id, pid: pid, generation: generation)
                 return
@@ -1045,18 +1148,26 @@ extension SwitchTarget {
                     // another Space, though: a refreshed reading that puts it here means the
                     // activation dragged it over, and there is nothing left to travel to.
                     if let state = placement, state.windowSpace != state.currentSpace {
-                        let changesBefore = spaceChanges.value
-                        if pressWindowMenuItem(window: id, pid: pid, title: title) {
-                            settle(
-                                window: id, pid: pid, attempts: 14, delay: 0.15,
-                                generation: generation, actWhenUnreached: false,
-                                awaitingSpaceChange: changesBefore,
-                                notBefore: .now() + spaceSettleDelay)
-                            return
+                        menuItem = windowMenuItem(window: id, pid: pid, title: title)
+                        menuSearched = true
+                        if let menuItem {
+                            let changesBefore = spaceChanges.value
+                            if pressWindowMenuItem(menuItem, window: id) {
+                                settle(
+                                    window: id, pid: pid, attempts: 14, delay: 0.15,
+                                    generation: generation, actWhenUnreached: false,
+                                    awaitingSpaceChange: changesBefore,
+                                    notBefore: .now() + spaceSettleDelay)
+                                return
+                            }
                         }
                     }
                 }
             }
+
+            // A pick enqueued behind this one — while the wait above held the queue, or the menu
+            // walk just now — owns the screen from here. Everything below moves the display.
+            guard isCurrent(generation) else { return }
 
             // Out of ways to move the display — so stop, rather than move the bookkeeping and leave
             // the screen behind.
@@ -1105,10 +1216,11 @@ extension SwitchTarget {
             // only in company with the half-switch above that it paints anything.
             //
             // Or rather, doing nothing *was* the only option — the branch now tries the app's own
-            // Window menu first, and only does nothing when the window has no entry there. The
-            // preview strip asks `canReach` the same question before it draws, and reads the same
-            // menu, so a thumbnail that would end here with nothing pressed is badged as
-            // unreachable rather than left looking clickable.
+            // Window menu first, and only does nothing when the window has no entry there. Nothing
+            // at all: the entry is looked up before the app is fronted, so a window the menu does
+            // not list leaves focus where it was. The preview strip asks `canReach` the same
+            // question before it draws, and reads the same menu, so a thumbnail that would end here
+            // with nothing pressed is badged as unreachable rather than left looking clickable.
             if let state = placement,
                 !canReach(
                     state: state,
@@ -1134,10 +1246,24 @@ extension SwitchTarget {
                 // its own Space afterwards. Fronting by the on-screen window is the app-pick path's
                 // own move, and it is what makes this safe: no activation, so nothing to gather.
                 //
-                // Read before the press, for the reason the reveal path reads it before the switch.
-                let changesBefore = spaceChanges.value
+                // The entry is found first and the app fronted only once there is one to press.
+                // Fronting is not free — it moves focus to that *other* window, routinely on the
+                // other display — and fronting first left a pick with no entry to press sitting on
+                // a window the user never picked, which is not the "nothing" promised above.
+                guard
+                    let item = menuSearched
+                        ? menuItem : windowMenuItem(window: id, pid: pid, title: title)
+                else { return }
                 frontOnScreenWindow(pid: pid, placement: placed)
-                guard pressWindowMenuItem(window: id, pid: pid, title: title) else { return }
+                // The fronting blocks for up to 300ms, long enough for a later pick to arrive.
+                guard isCurrent(generation) else { return }
+                // Read after the fronting and before the press. Before the press for the reason the
+                // reveal path reads it before the switch; after the fronting because moving focus
+                // to another display may itself post a Space change — the active Space is the
+                // focused display's, though that is reasoned rather than measured — and counting it
+                // would open the gate below on a transition the press never started.
+                let changesBefore = spaceChanges.value
+                guard pressWindowMenuItem(item, window: id) else { return }
                 // The same gate the private switch waits behind, and the same give-up: if the
                 // transition never comes, nothing touches the window, so a press macOS ignores
                 // costs a second and gathers nothing.
@@ -1215,7 +1341,9 @@ extension SwitchTarget {
         // Blocks `focusQueue` while it waits, which is why the whole budget is about a second rather
         // than the couple of seconds the rest of this file allows itself: a pick that lands during
         // the wait queues behind it, and a switcher that stutters under fast repeated picks would be
-        // its own bug.
+        // its own bug. It queues without waiting out the budget, though: a pick claims its
+        // generation when it is enqueued, so the check on every turn below sees it arrive and gives
+        // the queue up within one turn — see `focusGeneration`, and why that check used to be dead.
         //
         // Spent in two rounds rather than one long wait, and the round boundary is where the
         // activation is re-issued. A decline is far more often a request macOS dropped than macOS
@@ -1267,7 +1395,7 @@ extension SwitchTarget {
             activate(pid: pid)
             for _ in 0..<28 {
                 usleep(20_000)
-                guard generation == focusGeneration else { return .superseded }
+                guard isCurrent(generation) else { return .superseded }
                 let now = SpaceMover.currentSpace(ofDisplay: state.display)
                 guard now == state.windowSpace else {
                     // Travelled, but not to the Desktop we asked for — macOS picked a different one
@@ -1377,7 +1505,7 @@ extension SwitchTarget {
         }
         front(window: id, pid: pid)
         focusQueue.asyncAfter(deadline: .now() + 0.15) {
-            guard generation == focusGeneration else { return }
+            guard isCurrent(generation) else { return }
             if let element = axWindow(id: id, pid: pid) {
                 raise(element: element)
                 Log.general.notice(
@@ -1433,7 +1561,7 @@ extension SwitchTarget {
             return
         }
         focusQueue.asyncAfter(deadline: .now() + 0.1) {
-            guard generation == focusGeneration else { return }
+            guard isCurrent(generation) else { return }
             guard let element = axWindow(id: id, pid: pid) else {
                 restoreWhenListed(
                     window: id, pid: pid, attempts: attempts - 1, generation: generation)
@@ -1501,7 +1629,7 @@ extension SwitchTarget {
         generation: UInt64, actWhenUnreached: Bool, awaitingSpaceChange: UInt64?,
         notBefore: DispatchTime
     ) {
-        guard generation == focusGeneration else { return }  // superseded by a later pick
+        guard isCurrent(generation) else { return }  // superseded by a later pick
         guard attempts > 0 else {
             guard actWhenUnreached else {
                 // A Space switch really was issued and never landed, so the window is still on
@@ -1521,7 +1649,7 @@ extension SwitchTarget {
             return
         }
         focusQueue.asyncAfter(deadline: .now() + delay) {
-            guard generation == focusGeneration else { return }
+            guard isCurrent(generation) else { return }
             // Two gates. The notification says a transition began and landed; `notBefore` says
             // enough of the clock has run for it to be over. Neither is sufficient alone — see
             // `spaceSettleDelay` for what each one was measured to be worth.
@@ -1600,7 +1728,7 @@ extension SwitchTarget {
         focusQueue.asyncAfter(deadline: .now() + 0.5) {
             // A superseded pick's diagnostic is not worth a whole display/Space enumeration on the
             // serial queue the pick that replaced it is waiting to use.
-            guard generation == focusGeneration, let state = SpaceMover.spaceState(of: id) else {
+            guard isCurrent(generation), let state = SpaceMover.spaceState(of: id) else {
                 return
             }
             let stack = onScreenStack()
@@ -1625,7 +1753,7 @@ extension SwitchTarget {
         // surfaced whichever window the app itself thought was frontmost.
         guard !raised else { return }
         focusQueue.asyncAfter(deadline: .now() + 0.15) {
-            guard generation == focusGeneration else { return }
+            guard isCurrent(generation) else { return }
             raise(window: id, pid: pid)
         }
     }
@@ -1651,7 +1779,7 @@ extension SwitchTarget {
         window id: CGWindowID, pid: pid_t, generation: UInt64, notBefore: DispatchTime
     ) {
         focusQueue.asyncAfter(deadline: max(DispatchTime.now() + 0.2, notBefore)) {
-            guard generation == focusGeneration else { return }
+            guard isCurrent(generation) else { return }
             // `frontmostApplication` is AppKit state, so it is asked for on the main thread — and
             // the answer is carried back here rather than acted on there.
             //
@@ -1662,11 +1790,11 @@ extension SwitchTarget {
             // to prevent, at a fifth of a second. The gap is short, but it is widest under a fast
             // repeated ⌘-Tab, when the main thread is busy with the panel's own layout pass and a
             // new pick is most likely to be arriving. So the generation is re-checked after the
-            // round trip, back on `focusQueue` — the only thread it may be read from.
+            // round trip, back on `focusQueue` where the answer is acted on.
             DispatchQueue.main.async {
                 let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
                 focusQueue.async {
-                    guard generation == focusGeneration else { return }
+                    guard isCurrent(generation) else { return }
                     guard front == pid else {
                         Log.general.notice(
                             "focus window \(id, privacy: .public): front did not take, activating pid \(pid, privacy: .public)"
@@ -1861,13 +1989,10 @@ extension SwitchTarget {
         case .window(_, let element): return element
         case .tab(let ref): return ref.window
         case .app(let pid):
-            let app = AX.application(pid)
-            // The focused window is the one the user sees frontmost; fall back to main, then to the
-            // first AX window. Reading these attributes directly is also more reliable than filtering
-            // the whole `AXWindows` list, which comes back empty for some apps (Electron/Catalyst).
-            return AX.copyElement(app, kAXFocusedWindowAttribute as String)
-                ?? AX.copyElement(app, kAXMainWindowAttribute as String)
-                ?? AX.windows(of: app).first(where: AX.isWindow)
+            // The same focused-main-list walk the tiling chords use, palette filter included: an
+            // app-mode close is aimed at the window the user thinks of as the app's, not at a Find
+            // panel that happens to hold focus. See `AX.frontWindow`.
+            return AX.frontWindow(ofApplication: pid)
         case .launch, .fallback: return nil
         }
     }

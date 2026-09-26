@@ -47,6 +47,12 @@ struct Theme: Codable, Identifiable, Equatable {
 }
 
 extension Theme {
+    /// The ranges of the Appearance sliders for the three numbers a decoded theme is clamped to —
+    /// see `init(from:)`. Copies of the literals in `SettingsAppearance`, and must move with them.
+    static let blurRadiusRange: ClosedRange<Double> = 0...50
+    static let tileCornerRange: ClosedRange<Double> = 0...24
+    static let titleFontSizeRange: ClosedRange<Double> = 8...16
+
     private enum CodingKeys: String, CodingKey {
         case name, highlightHex, appearance, material, blurOverride, blurRadius, showNumbers
         case tileCorner, titleFontSize, titleFontName, fade, iconSize, iconSpacing, titleSpacing
@@ -64,6 +70,13 @@ extension Theme {
     /// at all — which is exactly what removing the old `opacity` field did to files written by
     /// newer builds. Defaults here mean an added or dropped field costs that one value, not the
     /// whole theme.
+    ///
+    /// Nor are its *values* under our control, so the three numbers nothing downstream clamps are
+    /// clamped here, to the ranges of the sliders that set them. A shared file carrying
+    /// `"titleFontSize": 400` drew a 403pt caption that grew the panel off the screen; the icon and
+    /// spacing sizes need no such treatment, because `Metrics.init` already clamps them. Clamped at
+    /// decode rather than at `apply` so the stored theme matches what it draws — otherwise
+    /// `sameLook` would compare the clamped panel against the unclamped file and never match.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         // `try?` on a `T?`-returning call gives `T??`: the outer nil is a decode failure (wrong
@@ -71,15 +84,21 @@ extension Theme {
         func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
             ((try? c.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
         }
+        func number(_ key: CodingKeys, _ fallback: Double, in range: ClosedRange<Double>)
+            -> Double
+        {
+            let raw = value(key, fallback)
+            return raw.isNaN ? fallback : min(max(raw, range.lowerBound), range.upperBound)
+        }
         name = value(.name, "")
         highlightHex = value(.highlightHex, BehaviorDefault.highlightHex)
         appearance = value(.appearance, PanelAppearance.system.rawValue)
         material = value(.material, PanelMaterial.hud.rawValue)
         blurOverride = value(.blurOverride, false)
-        blurRadius = value(.blurRadius, 20)
+        blurRadius = number(.blurRadius, 20, in: Self.blurRadiusRange)
         showNumbers = value(.showNumbers, true)
-        tileCorner = value(.tileCorner, 12)
-        titleFontSize = value(.titleFontSize, 10)
+        tileCorner = number(.tileCorner, 12, in: Self.tileCornerRange)
+        titleFontSize = number(.titleFontSize, 10, in: Self.titleFontSizeRange)
         titleFontName = value(.titleFontName, "")
         fade = value(.fade, false)
         iconSize = value(.iconSize, 64)
@@ -331,7 +350,10 @@ final class ThemeStore: ObservableObject {
 
     private func persist() {
         do {
-            try JSONEncoder().encode(custom).write(to: fileURL)
+            // Atomic: written aside and renamed into place. A crash or a full disk part-way through
+            // an in-place write left a truncated file, which `load()` then could not read and moved
+            // aside — every saved theme gone from the picker at the next launch.
+            try JSONEncoder().encode(custom).write(to: fileURL, options: .atomic)
         } catch {
             // Logged rather than swallowed: a theme that fails to save is gone at the next launch,
             // and this was the one write in the file with no record of that happening.

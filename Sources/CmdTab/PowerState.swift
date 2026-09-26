@@ -39,8 +39,10 @@ enum PowerState {
     /// AC — the conservative direction is the one that keeps the polls at their normal rate, since a
     /// slower poll is a feature degrading quietly and this should not happen by accident.
     static var isOnBattery: Bool {
+        // Unretained for the type: it is a Get function, so the string is not ours to release. It
+        // happens to be a constant today, which is all that made the over-release harmless.
         guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-            let source = IOPSGetProvidingPowerSourceType(blob)?.takeRetainedValue() as String?
+            let source = IOPSGetProvidingPowerSourceType(blob)?.takeUnretainedValue() as String?
         else { return false }
         return source == kIOPSBatteryPowerValue
     }

@@ -96,6 +96,9 @@ final class TitleRulesStore: ObservableObject {
     static let defaultsKeys = [defaultsKey]
 
     @Published private(set) var rules: [TitleRule] = []
+    /// Stored entries this build could not read, kept exactly as they were and written back after
+    /// the readable ones — see `decode`.
+    private var unreadable: [Any] = []
     /// Regex compiled once per rule, rebuilt whenever the list changes. Keyed by rule id so a UI
     /// row can ask whether its own pattern is valid without recompiling anything.
     private var compiledByID: [UUID: NSRegularExpression?] = [:]
@@ -105,7 +108,7 @@ final class TitleRulesStore: ObservableObject {
     var onChange: (([CompiledTitleRule]) -> Void)?
 
     private init() {
-        rules = Self.load()
+        (rules, unreadable) = Self.load()
         recompile()
     }
 
@@ -140,7 +143,7 @@ final class TitleRulesStore: ObservableObject {
     }
 
     func reload() {
-        rules = Self.load()
+        (rules, unreadable) = Self.load()
         recompile()
         onChange?(compiled)
     }
@@ -157,22 +160,58 @@ final class TitleRulesStore: ObservableObject {
     /// `AppRule`, which is deliberately sparse and keyed by bundle id, a title rule has no natural
     /// key of its own and the order is part of what the user set up (the settings list is exactly
     /// this array, top to bottom).
-    private static func load() -> [TitleRule] {
-        guard let raw = UserDefaults.standard.array(forKey: defaultsKey) as? [[String: Any]]
-        else { return [] }
-        return raw.compactMap { fields in
-            guard let pattern = fields["pattern"] as? String,
+    private static func load() -> (rules: [TitleRule], unreadable: [Any]) {
+        let raw = UserDefaults.standard.object(forKey: defaultsKey)
+        let decoded = decode(raw)
+        if raw != nil, !(raw is [Any]) {
+            Log.general.error("title rules: the stored value is not a list; no rules loaded")
+        } else if !decoded.unreadable.isEmpty {
+            Log.general.error(
+                """
+                title rules: \(decoded.unreadable.count, privacy: .public) entries could not be \
+                read and are kept as they are
+                """)
+        }
+        return decoded
+    }
+
+    /// The stored list, an entry at a time.
+    ///
+    /// It used to be cast whole — `as? [[String: Any]]` — and that cast fails outright if any one
+    /// element is not a dictionary. A stray string in a hand-edited config therefore loaded as *no
+    /// rules at all*, with nothing logged, and the next rule added in Settings persisted that empty
+    /// list over every rule that had been there.
+    ///
+    /// What cannot be read is returned rather than dropped: an action a newer build added, or a
+    /// hand edit this one cannot parse. `persist` writes it back behind the readable rules, so an
+    /// older build sharing a config with a newer one no longer erases the newer one's rules the
+    /// first time anything here changes. It moves to the end of the list, which is harmless —
+    /// matching is a union, so order decides only how the settings pane lists them.
+    nonisolated static func decode(_ raw: Any?) -> (rules: [TitleRule], unreadable: [Any]) {
+        guard let entries = raw as? [Any] else { return ([], []) }
+        var rules: [TitleRule] = []
+        var unreadable: [Any] = []
+        for entry in entries {
+            guard let fields = entry as? [String: Any],
+                let pattern = fields["pattern"] as? String,
                 let actionRaw = fields["action"] as? String,
                 let action = TitleRuleAction(rawValue: actionRaw)
-            else { return nil }
+            else {
+                unreadable.append(entry)
+                continue
+            }
             let id = (fields["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
-            return TitleRule(id: id, bundleID: fields["bundleID"] as? String, pattern: pattern, action: action)
+            rules.append(
+                TitleRule(
+                    id: id, bundleID: fields["bundleID"] as? String, pattern: pattern,
+                    action: action))
         }
+        return (rules, unreadable)
     }
 
     private func persist() {
         recompile()
-        let raw: [[String: Any]] = rules.map { rule in
+        var raw: [Any] = rules.map { rule -> [String: Any] in
             var fields: [String: Any] = [
                 "id": rule.id.uuidString,
                 "pattern": rule.pattern,
@@ -181,6 +220,7 @@ final class TitleRulesStore: ObservableObject {
             if let bundleID = rule.bundleID { fields["bundleID"] = bundleID }
             return fields
         }
+        raw += unreadable
         UserDefaults.standard.set(raw, forKey: Self.defaultsKey)
         onChange?(compiled)
     }

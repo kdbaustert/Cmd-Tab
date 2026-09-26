@@ -43,10 +43,23 @@ final class DesktopAssignments {
     /// the same rule.
     var appRules: [String: AppRule] = [:]
 
+    /// Per-window rules, pushed by the controller alongside `appRules` and unioned with them the
+    /// way every other store does: a `.neverTile` title rule protects the one window it names from
+    /// being moved, as the app rule protects all of them. Matched against the window the move would
+    /// actually take — the app's front one, see `plan`.
+    var titleRules: [CompiledTitleRule] = []
+
     private var observer: NSObjectProtocol?
     private var settle: DispatchWorkItem?
     /// The desk the last notification was judged against. Nil while stopped.
     private var desk: String?
+
+    /// Where `plan` runs. Its per-app front-window resolution is Accessibility IPC to other apps,
+    /// and the main thread — where the notification, the settle timer and this class all live — is
+    /// the thread the event tap is serviced from. Right after a display change is also exactly when
+    /// apps are busiest re-laying out their windows and slowest to answer.
+    private static let queue = DispatchQueue(
+        label: "com.cmdtab.desktopassignments", qos: .utility)
 
     /// How long to wait after the desk changes before moving anything.
     ///
@@ -149,10 +162,63 @@ final class DesktopAssignments {
 
     // MARK: - The restore
 
+    /// One running app that has an assignment, as read on the main thread for `plan` to take off it.
+    private struct RunningApp: Sendable {
+        let pid: pid_t
+        let bundleID: String
+        let name: String
+    }
+
+    /// One move `plan` settled on.
+    private typealias Move = (pid: pid_t, space: UInt64, name: String)
+
+    /// Reads what only the main thread may, hands the rest to `queue`, and starts the moves back
+    /// here. `NSRunningApplication` is read here and nowhere else; everything that asks another app
+    /// a question is in `plan`.
+    ///
+    /// The desk is checked again on the way back. Planning takes as long as the slowest app takes
+    /// to answer, and a desk that changed again meanwhile — or a feature switched off — has a
+    /// restore of its own coming, or none: this one's moves were worked out for a desk that is
+    /// gone.
     private func restore() {
         settle = nil
+        guard let planned = desk else { return }
+        // A preferences read, cheap enough for here, and the reason most desk changes end at once.
         let bindings = Self.bindings()
         guard !bindings.isEmpty else { return }
+        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> RunningApp? in
+            guard let bundleID = app.bundleIdentifier, bindings[bundleID.lowercased()] != nil
+            else { return nil }
+            return RunningApp(
+                pid: app.processIdentifier, bundleID: bundleID,
+                name: app.localizedName ?? bundleID)
+        }
+        guard !apps.isEmpty else { return }
+        let appRules = self.appRules
+        let titleRules = self.titleRules
+        // `[self]`, strong, and said out loud: the hop back needs `self`, so the planning block
+        // holds it whatever this says — a `[weak self]` on the inner block alone is a warning that
+        // it does not do what it reads as. Harmless: the controller owns this for the life of the
+        // process, and the hold ends when planning does.
+        Self.queue.async { [self] in
+            let work = Self.plan(
+                apps: apps, bindings: bindings, appRules: appRules, titleRules: titleRules)
+            guard !work.isEmpty else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard self.desk == planned else { return }
+                    self.start(work)
+                }
+            }
+        }
+    }
+
+    /// The moves this desk needs, worked out on `queue`: every assigned app whose front window is
+    /// off the Desktop it is assigned to, and not protected by a rule.
+    private nonisolated static func plan(
+        apps: [RunningApp], bindings: [String: String], appRules: [String: AppRule],
+        titleRules: [CompiledTitleRule]
+    ) -> [Move] {
         // UUID to the id the window server is using for that Space *now*. An assignment naming a
         // Desktop that no longer exists — the everyday case being one on the display that has just
         // been unplugged, whose Spaces go with it — resolves to nothing and is skipped. There is no
@@ -160,35 +226,47 @@ final class DesktopAssignments {
         // inventing a nearby one would be this feature putting windows somewhere nobody asked for.
         let live = SpaceMover.spaceIDsByUUID()
         let placed = SpaceMover.windowSpaces()
-        guard !placed.isEmpty else { return }
-        let occupied = Self.spacesByPID(in: placed)
+        guard !placed.isEmpty else { return [] }
+        let occupied = spacesByPID(in: placed)
 
-        var work: [(pid: pid_t, space: UInt64, name: String)] = []
-        for app in NSWorkspace.shared.runningApplications {
-            guard let bundleID = app.bundleIdentifier else { continue }
-            guard let uuid = bindings[bundleID.lowercased()], let target = live[uuid] else {
+        var work: [Move] = []
+        for app in apps {
+            guard let uuid = bindings[app.bundleID.lowercased()], let target = live[uuid] else {
                 continue
             }
-            if appRules[bundleID]?.neverTile == true { continue }
-            let pid = app.processIdentifier
+            if appRules[app.bundleID]?.neverTile == true { continue }
             // Two filters, the cheap one first. An app with every window on its Desktop needs
             // nothing, and the one window-server reading already in hand says so for all of them
             // at once.
-            guard occupied[pid]?.contains(where: { $0 != target }) == true else { continue }
+            guard occupied[app.pid]?.contains(where: { $0 != target }) == true else { continue }
             // Then the window that would actually move. `DesktopMover` takes the app's *front*
             // window and nothing else, so that window's Desktop is the one that decides — not any
             // window's. Tested per app, this queued a move for an app whose front window was
             // already where it belonged, and the mover then refused it on the grab and logged it
             // as covered. Resolving the front window walks that app's window list, which is why
             // it is paid only for apps the first filter let through.
-            guard let front = AX.frontWindow(ofApplication: pid),
+            guard let front = AX.frontWindow(ofApplication: app.pid),
                 let window = TargetProvider.windowID(front)
-                    ?? TargetProvider.windowID(matching: front, pid: pid),
+                    ?? TargetProvider.windowID(matching: front, pid: app.pid),
                 let space = placed[window]?.windowSpace, space != target
             else { continue }
-            work.append((pid, target, app.localizedName ?? bundleID))
+            // The title rule is about that same window, so it is asked of that window — and only
+            // when there is a rule to ask, since the title is one more round trip.
+            if !titleRules.isEmpty,
+                CompiledTitleRule.matches(
+                    titleRules, bundleID: app.bundleID,
+                    title: AX.copyString(front, kAXTitleAttribute) ?? "", action: .neverTile)
+            {
+                continue
+            }
+            work.append((app.pid, target, app.name))
         }
-        guard !work.isEmpty else { return }
+        return work
+    }
+
+    /// Starts a planned restore, or declines it when there is more to do than one desk change
+    /// should.
+    private func start(_ work: [Move]) {
         if work.count > Self.limit {
             Log.general.notice(
                 """
@@ -213,7 +291,7 @@ final class DesktopAssignments {
     ///
     /// Every app in one walk rather than a walk per app: the caller has a dozen assignments to test
     /// and this list is the whole machine's windows each time it is read.
-    private static func spacesByPID(in placed: [CGWindowID: SpaceMover.SpaceState])
+    private nonisolated static func spacesByPID(in placed: [CGWindowID: SpaceMover.SpaceState])
         -> [pid_t: [UInt64]]
     {
         guard
@@ -240,11 +318,16 @@ final class DesktopAssignments {
     /// all at once would perform the first and silently drop the rest. Chained on the completion
     /// instead, so each starts once the last has finished and Mission Control is gone.
     ///
+    /// A move the mover refuses — the user's own Desktop-move chord got there first — still calls
+    /// back, after the move that refused it, so the chain carries on past it. The refused window is
+    /// not retried: it stays where the unplug left it until the next desk change, with the refusal
+    /// in the log beside this line's "moving".
+    ///
     /// `follow: false` throughout. Following would leave the user looking at whichever Desktop the
     /// last window happened to land on, which after an unplug is a worse place to be left than the
     /// one they were on — and this runs unattended, where a Desktop switch nobody asked for is
     /// startling rather than helpful.
-    private func move(_ work: [(pid: pid_t, space: UInt64, name: String)]) {
+    private func move(_ work: [Move]) {
         guard let next = work.first else { return }
         // `let`, and the tail taken by value rather than mutated in place: the completion below is
         // an escaping `@Sendable` closure, and capturing a `var` the enclosing scope could still

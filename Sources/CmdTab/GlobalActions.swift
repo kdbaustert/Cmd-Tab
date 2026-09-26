@@ -170,7 +170,7 @@ final class GlobalActionsStore: ObservableObject {
             }
             let candidate = Hotkey(keyCode: Int(event.keyCode), modifierRaw: mods.rawValue)
             self.stopRecording()
-            DispatchQueue.main.async {
+            MainRunLoop.perform {
                 guard validate(candidate) else { return }
                 assign(candidate)
             }
@@ -294,31 +294,41 @@ enum GlobalActions {
             }
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+            // The completion is the only place a failed launch is reported — a damaged bundle, one
+            // Gatekeeper refuses — and without it the chord simply did nothing.
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+                guard let error else { return }
+                Log.general.error(
+                    """
+                    direct activation: could not open \(bundleID, privacy: .public): \
+                    \(error.localizedDescription, privacy: .public)
+                    """)
+            }
         }
     }
 
-    /// Bundle ids hidden by the last "hide all", so "show all" restores exactly those.
+    /// Bundle ids hidden by "hide all" since the last "show all", so "show all" restores exactly
+    /// those.
     ///
     /// Without it, showing all would also unhide apps the user had hidden themselves, quietly
     /// undoing a decision this feature never made.
-    @MainActor private static var hiddenByUs: [String] = []
+    @MainActor private static var hiddenByUs: Set<String> = []
 
     static func perform(_ action: AllWindowsAction) {
         DispatchQueue.main.async {
             switch action {
             case .hide:
-                var hidden: [String] = []
+                // Added to, never replaced. A second press used to overwrite the record with what
+                // *it* hid — nothing at all when everything was already hidden, which sent the next
+                // "show all" to the unhide-everything fallback, and only the one app brought back
+                // in between when the user had unhidden it, which left every other app the first
+                // press hid still hidden after "show all". Both presses' apps are ours to restore.
                 for app in NSWorkspace.shared.runningApplications {
                     guard app.activationPolicy == .regular, !app.isHidden, !app.isTerminated,
                         let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier
                     else { continue }
-                    if app.hide() { hidden.append(id) }
+                    if app.hide() { hiddenByUs.insert(id) }
                 }
-                // Only when something was hidden. A second press finds everything already hidden
-                // and used to overwrite the record with nothing, so the next "show all" took the
-                // unhide-everything fallback — including the apps the user had hidden themselves.
-                if !hidden.isEmpty { hiddenByUs = hidden }
             case .show:
                 // Restore what we hid; if that list is empty — a fresh launch, say — fall back to
                 // unhiding everything, which is what someone pressing "show all" plainly means.

@@ -15,13 +15,17 @@ import CoreGraphics
 ///   existing would be very hard to diagnose.
 /// - **The main trigger beats the same-app trigger beats scoped triggers.** Binding two of them to
 ///   one chord is allowed; the one that wins is defined rather than incidental.
-/// - **Openers are keydown-only; global actions match both edges.** Swallowing only the keydown
-///   left an unpaired key-up heading for the frontmost app, which anything tracking raw key state
-///   from up/down pairs — virtualisers, VNC and RDP clients, remote terminals — reads as a release
-///   with no press.
+/// - **Key-downs only.** A key-up is not a decision: it goes wherever its own key-down went, which
+///   `KeyPairing` answers. Deciding the two edges separately is what let them disagree, and an
+///   unpaired edge is read by anything tracking raw key state from up/down pairs — virtualisers,
+///   VNC and RDP clients, remote terminals — as a release with no press, or a press that never
+///   ends.
 /// - **Everything below the openers is inert while Cmd-Tab is frontmost.** Their recorders live in
 ///   the settings window, and a bound chord matched here would be swallowed before the recorder's
 ///   own monitor could see it, so no assigned combination could ever be re-recorded.
+/// - **The openers stand down only while a recorder is actually listening.** Opening the switcher
+///   from the settings window is long-standing, so they are not inert merely because Settings is in
+///   front — but a trigger recorder asked for the chord the *other* trigger holds never saw it.
 /// - **Key repeat is swallowed but not acted on.** Cycling ½ → ⅔ → ⅓ under autorepeat would strobe
 ///   a window through every width in a fraction of a second.
 ///
@@ -29,19 +33,16 @@ import CoreGraphics
 /// binding table in a line and ask what a keystroke does.
 enum TapRouting {
 
-    /// One keystroke, reduced to what this decision actually depends on.
+    /// One key-down, reduced to what this decision actually depends on.
     struct Event: Equatable {
-        var type: CGEventType
         var keyCode: Int
         var flags: CGEventFlags
         var isAutorepeat: Bool
 
-        var isKeyDown: Bool { type == .keyDown }
         /// ⇧ on a trigger means "go the other way round the list".
         var backwards: Bool { flags.contains(.maskShift) }
 
-        init(type: CGEventType, keyCode: Int, flags: CGEventFlags, isAutorepeat: Bool = false) {
-            self.type = type
+        init(keyCode: Int, flags: CGEventFlags, isAutorepeat: Bool = false) {
             self.keyCode = keyCode
             self.flags = flags
             self.isAutorepeat = isAutorepeat
@@ -82,8 +83,8 @@ enum TapRouting {
     enum Decision: Equatable {
         /// Not ours. Passes through untouched.
         case pass
-        /// Ours, but nothing to do on this edge — a key-up, or a repeat under a binding that has
-        /// already fired. Swallowed so the other half of the pair does not escape.
+        /// Ours, but nothing to do — a repeat under a binding that has already fired. Swallowed, so
+        /// the app in front does not receive a repeat of a press it never saw.
         case consume
         case open(backwards: Bool)
         case openSameApp(backwards: Bool)
@@ -110,38 +111,44 @@ enum TapRouting {
     ///
     /// - Parameter isAppActive: whether Cmd-Tab itself is frontmost, which is what makes everything
     ///   below the openers inert.
-    static func idle(_ event: Event, bindings: Bindings, isAppActive: Bool) -> Decision {
-        // Openers first, and only on a fresh press. Not guarded by `isAppActive`: they are recorded
-        // by a different control from everything below, and opening the switcher from the settings
-        // window is long-standing behaviour.
-        if event.isKeyDown {
+    /// - Parameter isRecording: whether one of the settings window's shortcut recorders is armed.
+    ///   Only acted on while `isAppActive`: a recorder hears keys through a local monitor, so it is
+    ///   listening only while this app is in front, and one left armed behind another app must not
+    ///   take ⌘-Tab away from that app.
+    static func idle(
+        _ event: Event, bindings: Bindings, isAppActive: Bool, isRecording: Bool = false
+    ) -> Decision {
+        // Openers first. Not guarded by `isAppActive` alone: they are recorded by a different
+        // control from everything below, and opening the switcher from the settings window is
+        // long-standing behaviour. They stand down while a recorder is listening, though, or the
+        // two trigger recorders could never be handed each other's chord — the main trigger would
+        // swallow it before the same-app recorder's monitor saw it, and the other way round.
+        if !(isAppActive && isRecording) {
             if bindings.openerMatches(event.keyCode, event.flags) {
                 return .open(backwards: event.backwards)
             }
             if bindings.sameAppMatches(event.keyCode, event.flags) {
                 return .openSameApp(backwards: event.backwards)
             }
-            // Scoped triggers are inert while we are frontmost, unlike the two built-ins: they are
-            // recorded in the settings window, so matching one here would swallow it before its own
-            // recorder could see it.
-            if !isAppActive, let match = bindings.scopedMatch(event.keyCode, event.flags) {
-                return .openScoped(
-                    scope: match.scope, held: match.held, backwards: event.backwards)
-            }
+        }
+        // Scoped triggers are inert whenever we are frontmost, unlike the two built-ins: they are
+        // recorded in the settings window, so matching one here would swallow it before its own
+        // recorder could see it.
+        if !isAppActive, let match = bindings.scopedMatch(event.keyCode, event.flags) {
+            return .openScoped(scope: match.scope, held: match.held, backwards: event.backwards)
         }
 
         guard !isAppActive else {
             // Reported rather than silently dropped: "the settings window has focus so your chord is
             // deliberately inert" is the commonest confusion this app produces.
-            if event.isKeyDown, let arrangement = bindings.tilingMatch(event.keyCode, event.flags) {
+            if let arrangement = bindings.tilingMatch(event.keyCode, event.flags) {
                 return .tilingInert(arrangement)
             }
             return .pass
         }
 
-        // Both edges match from here down, so the key-up is consumed alongside the press. `acts`
-        // separates "this binding claims the event" from "this binding fires now".
-        let acts = event.isKeyDown && !event.isAutorepeat
+        // `acts` separates "this binding claims the event" from "this binding fires now".
+        let acts = !event.isAutorepeat
 
         if let bundleID = bindings.activationMatch(event.keyCode, event.flags) {
             return acts ? .activate(bundleID: bundleID) : .consume
@@ -153,5 +160,47 @@ enum TapRouting {
             return acts ? .tile(arrangement) : .consume
         }
         return .pass
+    }
+}
+
+/// Keeps a key's two edges going to the same place: a key-up is withheld exactly when the app in
+/// front never saw that key go down.
+///
+/// The tap used to decide each key-up from the switcher's state *when the key came up*, and that
+/// state has usually moved on since the press. Every way the two disagreed was a real gesture:
+///
+/// - ⌘ let go a moment before Tab — the ordinary end of a ⌘-Tab — commits first, so Tab's key-up
+///   met an idle switcher and went to the app with no press before it.
+/// - The same-app and scoped triggers swallow their press and then wait on a window list, and a
+///   quick tap's key-up arrives inside that wait, which routed as idle and escaped the same way.
+/// - The other direction, which is worse: a key already held when the panel opened (or pressed
+///   during the show delay and let through) had its key-up swallowed, so the app — or the remote
+///   machine behind a VNC or RDP client — was left with a key that never came up.
+///
+/// Remembering which presses were withheld answers all three without knowing any of them.
+///
+/// Owned by the tap path itself rather than mirrored in `TapState`: it is written and read only by
+/// the handler, so it moves with the tap when the tap moves, and nothing on main ever needs it.
+struct KeyPairing {
+    /// Keys whose every key-down so far this press was withheld from the app in front.
+    private var withheld: Set<Int> = []
+
+    /// Records what happened to a key-down.
+    ///
+    /// Any key-down that reaches the app counts as the press having reached it, autorepeat
+    /// included: a remote client presses the key on its first repeat, so from then on its key-up
+    /// has to follow. A *withheld* repeat changes nothing — only a fresh press can start a
+    /// withheld one.
+    mutating func keyDown(_ code: Int, isAutorepeat: Bool, swallowed: Bool) {
+        if !swallowed {
+            withheld.remove(code)
+        } else if !isAutorepeat {
+            withheld.insert(code)
+        }
+    }
+
+    /// Whether to withhold this key-up, which is whether its key-down was withheld.
+    mutating func keyUp(_ code: Int) -> Bool {
+        withheld.remove(code) != nil
     }
 }

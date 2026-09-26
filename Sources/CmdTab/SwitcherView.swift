@@ -4,8 +4,15 @@ import SwiftUI
 extension CGFloat {
     /// `Swift.` qualified: inside an extension on CGFloat, bare `min`/`max` resolve to the type's
     /// own static members rather than the global functions.
+    ///
+    /// NaN takes the lower bound. `min` and `max` both hand NaN straight back — every comparison
+    /// against it is false — so without the guard a NaN walked through the clamp untouched, and
+    /// a `<real>nan</real>` in a hand-edited defaults plist (which `PropertyListSerialization`
+    /// reads as NaN) reached `DisplayLayout.columns` as a tile size and trapped in `Int(_:)` on
+    /// every ⌘-Tab.
     func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
-        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+        guard !isNaN else { return range.lowerBound }
+        return Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
 
@@ -47,7 +54,8 @@ struct Metrics: Equatable {
     let titleSpacing: CGFloat
 
     init(iconSize: CGFloat, iconSpacing: CGFloat, titleSpacing: CGFloat) {
-        // Values can arrive from a hand-edited defaults plist, so clamp rather than trust.
+        // Values can arrive from a hand-edited defaults plist, so clamp rather than trust — NaN
+        // included; see `clamped(to:)`.
         self.iconSize = iconSize.clamped(to: Self.iconSizeRange)
         self.iconSpacing = iconSpacing.clamped(to: Self.iconSpacingRange)
         self.titleSpacing = titleSpacing.clamped(to: Self.titleSpacingRange)

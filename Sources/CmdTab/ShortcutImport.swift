@@ -167,16 +167,33 @@ enum ShortcutImport {
         "toggleFullscreenWindowShortcut", "searchShortcut", "cancelShortcut",
     ]
 
+    /// AltTab splits its trigger in two: `holdShortcut` is the modifier held for the session ("⌥"
+    /// by default) and `nextWindowShortcut` the key pressed under it ("⇥"). A hold string with no
+    /// key of its own is therefore joined to that key, where it used to be reported as unreadable —
+    /// which, if AltTab's defaults are what its UI shows, meant a stock AltTab setup could never
+    /// import its trigger. Like the rest of this reader, not confirmed against a live install. A
+    /// hold string that does carry a key is read on its own, as it always was.
+    ///
     /// - Parameter plist: a domain dump shaped like `defaults read com.lwouis.alt-tab-macos`. Each
     ///   shortcut key holds a dictionary carrying a human-readable string field (e.g. `"⌥⇥"`)
     ///   alongside an `NSKeyedArchiver` blob this importer does not decode — see the file header.
     static func altTabBindings(from plist: [String: Any]) -> ImportResult {
         var result = ImportResult()
+        var usedNextWindow = false
 
         if let value = plist["holdShortcut"] {
             if let glyphs = readableString(from: value) {
                 if let hotkey = parseGlyphChord(glyphs) {
                     result.trigger = hotkey
+                } else if let hold = parseModifiers(glyphs), !hold.isEmpty,
+                    let nextValue = plist["nextWindowShortcut"],
+                    let nextGlyphs = readableString(from: nextValue),
+                    let next = parseGlyphChord(nextGlyphs)
+                {
+                    result.trigger = Hotkey(
+                        keyCode: next.keyCode,
+                        modifierRaw: Hotkey.flags(from: hold).rawValue | next.modifierRaw)
+                    usedNextWindow = true
                 } else {
                     result.unparsed.append("holdShortcut (\(glyphs))")
                 }
@@ -186,8 +203,9 @@ enum ShortcutImport {
         }
 
         // Already covered by Cmd-Tab's own model — worth naming rather than importing silently
-        // nowhere.
-        for name in ["nextWindowShortcut", "previousWindowShortcut"] where plist[name] != nil {
+        // nowhere. The next-window key is the exception once it has become the trigger's key.
+        for name in ["nextWindowShortcut", "previousWindowShortcut"]
+        where plist[name] != nil && !(name == "nextWindowShortcut" && usedNextWindow) {
             result.skipped.append(name)
         }
         for name in altTabUnmappedShortcuts.sorted() where plist[name] != nil {
@@ -234,21 +252,32 @@ enum ShortcutImport {
         var flags: NSEvent.ModifierFlags = []
         var rest = Substring(string)
         while let first = rest.first {
-            switch first {
-            case "\u{2318}": flags.insert(.command)
-            case "\u{2325}": flags.insert(.option)
-            case "\u{2303}": flags.insert(.control)
-            case "\u{21E7}": flags.insert(.shift)
-            default:
+            guard let modifier = modifierGlyphs[first] else {
                 let keyGlyph = String(arrowAliases[first] ?? first)
                 guard rest.dropFirst().isEmpty, let code = glyphToKeyCode[keyGlyph] else { return nil }
                 let cgFlags = Hotkey.flags(from: flags)
                 return Hotkey(keyCode: code, modifierRaw: cgFlags.rawValue)
             }
+            flags.insert(modifier)
             rest = rest.dropFirst()
         }
         return nil  // modifiers only, no key glyph at all
     }
+
+    /// A string of modifier glyphs and nothing else, or nil if anything in it is not one.
+    private static func parseModifiers(_ string: String) -> NSEvent.ModifierFlags? {
+        var flags: NSEvent.ModifierFlags = []
+        for glyph in string {
+            guard let modifier = modifierGlyphs[glyph] else { return nil }
+            flags.insert(modifier)
+        }
+        return flags
+    }
+
+    /// ⌘ ⌥ ⌃ ⇧, shared by both parsers above so they cannot disagree about what a modifier is.
+    private static let modifierGlyphs: [Character: NSEvent.ModifierFlags] = [
+        "\u{2318}": .command, "\u{2325}": .option, "\u{2303}": .control, "\u{21E7}": .shift,
+    ]
 
     // MARK: - Applying
 
@@ -276,28 +305,79 @@ enum ShortcutImport {
     ///
     /// Pure and MainActor-free but for the type it lives on — `activeChords` is a plain snapshot
     /// (`ShortcutAudit.entries()`'s chords, shift-blinded), not a live store, so this is testable
-    /// with a fabricated set standing in for "here is what Cmd-Tab already has bound".
+    /// with a fabricated set standing in for "here is what Cmd-Tab already has bound". `current`
+    /// and `shadows` are snapshots in the same way, and default to "nothing" for the same reason.
     struct Plan {
         var toApply: [ProposedChange] = []
         var droppedForCollision: [ProposedChange] = []
+        /// A trigger that would hold a modifier window actions are built on — see `plan`.
+        var droppedForShadowing: [(change: ProposedChange, actions: [String])] = []
+        /// Already bound to exactly this chord. Neither applied nor a collision.
+        var alreadySet: [ProposedChange] = []
         var skipped: [String] = []
         var unparsed: [String] = []
     }
 
+    /// - Parameters:
+    ///   - current: each target's present chord, keyed by `ProposedChange.id` — which spells
+    ///     targets the way `ShortcutAudit.entries()` spells its ids. A chord a target already has
+    ///     is claimed *by that target*, and reporting it as "bound to something else" named a
+    ///     collision with itself.
+    ///   - shadows: the window actions a trigger would silence — `actionsShadowed(by:)`, as the
+    ///     trigger recorder asks it. Importing a trigger skipped that question, so AltTab's ⌥⇥ came
+    ///     in and every ⌥ action typed into the filter instead of running, with no alert — the
+    ///     exact failure the recorder's alert exists to prevent. Refused here rather than rebound:
+    ///     the recorder asks before moving the actions, and this has no one to ask mid-plan.
     nonisolated static func plan(
-        from result: ImportResult, activeChords: Set<ShortcutEntry.Chord>
+        from result: ImportResult, activeChords: Set<ShortcutEntry.Chord>,
+        current: [String: ShortcutEntry.Chord] = [:],
+        shadows: (Hotkey) -> [String] = { _ in [] }
     ) -> Plan {
         var plan = Plan()
         plan.skipped = result.skipped
         plan.unparsed = result.unparsed
+        // What this import has already accepted, so two imported bindings on one chord — or an
+        // arrangement on the imported trigger — are caught as surely as a clash with something
+        // already bound. Each entry remembers whether it ignores Shift, which is the rule
+        // `ShortcutAudit.collisions` compares by: an opener claims every Shift variant, an exact
+        // binding only its own.
+        var accepted: [(chord: ShortcutEntry.Chord, ignoresShift: Bool)] = []
 
         func consider(_ change: ProposedChange) {
-            let chord = ShortcutEntry.Chord(keyCode: change.hotkey.keyCode, modifiers: change.hotkey.modifiers)
-            if activeChords.contains(chord.ignoringShift) {
-                plan.droppedForCollision.append(change)
-            } else {
-                plan.toApply.append(change)
+            // A chord with no ⌘, ⌥ or ⌃ is refused by every matcher; importing one would look set
+            // and never fire.
+            guard change.hotkey.isUsableGlobally else {
+                plan.unparsed.append(
+                    "\(change.label) (\(change.hotkey.displayString) has no ⌘, ⌥ or ⌃)")
+                return
             }
+            let chord = ShortcutEntry.Chord(
+                keyCode: change.hotkey.keyCode, modifiers: change.hotkey.modifiers)
+            let ignoresShift: Bool
+            if case .trigger = change.target { ignoresShift = true } else { ignoresShift = false }
+            func same(_ a: ShortcutEntry.Chord, _ b: ShortcutEntry.Chord, blind: Bool) -> Bool {
+                blind ? a.ignoringShift == b.ignoringShift : a == b
+            }
+            if let existing = current[change.id], same(existing, chord, blind: ignoresShift) {
+                plan.alreadySet.append(change)
+                return
+            }
+            let clashesWithImport = accepted.contains { other in
+                same(other.chord, chord, blind: other.ignoresShift || ignoresShift)
+            }
+            if activeChords.contains(chord.ignoringShift) || clashesWithImport {
+                plan.droppedForCollision.append(change)
+                return
+            }
+            if case .trigger = change.target {
+                let silenced = shadows(change.hotkey)
+                guard silenced.isEmpty else {
+                    plan.droppedForShadowing.append((change, silenced))
+                    return
+                }
+            }
+            accepted.append((chord, ignoresShift))
+            plan.toApply.append(change)
         }
 
         if let trigger = result.trigger {
@@ -349,12 +429,24 @@ enum ShortcutImport {
             merged.unparsed += result.unparsed.map { "\($0) (\(source.title))" }
         }
 
-        let activeChords = Set(
-            ShortcutAudit.entries().filter(\.isActive).compactMap { $0.chord?.ignoringShift })
-        let plan = plan(from: merged, activeChords: activeChords)
+        let entries = ShortcutAudit.entries()
+        let activeChords = Set(entries.filter(\.isActive).compactMap { $0.chord?.ignoringShift })
+        let current = Dictionary(
+            entries.compactMap { entry in entry.chord.map { (entry.id, $0) } },
+            uniquingKeysWith: { first, _ in first })
+        // Asked up front for the one trigger this import can propose — `plan` is pure and cannot
+        // reach the store — and asked the way `HotkeyRecorder.apply` asks it.
+        let actions = SwitcherShortcutsStore.shared
+        let silenced = merged.trigger.map { trigger in
+            actions.isEnabled ? actions.shortcuts.actionsShadowed(by: trigger).map(\.title) : []
+        } ?? []
+        let plan = plan(
+            from: merged, activeChords: activeChords, current: current,
+            shadows: { _ in silenced })
 
-        guard !plan.toApply.isEmpty || !plan.droppedForCollision.isEmpty || !plan.skipped.isEmpty
-            || !plan.unparsed.isEmpty
+        guard !plan.toApply.isEmpty || !plan.droppedForCollision.isEmpty
+            || !plan.droppedForShadowing.isEmpty || !plan.alreadySet.isEmpty
+            || !plan.skipped.isEmpty || !plan.unparsed.isEmpty
         else {
             let alert = NSAlert()
             alert.messageText = "Nothing to import"
@@ -390,6 +482,21 @@ enum ShortcutImport {
             sections.append(
                 "Not imported — already bound in Cmd-Tab to something else:\n"
                     + plan.droppedForCollision.map { "• \($0.label) — \($0.hotkey.displayString)" }
+                        .joined(separator: "\n"))
+        }
+        if !plan.droppedForShadowing.isEmpty {
+            sections.append(
+                "Not imported — would stop window actions from working (change it in Settings → "
+                    + "Shortcuts, which offers to move them):\n"
+                    + plan.droppedForShadowing.map {
+                        "• \($0.change.label) — \($0.change.hotkey.displayString) "
+                            + "(\($0.actions.joined(separator: ", ")))"
+                    }.joined(separator: "\n"))
+        }
+        if !plan.alreadySet.isEmpty {
+            sections.append(
+                "Already set:\n"
+                    + plan.alreadySet.map { "• \($0.label) — \($0.hotkey.displayString)" }
                         .joined(separator: "\n"))
         }
         if !plan.skipped.isEmpty {

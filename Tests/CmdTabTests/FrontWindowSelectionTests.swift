@@ -105,4 +105,85 @@ final class FrontWindowSelectionTests: XCTestCase {
                 owned: [phantom, real], placement: [phantom: state(window: 1, current: 1)],
                 real: [real]))
     }
+
+    // MARK: - Which apps own a window at all
+
+    /// One row of the window server's list, carrying only what `windowOwners` reads. Small by
+    /// default, so a test that is not about size is not decided by it.
+    private func row(
+        pid: pid_t, id: CGWindowID, layer: Int = 0, onScreen: Bool = false,
+        frame: CGRect = CGRect(x: 0, y: 829, width: 64, height: 64)
+    ) -> [String: Any] {
+        var row: [String: Any] = [
+            kCGWindowOwnerPID as String: pid, kCGWindowNumber as String: id,
+            kCGWindowLayer as String: layer,
+            kCGWindowBounds as String: [
+                "X": frame.minX, "Y": frame.minY, "Width": frame.width, "Height": frame.height,
+            ],
+        ]
+        // Absent rather than false when off screen, which is how the window server reports it.
+        if onScreen { row[kCGWindowIsOnscreen as String] = true }
+        return row
+    }
+
+    /// A menu-bar backing window as measured: full width, 39pt tall, at the top of the display.
+    private let menuBarBacking = CGRect(x: 0, y: 0, width: 2056, height: 39)
+
+    /// A Ghostty window as measured: the full visible area of a 2056×1329 display.
+    private let ghosttyWindow = CGRect(x: 16, y: 55, width: 2024, height: 1258)
+
+    /// The measured case behind "hide apps with no windows" hiding nothing: a Finder with every
+    /// window closed still owns four menu-bar backings and a 64×64 surface, all layer 0. None is on
+    /// screen, on a Space, or window-sized, so none makes Finder an owner.
+    func testAnAppOwningOnlyPhantomsOwnsNoWindow() {
+        let finder: pid_t = 400
+        let backings = (56...59).map {
+            row(pid: finder, id: CGWindowID($0), frame: menuBarBacking)
+        }
+        let info = backings + [row(pid: finder, id: 67)]
+        XCTAssertEqual(TargetProvider.windowOwners(in: info, placed: []), [])
+    }
+
+    /// On screen is enough, and so is placed on a Space the user is not looking at — the second is
+    /// what keeps an app whose windows are all on another Desktop in the list. A small window that
+    /// is neither does not count.
+    func testAWindowOnScreenOrOnAnotherDesktopMakesItsAppAnOwner() {
+        let info = [
+            row(pid: 1, id: 10, onScreen: true),
+            row(pid: 2, id: 20),
+            row(pid: 3, id: 30),
+        ]
+        XCTAssertEqual(TargetProvider.windowOwners(in: info, placed: [20]), [1, 2])
+    }
+
+    /// The measured Ghostty: one real window placed on Desktop 1, and a second at the same frame
+    /// that the Space query placed nowhere — off screen, not minimized, named in its Window menu.
+    /// The second on its own still has to keep Ghostty in the list, since it is what is left when
+    /// the placed one closes; its size is what vouches for it. Its menu-bar backings do not.
+    func testAnUnplacedWindowSizedWindowStillMakesItsAppAnOwner() {
+        let ghostty: pid_t = 2657
+        let info = [row(pid: ghostty, id: 146, frame: ghosttyWindow)]
+            + (142...145).map { row(pid: ghostty, id: CGWindowID($0), frame: menuBarBacking) }
+        XCTAssertEqual(TargetProvider.windowOwners(in: info, placed: []), [ghostty])
+    }
+
+    /// The floor is the drag minimum on each axis, inclusive: exactly that size counts, a point
+    /// short on either axis does not.
+    func testTheSizeFloorIsTheDragMinimum() {
+        let floor = MouseDragGeometry.minimumSize
+        let exact = CGRect(x: 0, y: 0, width: floor.width, height: floor.height)
+        XCTAssertEqual(
+            TargetProvider.windowOwners(in: [row(pid: 1, id: 1, frame: exact)], placed: []), [1])
+        let short = [
+            row(pid: 2, id: 2, frame: CGRect(x: 0, y: 0, width: floor.width - 1, height: 500)),
+            row(pid: 3, id: 3, frame: CGRect(x: 0, y: 0, width: 500, height: floor.height - 1)),
+        ]
+        XCTAssertEqual(TargetProvider.windowOwners(in: short, placed: []), [])
+    }
+
+    /// Only layer 0 counts: a panel or menu on screen is not a window the app can be switched to.
+    func testAWindowAboveLayerZeroDoesNotCount() {
+        let info = [row(pid: 1, id: 10, layer: 3, onScreen: true, frame: ghosttyWindow)]
+        XCTAssertEqual(TargetProvider.windowOwners(in: info, placed: [10]), [])
+    }
 }

@@ -28,12 +28,13 @@ enum FuzzyMatch {
 
     /// How well `candidate` matches `query`, or nil if it does not match at all.
     ///
-    /// Case-insensitive. An empty query matches everything with score 0 — "no filter" is not the
-    /// same as "no matches", and the switcher shows the whole list until something is typed.
+    /// Case- and accent-insensitive. An empty query matches everything with score 0 — "no filter"
+    /// is not the same as "no matches", and the switcher shows the whole list until something is
+    /// typed.
     static func score(_ candidate: String, query: String) -> Int? {
-        let needle = query.lowercased()
+        let needle = fold(query)
         guard !needle.isEmpty else { return 0 }
-        let haystack = candidate.lowercased()
+        let haystack = fold(candidate)
         guard !haystack.isEmpty else { return nil }
 
         if haystack.hasPrefix(needle) {
@@ -44,10 +45,21 @@ enum FuzzyMatch {
             let offset = haystack.distance(from: haystack.startIndex, to: range.lowerBound)
             return Score.substring - offset * Score.leadingGap - min(haystack.count, 200)
         }
-        // The *original* candidate, not the lowercased one: the subsequence walk scores word starts,
-        // and on a Mac an internal capital is a word start far more often than a space is. See
-        // `isWordStart`. The two shapes above are pure substring tests and have no such need.
-        return subsequenceScore(candidate, needle)
+        // The *original* candidate as well as the folded one: the subsequence walk scores word
+        // starts, and on a Mac an internal capital is a word start far more often than a space is.
+        // See `isWordStart`. The two shapes above are pure substring tests and have no such need.
+        return subsequenceScore(candidate, folded: haystack, needle)
+    }
+
+    /// The form both sides are compared in: lowercased, with accents dropped.
+    ///
+    /// Accents as well as case, because the switcher filters app and window names, and on a
+    /// non-English system those carry them. On a French Mac, System Settings is "Réglages
+    /// Système", and "reglages" — what anyone types, since nobody reaches for é to filter — matched
+    /// nothing at all: the prefix and substring tests stop at the é, and the subsequence walk takes
+    /// the *second* e and then never finds a g. Spotlight and Finder ignore accents; so does this.
+    private static func fold(_ text: String) -> String {
+        text.lowercased().folding(options: .diacriticInsensitive, locale: nil)
     }
 
     /// Whether `candidate` matches at all — the same rule `score` uses, without the arithmetic.
@@ -62,28 +74,36 @@ enum FuzzyMatch {
     /// keyboard. Greedy gets the same answer for the queries people actually type (initials, or the
     /// start of a word) at a fraction of the cost.
     ///
-    /// `candidate` arrives in its original case — unlike the `haystack` its caller matches the other
-    /// two shapes against — and `needle` already lowercased; the comparison below is what bridges
-    /// them. Walking a lowercased copy instead would be simpler by one call and would throw away the
-    /// capitals `isWordStart` needs, and the case cannot be recovered afterwards by index, since a
-    /// single character can lowercase to several.
+    /// `candidate` arrives in its original case, for `isWordStart`, alongside `folded` — the same
+    /// string through `fold` — and `needle`, already folded. Matching reads `folded`, walked by the
+    /// same index as `candidate`: the capitals cannot be recovered from the folded copy, and the
+    /// folded character cannot be recovered from the capital without paying for a fold per
+    /// comparison on every tile on every keystroke.
     ///
-    /// Flattened to an array first. The walk steps back one position to find a word boundary, which
+    /// That shared index needs folding to have left one character per character, which it does for
+    /// everything but the odd expansion. Where it did not, each character is folded on its own
+    /// instead — slower, and reached so rarely that it does not matter.
+    ///
+    /// Flattened to arrays first. The walk steps back one position to find a word boundary, which
     /// on a `String` means `index(before:)` and its own scan, and it does that once per matched
     /// character on every tile on every keystroke.
-    private static func subsequenceScore(_ candidate: String, _ needle: String) -> Int? {
+    private static func subsequenceScore(_ candidate: String, folded: String, _ needle: String)
+        -> Int?
+    {
         let characters = Array(candidate)
+        let comparable = Array(folded)
+        let aligned = comparable.count == characters.count
         var total = 0
         var index = 0
         var previousMatch: Int?
         var isFirstMatch = true
 
         for character in needle {
-            // The equality first: `needle` is already lowercased, so most candidate characters match
-            // outright and never pay for the `String` that `Character.lowercased()` returns.
             guard
-                let found = characters[index...].firstIndex(where: {
-                    $0 == character || $0.lowercased() == String(character)
+                let found = (index..<characters.count).first(where: { i in
+                    if aligned { return comparable[i] == character }
+                    return characters[i] == character
+                        || fold(String(characters[i])) == String(character)
                 })
             else { return nil }
 

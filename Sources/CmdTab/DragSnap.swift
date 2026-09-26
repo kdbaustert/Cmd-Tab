@@ -160,10 +160,8 @@ final class DragSnap {
             // An app the user has told us never to tile drags exactly as it always did — and so
             // does a window a title rule protects on its own, whatever app it belongs to.
             let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
-            let title = AX.window(ofApplication: pid, matching: initial)
-                .flatMap { AX.copyString($0, kAXTitleAttribute) } ?? ""
             if id.map({ appRules[$0]?.neverTile == true }) ?? false
-                || CompiledTitleRule.matches(titleRules, bundleID: id, title: title, action: .neverTile) {
+                || titleProtects(pid: pid, bundleID: id, at: current) {
                 reset()
                 return
             }
@@ -227,6 +225,26 @@ final class DragSnap {
                 zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
                 target: dropped.map(WindowTiler.Target.bounds), destination: area)
         }
+    }
+
+    /// Whether a title rule protects the window being dragged, found by the frame it has *now*.
+    ///
+    /// Not by `initialBounds`, which is what this used to match against: the window having moved is
+    /// the condition this is only ever asked under, so the press-time frame was stale by
+    /// construction and matched nothing once the drag had gone further than the lookup's few points
+    /// of slack. The title came back empty, and a window a title rule protected snapped anyway.
+    ///
+    /// Accessibility on the main thread — arming is decided synchronously, in the monitor
+    /// callback — which is why the read is skipped whenever no `.neverTile` rule could apply to this
+    /// app.
+    private func titleProtects(pid: pid_t, bundleID: String?, at bounds: CGRect) -> Bool {
+        guard titleRules.mayNeverTile(bundleID) else { return false }
+        let title = MainLoopMonitor.marking("drag-snap title lookup") {
+            AX.window(ofApplication: pid, matching: bounds)
+                .flatMap { AX.copyString($0, kAXTitleAttribute) } ?? ""
+        }
+        return CompiledTitleRule.matches(
+            titleRules, bundleID: bundleID, title: title, action: .neverTile)
     }
 
     private func reset() {

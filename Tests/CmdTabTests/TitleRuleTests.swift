@@ -95,7 +95,8 @@ final class TitleRuleTests: XCTestCase {
 
     /// `TitleRulesStore` persists as `[{ id, bundleID?, pattern, action }]` — the same shape
     /// `SettingsIO`/`ConfigFile` mirror to `config.json`. Exercised as a plist-safe dictionary
-    /// round trip rather than through `UserDefaults`, which no test here touches.
+    /// round trip through `TitleRulesStore.decode` rather than through `UserDefaults`, which no
+    /// test here touches.
     func testRoundTripsThroughThePlistSafeShape() {
         let rules = [
             TitleRule(bundleID: "us.zoom.xos", pattern: "^Zoom", action: .neverTile),
@@ -110,35 +111,44 @@ final class TitleRuleTests: XCTestCase {
             return fields
         }
 
-        let decoded: [TitleRule] = encoded.compactMap { fields in
-            guard let pattern = fields["pattern"] as? String,
-                let actionRaw = fields["action"] as? String,
-                let action = TitleRuleAction(rawValue: actionRaw)
-            else { return nil }
-            let id = (fields["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
-            return TitleRule(id: id, bundleID: fields["bundleID"] as? String, pattern: pattern, action: action)
-        }
+        let decoded = TitleRulesStore.decode(encoded)
 
-        XCTAssertEqual(decoded, rules)
+        XCTAssertEqual(decoded.rules, rules)
+        XCTAssertTrue(decoded.unreadable.isEmpty)
     }
 
-    /// A malformed entry — an action a newer build removed, say — is skipped rather than crashing
+    /// A malformed entry — an action a newer build added, say — is skipped rather than crashing
     /// the whole load, the same contract `AppRulesStore.load` keeps for a field it does not
-    /// recognise.
-    func testAMalformedEntryIsSkippedNotCrashed() {
+    /// recognise. And kept: `persist` writes it back, so an older build does not erase it.
+    func testAMalformedEntryIsSkippedAndKept() {
         let encoded: [[String: Any]] = [
             ["pattern": "Zoom", "action": "hide"],
             ["pattern": "Zoom", "action": "notARealAction"],
             ["action": "hide"],
         ]
-        let decoded: [TitleRule] = encoded.compactMap { fields in
-            guard let pattern = fields["pattern"] as? String,
-                let actionRaw = fields["action"] as? String,
-                let action = TitleRuleAction(rawValue: actionRaw)
-            else { return nil }
-            return TitleRule(bundleID: fields["bundleID"] as? String, pattern: pattern, action: action)
-        }
-        XCTAssertEqual(decoded.count, 1)
-        XCTAssertEqual(decoded.first?.pattern, "Zoom")
+        let decoded = TitleRulesStore.decode(encoded)
+        XCTAssertEqual(decoded.rules.count, 1)
+        XCTAssertEqual(decoded.rules.first?.pattern, "Zoom")
+        XCTAssertEqual(decoded.unreadable.count, 2)
+    }
+
+    /// The regression. The list used to be cast whole, and one element that is not a dictionary
+    /// failed the cast for all of them — every rule gone, nothing logged.
+    func testOneEntryThatIsNotADictionaryCostsOnlyItself() {
+        let raw: [Any] = [
+            ["pattern": "Zoom", "action": "neverTile"],
+            "Picture in Picture",
+            ["pattern": "^PiP", "action": "hide"],
+        ]
+        let decoded = TitleRulesStore.decode(raw)
+        XCTAssertEqual(decoded.rules.map(\.pattern), ["Zoom", "^PiP"])
+        XCTAssertEqual(decoded.unreadable.first as? String, "Picture in Picture")
+    }
+
+    func testAStoredValueThatIsNotAListDecodesAsNoRules() {
+        let decoded = TitleRulesStore.decode("Zoom")
+        XCTAssertTrue(decoded.rules.isEmpty)
+        XCTAssertTrue(decoded.unreadable.isEmpty)
+        XCTAssertTrue(TitleRulesStore.decode(nil).rules.isEmpty)
     }
 }

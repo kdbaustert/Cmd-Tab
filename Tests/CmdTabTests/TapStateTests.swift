@@ -100,6 +100,7 @@ final class TapStateTests: XCTestCase {
             ),
             ("actionsEnabled", { $0.actionsEnabled = true }),
             ("isAppActive", { $0.isAppActive = true }),
+            ("isRecordingShortcut", { $0.isRecordingShortcut = true }),
             ("hasQuery", { $0.hasQuery = true }),
         ]
         for (name, mutate) in mutations {

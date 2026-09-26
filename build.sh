@@ -159,24 +159,37 @@ fi
 sign_nested() {
     local identity_args=("$@")
     [[ -d "$APP/Contents/Frameworks" ]] || return 0
-    # -depth walks children before parents, which is exactly the order signatures have to be applied.
+    # Loose Mach-O helpers first — ones that live outside any bundle wrapper, which for Sparkle is
+    # Autoupdate, sitting bare in Versions/B. They are the innermost code there is: the framework's
+    # seal covers them, so they have to be signed before it rather than after.
+    #
+    # Every one of them, with no "already verifies, skip it". That test used to sit here, and it was
+    # always true: Sparkle ships every item ad-hoc signed, and an ad-hoc signature verifies. So
+    # Autoupdate kept Sparkle's own signature through every build — no identity, no timestamp —
+    # which a local build never notices and the notary service rejects outright. Measured on the
+    # built bundle: every nested item "Cmd-Tab Local" except Autoupdate, still `Signature=adhoc`.
+    #
+    # A bundle's main executable (Contents/MacOS) is left to the bundle walk below, which signs it
+    # as part of the bundle.
+    while IFS= read -r item; do
+        codesign "${SIGN_ARGS[@]}" "${identity_args[@]}" "$item"
+    done < <(find "$APP/Contents/Frameworks" -type f -perm -u+x ! -path '*/Contents/MacOS/*' -exec sh -c 'file -b "$1" | grep -q "Mach-O.*executable"' _ {} \; -print)
+    # Then the bundles. -depth walks children before parents, which is exactly the order
+    # signatures have to be applied.
     while IFS= read -r item; do
         codesign "${SIGN_ARGS[@]}" "${identity_args[@]}" "$item"
     # `! -type l` matters: a framework's root is a facade of symlinks into Versions/B, so
     # Updater.app matches twice — once as itself and once through the link — and signing the same
-    # file by two paths is at best redundant noise.
+    # file by two paths is at best redundant noise. The helper walk above needs no such guard:
+    # `-type f` already excludes the links.
     done < <(find "$APP/Contents/Frameworks" -depth \( -name '*.app' -o -name '*.xpc' -o -name '*.framework' \) ! -type l -print)
-    # Loose Mach-O helpers that live outside a bundle wrapper — Sparkle's Autoupdate is one.
-    while IFS= read -r item; do
-        # A framework's versioned symlink resolves to a binary that has already been signed as part
-        # of the framework; signing it again by path is harmless but noisy, so skip anything already
-        # sealed by the walk above.
-        codesign --verify "$item" 2>/dev/null && continue
-        codesign "${SIGN_ARGS[@]}" "${identity_args[@]}" "$item"
-    done < <(find "$APP/Contents/Frameworks" -type f -perm -u+x -exec sh -c 'file -b "$1" | grep -q "Mach-O.*executable"' _ {} \; -print)
 }
 
-if security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
+# `grep -F`: the identity is a name, not a pattern. And no `-q`: `grep -q` exits on the first match,
+# and under `pipefail` a `security` still writing when it does dies of SIGPIPE, fails the pipeline,
+# and sends a build that *has* the identity to the ad-hoc branch below — the same trap as the rpath
+# check above.
+if security find-identity -v -p codesigning | grep -F -- "$IDENTITY" >/dev/null; then
     echo "==> Signing as \"$IDENTITY\""
     sign_nested --sign "$IDENTITY"
     codesign "${SIGN_ARGS[@]}" --sign "$IDENTITY" "$APP"

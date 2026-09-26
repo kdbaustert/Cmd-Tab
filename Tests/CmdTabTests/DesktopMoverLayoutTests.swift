@@ -209,3 +209,29 @@ final class DesktopMoverLayoutTests: XCTestCase {
         XCTAssertTrue(points.allSatisfy { $0.x > narrow.minX && $0.x < narrow.maxX })
     }
 }
+
+/// The completion a caller chains Desktop moves on — `DesktopAssignments` does, one move per
+/// assigned app — which has to run once for every call, a refused one included, or the chain ends
+/// at the refusal with every move after it silently dropped.
+///
+/// Neither case below can start a gesture: one holds the claim the move would need, the other asks
+/// for no move at all, and pid 0 owns no window for a gesture to take hold of besides.
+final class DesktopMoveCompletionTests: XCTestCase {
+    override func tearDown() {
+        DesktopMover.end()
+        super.tearDown()
+    }
+
+    func testARefusedMoveStillCallsBack() throws {
+        try XCTSkipUnless(DesktopMover.beginIfIdle(), "the claim is held elsewhere")
+        let calledBack = expectation(description: "completion")
+        DesktopMover.move(pid: 0, to: .step(1), follow: false) { calledBack.fulfill() }
+        wait(for: [calledBack], timeout: 2)
+    }
+
+    func testAMoveOfNoDesktopsStillCallsBack() {
+        let calledBack = expectation(description: "completion")
+        DesktopMover.move(pid: 0, to: .step(0), follow: false) { calledBack.fulfill() }
+        wait(for: [calledBack], timeout: 2)
+    }
+}

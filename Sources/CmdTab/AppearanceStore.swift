@@ -52,10 +52,12 @@ final class AppearanceStore: ObservableObject {
         titleSpacing = read(Key.titleSpacing, Metrics.default.titleSpacing)
     }
 
+    /// "Reset sliders". Removes the three keys rather than writing today's numbers into them, for
+    /// the reason `isReloading` below gives: a stored default is a default no later build can move.
+    /// `reload` then republishes the built-in values and resizes the panel once.
     func reset() {
-        iconSize = Metrics.default.iconSize
-        iconSpacing = Metrics.default.iconSpacing
-        titleSpacing = Metrics.default.titleSpacing
+        for key in Self.defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
+        reload()
     }
 
     /// Suppresses the *write* half of the `didSet` handlers during `reload()`, exactly as

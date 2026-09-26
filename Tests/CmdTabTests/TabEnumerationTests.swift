@@ -96,6 +96,41 @@ final class TabEnumerationTests: XCTestCase {
         XCTAssertNil(TabEnumeration.findTabs(in: window))
     }
 
+    // MARK: - The time budget
+
+    /// A walk the budget has already run out on finds nothing, even with a tab strip right there —
+    /// a partial answer is not offered as a whole one.
+    func testAnExpiredBudgetFindsNothing() {
+        let group = FakeNode(role: "AXTabGroup", children: [radioButton("a"), radioButton("b")])
+        let window = FakeNode(role: "AXWindow", children: [group])
+        XCTAssertNil(TabEnumeration.findTabs(in: window, isExpired: { true }))
+    }
+
+    /// The budget is checked as the walk goes, not only between apps: a window a thousand rows
+    /// wide stops within a few nodes of running out, rather than visiting every row — each of which
+    /// is a round trip against a real app.
+    func testTheWalkStopsSoonAfterTheBudgetRunsOut() {
+        let wide = FakeNode(
+            role: "AXWindow", children: Array(repeating: FakeNode(role: "AXRow"), count: 1_000))
+        var checks = 0
+        let tabs = TabEnumeration.findTabs(
+            in: wide,
+            isExpired: {
+                checks += 1
+                return checks > 10
+            })
+        XCTAssertNil(tabs)
+        XCTAssertLessThan(checks, 20, "the walk kept going after the budget ran out")
+    }
+
+    /// The same budget, unexpired, changes nothing about what is found.
+    func testAnUnexpiredBudgetFindsTheSameTabs() {
+        let group = FakeNode(role: "AXTabGroup", children: [radioButton("a"), radioButton("b")])
+        let window = FakeNode(role: "AXWindow", children: [group])
+        XCTAssertEqual(
+            TabEnumeration.findTabs(in: window, isExpired: { false })?.map(\.title), ["a", "b"])
+    }
+
     // MARK: - Active-tab detection
 
     /// Chromium/Ghostty style: `AXSelected` decides it, and a present-but-false value is honoured

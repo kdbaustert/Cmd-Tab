@@ -23,7 +23,18 @@ import SwiftUI
 @MainActor
 enum KeyRecorder {
     private static var nextToken = 0
-    private static var armed: (token: Int, disarm: () -> Void)?
+    private static var armed: (token: Int, disarm: () -> Void)? {
+        didSet { onChange?() }
+    }
+
+    /// Whether any recorder is listening. The switcher's key routing reads it to stand its two
+    /// triggers down, so a trigger recorder can be handed the chord the other trigger holds — see
+    /// `TapRouting.idle`.
+    static var isArmed: Bool { armed != nil }
+
+    /// Called whenever `isArmed` may have changed. The switcher republishes its tap-state mirror
+    /// from it; see `SwitcherController.startActiveMirror`.
+    static var onChange: (() -> Void)?
 
     /// Stops whatever was armed, then arms `disarm`. The returned token is what `stop()` hands back
     /// so a recorder can only ever clear *itself*.
@@ -49,6 +60,30 @@ enum KeyRecorder {
         guard let current = armed else { return }
         armed = nil
         current.disarm()
+    }
+}
+
+/// Runs `work` on the main run loop's next turn — deliberately *not* on the main dispatch queue.
+///
+/// For anything that may raise a modal: `NSAlert.runModal()`, and so every recorder's `validate`.
+/// A modal started inside a `DispatchQueue.main.async` block stalls the main queue for as long as
+/// it is up, because CFRunLoop will not drain the main queue from a loop nested inside one of that
+/// queue's own blocks. The keyboard tap's run-loop source still fires in the modal's mode, though,
+/// so a ⌘-Tab pressed at the alert opened a session whose every deferred step — drawing the panel,
+/// the switch on release — sat queued behind the alert: an invisible panel holding the keyboard,
+/// then an app switch landing the moment the alert closed. A run-loop block is not a dispatch
+/// block, so a modal nested inside one leaves the main queue running.
+///
+/// Common modes, like the dispatch hop it replaces, so it still runs while a menu or another modal
+/// is up.
+@MainActor
+enum MainRunLoop {
+    static func perform(_ work: @escaping @MainActor () -> Void) {
+        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+            MainActor.assumeIsolated { work() }
+        }
+        // A queued block does not wake a sleeping loop on its own.
+        CFRunLoopWakeUp(CFRunLoopGetMain())
     }
 }
 
@@ -86,8 +121,9 @@ struct HotkeyRecorder: View {
             }
             let candidate = Hotkey(keyCode: Int(event.keyCode), modifierRaw: mods.rawValue)
             // Off the handler: `stop()` removes the monitor currently executing this block, and
-            // `apply` may raise a modal. Neither belongs inside event dispatch.
-            DispatchQueue.main.async {
+            // `apply` may raise a modal. Neither belongs inside event dispatch — and the modal is
+            // why this is a run-loop hop rather than a dispatch one; see `MainRunLoop`.
+            MainRunLoop.perform {
                 stop()
                 apply(candidate)
             }

@@ -377,6 +377,15 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// True from the press that armed a gesture until the release, whether or not the window has
     /// been resolved yet. What decides that an event is ours to swallow.
     private var isArmed = false
+    /// Which press the gesture in flight belongs to, bumped on every press that arms one.
+    ///
+    /// `isArmed` alone cannot say *which* gesture is armed. A resolve is Accessibility IPC and can
+    /// take a wedged app's full timeout per call, so a quick click on a slow window, released and
+    /// followed by a press somewhere else, left the first resolve landing while the second gesture
+    /// was armed — installing the first window and press point as the second gesture's session, so
+    /// its opening frames were computed from the wrong window and written to the right one. A
+    /// resolve now acts only if the press it was started for is still the current one.
+    private var generation: UInt64 = 0
     /// Set while an Accessibility write is in flight, so a 120Hz stream of drag events cannot queue
     /// up hundreds of frames the user will never see. The newest target always wins.
     private var isWriting = false
@@ -573,6 +582,11 @@ final class MouseWindowDrag: @unchecked Sendable {
         let location = event.location
         switch type {
         case .leftMouseDown:
+            // A press is proof the last gesture's release has happened, whether or not this tap saw
+            // it. Without this, a mouse-up lost to anything ahead of us left the gesture armed with
+            // its old session, and the next ordinary drag on the machine was swallowed and spent
+            // moving the previous window.
+            if lock.withLock({ isArmed }) { end() }
             let current = settings
             let held = event.flags.intersection(ModifierChord.allowed)
             guard let action = current.action(for: event.flags) else {
@@ -599,19 +613,36 @@ final class MouseWindowDrag: @unchecked Sendable {
                     """)
                 return false
             }
+            // An app the user has told us never to tile drags exactly as it always did — which
+            // means deciding *before* the press is swallowed. Checked in the resolve, as it used to
+            // be, the press was already gone by the time the answer came back: the app never saw
+            // its mouse-down, and a ⌃⌥-drag it had a use of its own for simply stopped working.
+            //
+            // Safe on the tap thread. `NSRunningApplication` is documented thread safe — see its
+            // header — and the bundle identifier is one of its fixed properties, so there is no
+            // run-loop policy to wait on either.
+            let bundleID = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+            if let bundleID, appRules[bundleID]?.neverTile == true {
+                Log.general.notice(
+                    "mouse drag: \(bundleID, privacy: .public) is set to never tile; passed on")
+                return false
+            }
             Log.general.notice(
                 """
                 mouse drag: \(action.rawValue, privacy: .public) armed on pid \
                 \(target.pid, privacy: .public)
                 """)
-            lock.withLock {
+            let press: UInt64 = lock.withLock {
                 isArmed = true
                 session = nil
+                generation &+= 1
+                return generation
             }
             // Before the resolve, which is asynchronous: the other gesture has to be out of the way
             // from the press onwards, not from whenever Accessibility gets back to us.
             onClaimChord?()
-            resolve(target: target, action: action, at: location)
+            resolve(
+                target: target, bundleID: bundleID, action: action, at: location, press: press)
             // Swallowed from the press onwards. Letting the press through and taking only the drags
             // would put a click into whatever was under the cursor — a button, a link, a text
             // caret — every time the gesture started.
@@ -673,49 +704,53 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
 
     /// Resolves the window under the press and captures the frame the gesture is measured from.
+    ///
+    /// `press` is the `generation` the gesture was armed with. Everything this does to shared state
+    /// is conditional on it still being current — see `generation`.
     private func resolve(
-        target: (pid: pid_t, bounds: CGRect), action: MouseDragAction, at point: CGPoint
+        target: (pid: pid_t, bounds: CGRect), bundleID: String?, action: MouseDragAction,
+        at point: CGPoint, press: UInt64
     ) {
         queue.async { [weak self] in
             guard let self else { return }
-            // An app the user has told us never to tile drags exactly as it always did. Checked off
-            // the tap thread, which is the callback's own requirement, but `NSRunningApplication` is
-            // main-thread work regardless of that — see `ModifierTargetHighlight`'s identical check,
-            // which reads it on the main actor — so this still has to hop rather than read inline.
-            let bundleID = DispatchQueue.main.sync {
-                NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
-            }
-            if let id = bundleID, self.appRules[id]?.neverTile == true {
-                self.end()
-                return
-            }
             let element = Self.axWindow(pid: target.pid, bounds: target.bounds)
             guard let element, let frame = AX.frame(element) else {
                 Log.general.notice(
                     "mouse drag: no accessible window for pid \(target.pid, privacy: .public)")
-                self.end()
+                self.end(press: press)
                 return
             }
-            // A title rule protects this exact window whatever app it belongs to — checked once
-            // the element is resolved anyway, so this costs nothing the guard above didn't already.
-            let title = AX.copyString(element, kAXTitleAttribute) ?? ""
-            if CompiledTitleRule.matches(
-                self.titleRules, bundleID: bundleID, title: title, action: .neverTile
-            ) {
-                self.end()
-                return
+            // A title rule protects this exact window whatever app it belongs to. Unlike the app
+            // rule, which the tap decides before swallowing anything, this one needs the window's
+            // title — Accessibility, which the tap thread must never wait on — so the window is
+            // left alone but its press has already been taken. The read is skipped outright when
+            // no rule could apply to this app, which on most installs is every time.
+            if self.titleRules.mayNeverTile(bundleID) {
+                let title = AX.copyString(element, kAXTitleAttribute) ?? ""
+                if CompiledTitleRule.matches(
+                    self.titleRules, bundleID: bundleID, title: title, action: .neverTile
+                ) {
+                    self.end(press: press)
+                    return
+                }
             }
             // `draggedWindow` is unlocked on the strength of every touch being on `queue`.
             dispatchPrecondition(condition: .onQueue(self.queue))
-            Self.draggedWindow = element
-            Log.general.notice(
-                "mouse drag: resolved window for pid \(target.pid, privacy: .public)")
-            self.lock.withLock {
-                guard self.isArmed else { return }
+            let current: Bool = self.lock.withLock {
+                guard self.isArmed, self.generation == press else { return false }
                 self.session = Session(
                     action: action, pid: target.pid, startFrame: frame, startMouse: point,
                     corner: MouseDragGeometry.corner(for: point, in: frame))
+                return true
             }
+            // Released already, or superseded by a newer press. Either way this window is no
+            // longer the one being dragged, and the gesture that is — if any — owns the slot.
+            guard current else { return }
+            // Set after the session rather than before it, and still safely: any frame the tap
+            // posts against that session is enqueued behind this block, which is still running.
+            Self.draggedWindow = element
+            Log.general.notice(
+                "mouse drag: resolved window for pid \(target.pid, privacy: .public)")
         }
     }
 
@@ -774,17 +809,21 @@ final class MouseWindowDrag: @unchecked Sendable {
         }
     }
 
-    private func end() {
-        let hadZone: Bool = lock.withLock {
+    /// Ends the gesture in flight — or, given the `press` it was started for, only if that press is
+    /// still the current one, so a resolve that fails late cannot end the gesture that replaced it.
+    private func end(press: UInt64? = nil) {
+        let outcome: (ended: Bool, hadZone: Bool) = lock.withLock {
+            if let press, press != generation { return (false, false) }
             let had = zone != nil
             isArmed = false
             session = nil
             pending = nil
             zone = nil
             zoneArea = nil
-            return had
+            return (true, had)
         }
-        if hadZone { Task { @MainActor in SnapPreview.shared.hide() } }
+        guard outcome.ended else { return }
+        if outcome.hadZone { Task { @MainActor in SnapPreview.shared.hide() } }
         queue.async { Self.draggedWindow = nil }
     }
 
@@ -940,6 +979,50 @@ enum PointDirection {
     }
 }
 
+/// What a change in the held modifiers does to the hold-and-point gesture.
+///
+/// Pure, because the rule is the part that was wrong and nothing else here can be tested without a
+/// keyboard. The gesture used to read every change that left the chord as the chord coming up, and
+/// snapped — so a modifier *added* to it snapped too. ⌃⌘ then ⇧ is the first half of ⌃⇧⌘←, this
+/// app's own shipped display move, and of ⌃⇧⌘4, the system's screenshot to the clipboard; ⌃⌥ then
+/// ⌘ is the Desktop moves; a Hyper key posts its four modifiers one at a time. Each of them
+/// maximized whatever window the pointer was resting on, a beat before the key it was for arrived.
+/// The keystroke stand-down in `SwitcherController` could not catch it: the added modifier's
+/// `flagsChanged` lands before the key-down does.
+///
+/// And arming reads the other way: only a *press* onto the chord starts a gesture. Letting go of
+/// the ⇧ in ⌃⇧⌘ lands back on ⌃⌘ too, and arming there set up a snap for the ⌘ coming up next.
+enum PointChord {
+    enum Step: Equatable {
+        /// The chord went down. Start a gesture.
+        case arm
+        /// Still on a bound chord mid-gesture — a qualifier moved from one chord to another.
+        case hold
+        /// Something came up and nothing was added: the release. Snap.
+        case complete
+        /// Something was added: the chord was the start of another shortcut. Stand down, no snap.
+        case cancel
+        /// Nothing to do.
+        case ignore
+    }
+
+    /// - Parameters:
+    ///   - previous: The modifiers held before this change.
+    ///   - held: The modifiers held now.
+    ///   - chord: The chord the gesture in progress was last held on; nil when none is armed.
+    ///   - isChord: Whether `held` is itself a bound chord.
+    static func step(
+        previous: CGEventFlags, held: CGEventFlags, chord: CGEventFlags?, isChord: Bool
+    ) -> Step {
+        guard isChord else {
+            guard let chord else { return .ignore }
+            return held.isStrictSubset(of: chord) ? .complete : .cancel
+        }
+        if chord != nil { return .hold }
+        return previous.isStrictSubset(of: held) ? .arm : .ignore
+    }
+}
+
 /// Drives the hold-and-point gesture, and outlines the window it would act on.
 ///
 /// Passive `NSEvent` monitors throughout: nothing is pressed, so there is nothing to consume, and a
@@ -965,7 +1048,7 @@ final class ModifierTargetHighlight {
     ///
     /// The other three snap paths have honoured `neverTile` all along — the keyboard chords in
     /// `SwitcherController.applyTiling`, the titlebar drag in `DragSnap.mouseDragged`, and the
-    /// modifier-drag in `MouseWindowDrag.resolve` — and this one was simply never given the rules to
+    /// modifier-drag in `MouseWindowDrag.handle` — and this one was simply never given the rules to
     /// check, so "No tiling" held everywhere except when you pointed at the window.
     var appRules: [String: AppRule] = [:]
     /// Per-window rules, unioned with `appRules` for the same guard.
@@ -985,6 +1068,12 @@ final class ModifierTargetHighlight {
     /// The visible area the offer was drawn against, handed to the tiler at completion so the
     /// outline and the snap cannot land on different displays.
     private var area: CGRect?
+    /// The chord the gesture in progress is held on, nil when none is armed. What a later change is
+    /// measured against to tell a release from an addition — see `PointChord`.
+    private var chord: CGEventFlags?
+    /// The modifiers the last `flagsChanged` reported, so arming can tell a press onto the chord
+    /// from a release back down to it. Kept across gestures: it describes the keyboard, not them.
+    private var lastHeld: CGEventFlags = []
 
     /// Rebuilds the monitors after an install made without the Accessibility grant.
     ///
@@ -1025,15 +1114,32 @@ final class ModifierTargetHighlight {
         cancel()
     }
 
-    /// The chord going down starts the gesture; letting it go completes one.
+    /// The chord going down starts the gesture; letting it go completes one; adding to it abandons
+    /// one. See `PointChord` for which is which.
     private func flagsChanged(_ flags: NSEvent.ModifierFlags) {
         let held = Hotkey.flags(from: flags)
+        let previous = lastHeld
+        lastHeld = held
 
-        guard settings.action(for: held) != nil else {
+        switch PointChord.step(
+            previous: previous, held: held, chord: chord,
+            isChord: settings.action(for: held) != nil)
+        {
+        case .ignore:
+            return
+        case .hold:
+            chord = held
+            return
+        case .complete:
             complete()
             return
+        case .cancel:
+            Log.general.notice("point gesture: stood down, a modifier was added to the chord")
+            cancel()
+            return
+        case .arm:
+            break
         }
-        guard anchor == nil else { return }  // already in a gesture; a qualifier changed, no more
 
         let point = NSEvent.mouseLocation
         // A window-server round trip on the main thread, taken on every press of the chord — which
@@ -1046,15 +1152,14 @@ final class ModifierTargetHighlight {
         // affordance and then silently do nothing, which reads as the gesture being broken rather
         // than as the setting being obeyed.
         let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
-        let title = AX.window(ofApplication: target.pid, matching: target.bounds)
-            .flatMap { AX.copyString($0, kAXTitleAttribute) } ?? ""
         if id.map({ appRules[$0]?.neverTile == true }) ?? false
-            || CompiledTitleRule.matches(titleRules, bundleID: id, title: title, action: .neverTile) {
+            || Self.titleProtects(target, bundleID: id, rules: titleRules) {
             Log.general.notice(
                 "point gesture: \(id ?? "window", privacy: .public) is set to never tile; not arming")
             return
         }
         anchor = point
+        chord = held
         self.target = target
         outline.show(target.bounds)
         // The anchor stays put while the cursor leaves it: the gesture is a direction, and a
@@ -1133,8 +1238,9 @@ final class ModifierTargetHighlight {
     /// could snap a different window of the app entirely.
     ///
     /// Called rather than detected here — see `MouseWindowDrag.onClaimChord`, which explains why a
-    /// swallowed press leaves no event for this gesture to notice on its own. Re-arming needs a
-    /// fresh `flagsChanged`, so the chord stays stood down for the rest of the hold.
+    /// swallowed press leaves no event for this gesture to notice on its own. Re-arming needs the
+    /// chord *pressed* afresh — landing back on it by letting go of something else does not arm
+    /// (see `PointChord`) — so the chord stays stood down for the rest of the hold.
     ///
     /// There are two claimants, not one. A drag is the original; a *keyboard* binding on the same
     /// modifiers is the other, and it failed the same way — see
@@ -1179,12 +1285,28 @@ final class ModifierTargetHighlight {
         moveMonitors.forEach(NSEvent.removeMonitor)
         moveMonitors = []
         anchor = nil
+        chord = nil
         target = nil
         zone = nil
         area = nil
         outline.hide()
         dot.hide()
         SnapPreview.shared.hide()
+    }
+
+    /// Whether a title rule protects the window under the chord.
+    ///
+    /// Still Accessibility on the main thread when it runs — the arming decision is synchronous —
+    /// but it no longer runs on every press of the chord: only when some `.neverTile` rule could
+    /// apply to this app at all, which on most installs is never.
+    private static func titleProtects(
+        _ target: (pid: pid_t, bounds: CGRect), bundleID: String?, rules: [CompiledTitleRule]
+    ) -> Bool {
+        guard rules.mayNeverTile(bundleID) else { return false }
+        let title = AX.window(ofApplication: target.pid, matching: target.bounds)
+            .flatMap { AX.copyString($0, kAXTitleAttribute) } ?? ""
+        return CompiledTitleRule.matches(
+            rules, bundleID: bundleID, title: title, action: .neverTile)
     }
 
     /// The window under a Cocoa-space point, in the top-left space the overlays and the window list

@@ -87,4 +87,69 @@ final class DisplayLayoutTests: XCTestCase {
                 metrics: Metrics.default, visibleSize: CGSize(width: 1440, height: 900), cap: 0),
             1)
     }
+
+    // MARK: - fitted: shrinking to the screen, since the panel does not scroll
+
+    /// A 13" laptop's visible frame, where the overflows were measured.
+    private let laptop = CGSize(width: 1470, height: 851)
+
+    private func fitted(
+        _ count: Int, _ mode: SwitcherMode, _ layout: SwitcherLayout, base: Metrics = .default,
+        cap: Int = 0
+    ) -> Metrics {
+        DisplayLayout.fitted(
+            base, targetCount: count, mode: mode, layout: layout, showsTitle: mode == .windows,
+            visibleSize: laptop, cap: cap)
+    }
+
+    private func fits(
+        _ metrics: Metrics, _ count: Int, _ mode: SwitcherMode, _ layout: SwitcherLayout,
+        cap: Int = 0
+    ) -> Bool {
+        DisplayLayout.fits(
+            metrics, targetCount: count, mode: mode, layout: layout,
+            showsTitle: mode == .windows, visibleSize: laptop, cap: cap)
+    }
+
+    /// The ordinary session is left exactly as the user set it.
+    func testAListThatAlreadyFitsIsNotShrunk() {
+        XCTAssertEqual(fitted(12, .apps, .grid), .default)
+        XCTAssertEqual(fitted(12, .windows, .list), .default)
+    }
+
+    /// The grid only ever wrapped on width, so its rows ran off the bottom of the screen.
+    func testAGridTooTallForTheScreenShrinksUntilItFits() {
+        XCTAssertFalse(fits(.default, 120, .windows, .grid), "precondition: it overflowed")
+        let metrics = fitted(120, .windows, .grid)
+        XCTAssertLessThan(metrics.iconSize, Metrics.default.iconSize)
+        XCTAssertTrue(fits(metrics, 120, .windows, .grid))
+    }
+
+    /// The list only ever wrapped on height, so its columns ran off the side.
+    func testAListTooWideForTheScreenShrinksUntilItFits() {
+        let large = Metrics(iconSize: 128, iconSpacing: 2, titleSpacing: 2)
+        XCTAssertFalse(fits(large, 40, .windows, .list), "precondition: it overflowed")
+        XCTAssertTrue(fits(fitted(40, .windows, .list, base: large), 40, .windows, .list))
+    }
+
+    /// The column ceiling forces rows the screen may not have — for either layout.
+    func testAColumnCapIsHonouredByShrinkingRatherThanOverflowing() {
+        for layout in [SwitcherLayout.grid, .list] {
+            let metrics = fitted(30, .apps, layout, cap: 3)
+            XCTAssertTrue(fits(metrics, 30, .apps, layout, cap: 3), "\(layout)")
+            XCTAssertEqual(
+                DisplayLayout.columns(
+                    targetCount: 30, mode: .apps, layout: layout, showsTitle: false,
+                    metrics: metrics, visibleSize: laptop, cap: 3),
+                3, "the cap itself still holds")
+        }
+    }
+
+    /// Past the slider's floor there is nothing left to give: it stops there rather than spinning,
+    /// and the remainder overflows.
+    func testAnImpossibleCountStopsAtTheSmallestIcon() {
+        let metrics = fitted(5000, .windows, .grid)
+        XCTAssertEqual(metrics.iconSize, Metrics.iconSizeRange.lowerBound)
+        XCTAssertFalse(fits(metrics, 5000, .windows, .grid))
+    }
 }

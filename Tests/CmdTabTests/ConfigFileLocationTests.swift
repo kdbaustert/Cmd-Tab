@@ -57,9 +57,8 @@ final class ConfigFileLocationTests: XCTestCase {
         XCTAssertFalse(ConfigFile.displayPath(for: .local).hasPrefix("/Users/"))
     }
 
-    /// Both locations end at the same filename. The watcher derives iCloud's `.config.json.icloud`
-    /// placeholder from it, so a divergence here would break the not-yet-downloaded check that stops
-    /// a second Mac overwriting the first.
+    /// Both locations end at the same filename, so moving the mirror between them moves one file
+    /// rather than leaving the user to find a differently named copy in each place.
     func testBothLocationsEndAtTheSameFilename() {
         XCTAssertEqual(ConfigFile.url(for: .local).lastPathComponent, "config.json")
         XCTAssertEqual(ConfigFile.url(for: .iCloud).lastPathComponent, "config.json")
@@ -160,5 +159,66 @@ final class ConfigFileLocationTests: XCTestCase {
         XCTAssertFalse(
             ConfigFile.shouldAdoptExistingFile(
                 fileKeyWritten: false, syncKeyWritten: true, fileExists: true))
+    }
+
+    // MARK: - What the file carries
+
+    /// The two switches say how this Mac mirrors, not what the settings are. In the file they
+    /// travelled over iCloud and flipped every other Mac's dotfiles switch.
+    func testTheMirrorSwitchesAreNotCarriedInTheFile() {
+        XCTAssertEqual(ConfigFile.mirrorKeys, ["useConfigFile", "syncSettingsViaICloud"])
+    }
+
+    /// A key a newer build wrote — or a typo, or a note — used to vanish from the file the first
+    /// time anything changed here. Known keys are not carried forward: an owned one with no value
+    /// here was cleared on purpose, and a retired one is dead.
+    func testKeysThisBuildDoesNotKnowSurviveTheRewrite() {
+        let out = ConfigFile.filePayload(
+            ["maxColumns": 4],
+            preserving: [
+                "fromANewerBuild": 1, "maxColumns": 9, "clearedHere": 3, "showBadges": false,
+            ],
+            known: ["maxColumns", "clearedHere", "showBadges"])
+
+        XCTAssertEqual(out["fromANewerBuild"] as? Int, 1)
+        XCTAssertEqual(out["maxColumns"] as? Int, 4, "this Mac's value wins for a key it owns")
+        XCTAssertNil(out["clearedHere"])
+        XCTAssertNil(out["showBadges"])
+    }
+
+    func testWithNoFileThereIsNothingToPreserve() {
+        let out = ConfigFile.filePayload(["maxColumns": 4], preserving: nil, known: [])
+        XCTAssertEqual(out.count, 1)
+    }
+
+    // MARK: - What an edit changed
+
+    /// Only what moved. Applying the whole file reverted anything changed in Settings since the
+    /// last write — a key the file still holds at its old value was not edited.
+    func testOnlyTheKeysAnEditMovedAreApplied() {
+        let changes = ConfigFile.changes(
+            from: ["maxColumns": 4, "stickyMode": false],
+            to: ["maxColumns": 6, "stickyMode": false, "fade": true])
+        XCTAssertEqual(Set(changes.keys), ["maxColumns", "fade"])
+    }
+
+    /// Nothing synced yet — launch, or arriving at a different file — and the file wins whole.
+    func testWithNothingSyncedTheWholeFileIsNew() {
+        XCTAssertEqual(ConfigFile.changes(from: nil, to: ["a": 1, "b": 2]).count, 2)
+    }
+
+    /// Absent means "leave alone" here as everywhere else in the file's contract; deleting a line
+    /// is not a reset.
+    func testALineDeletedFromTheFileIsNotAChange() {
+        XCTAssertTrue(ConfigFile.changes(from: ["maxColumns": 4], to: [:]).isEmpty)
+    }
+
+    /// Compared as values, not as the objects that happened to hold them, so re-reading an
+    /// unchanged list does not count as editing it.
+    func testAnUnchangedListIsNotAChange() {
+        XCTAssertTrue(
+            ConfigFile.changes(
+                from: ["excludedBundleIDs": ["a", "b"]], to: ["excludedBundleIDs": ["a", "b"]]
+            ).isEmpty)
     }
 }

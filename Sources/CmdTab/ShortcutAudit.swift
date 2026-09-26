@@ -332,12 +332,24 @@ enum ShortcutAudit {
             chord: chord, display: ordered[0].display, entries: ordered)
     }
 
-    private static func entry(
+    /// One keyboard binding, flattened.
+    ///
+    /// Three states, not two. Unbound — nil, or the `keyCode == -1` sentinel — is "Not set". A
+    /// chord with no ⌘, ⌥ or ⌃ is *stored* but refused by every matcher (see `isUsableGlobally`),
+    /// and reading it as "Not set" told someone whose hand-edited config said ⇥ that nothing was
+    /// there at all. It is listed as what it says, with no chord and inactive, which is how the
+    /// Overview already draws a binding that cannot fire.
+    nonisolated static func entry(
         _ kind: ShortcutEntry.Kind, _ id: String, _ label: String, _ hotkey: Hotkey?, active: Bool
     ) -> ShortcutEntry {
-        guard let hotkey, hotkey.isUsableGlobally else {
+        guard let hotkey, hotkey.keyCode >= 0 else {
             return ShortcutEntry(
                 id: id, kind: kind, label: label, display: "Not set", chord: nil, isActive: active)
+        }
+        guard hotkey.isUsableGlobally else {
+            return ShortcutEntry(
+                id: id, kind: kind, label: label, display: hotkey.displayString, chord: nil,
+                isActive: false)
         }
         return ShortcutEntry(
             id: id, kind: kind, label: label, display: hotkey.displayString,

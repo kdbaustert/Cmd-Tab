@@ -66,43 +66,67 @@ enum TabEnumeration {
 
     /// The tabs of `root` — the radio-button descendants of the first `AXTabGroup` found with at
     /// least two of them — or nil when nothing in `root` looks like a tab strip at all.
+    ///
+    /// Also nil once `isExpired` says so, checked at every node: the depth bounds cap how far down
+    /// a walk goes but not how wide, and a Finder list view or a Mail message list is thousands of
+    /// rows at one depth, each a round trip. Checked only between apps, as the budget used to be,
+    /// one such app ran the whole walk however long it took, on the queue the switcher's own
+    /// refresh runs on. A walk cut short answers nil rather than a partial strip — a tab list with
+    /// half the tabs missing reads as the whole of it.
     static func findTabs<N: Node>(in root: N, maxSearchDepth: Int = maxSearchDepth,
-        maxCollectDepth: Int = maxCollectDepth
+        maxCollectDepth: Int = maxCollectDepth, isExpired: () -> Bool = { false }
     ) -> [N]? {
-        guard let group = findTabGroup(in: root, depth: 0, maxDepth: maxSearchDepth) else {
-            return nil
-        }
-        let radios = collectRadioButtons(under: group, depth: 0, maxDepth: maxCollectDepth)
-        guard radios.count >= 2 else { return nil }
-        return radios
+        let found = findTabGroup(
+            in: root, depth: 0, maxDepth: maxSearchDepth, collectDepth: maxCollectDepth,
+            isExpired: isExpired)
+        guard let found, !isExpired() else { return nil }
+        return found
     }
 
     /// Depth-first, stopping at the first qualifying `AXTabGroup` rather than the best one — the
     /// first real tab strip a window exposes is the one this feature means, and continuing past it
     /// only risks a second, unrelated group (a settings pane's own tab control, say) winning by
     /// virtue of being walked later.
-    private static func findTabGroup<N: Node>(in node: N, depth: Int, maxDepth: Int) -> N? {
-        guard depth <= maxDepth else { return nil }
-        if node.role == "AXTabGroup",
-            collectRadioButtons(under: node, depth: 0, maxDepth: maxCollectDepth).count >= 2 {
-            return node
+    ///
+    /// Returns the group's radio buttons rather than the group, because qualifying it already
+    /// collected them — handing back the group had `findTabs` walk the same subtree a second time.
+    private static func findTabGroup<N: Node>(
+        in node: N, depth: Int, maxDepth: Int, collectDepth: Int, isExpired: () -> Bool
+    ) -> [N]? {
+        guard depth <= maxDepth, !isExpired() else { return nil }
+        if node.role == "AXTabGroup" {
+            let radios = collectRadioButtons(
+                under: node, depth: 0, maxDepth: collectDepth, isExpired: isExpired)
+            if radios.count >= 2 { return radios }
         }
         for child in node.children {
-            if let found = findTabGroup(in: child, depth: depth + 1, maxDepth: maxDepth) {
+            if let found = findTabGroup(
+                in: child, depth: depth + 1, maxDepth: maxDepth, collectDepth: collectDepth,
+                isExpired: isExpired)
+            {
                 return found
             }
+            // Stop the loop, not just the next visit: each sibling would otherwise be handed to a
+            // call that turns it away at once, which is cheap, but a wide node is the case this
+            // check exists for.
+            if isExpired() { return nil }
         }
         return nil
     }
 
-    /// Every `AXRadioButton` under `node`, depth-bounded. Used both to qualify a candidate
-    /// `AXTabGroup` and to collect the tabs of the one that is chosen.
-    private static func collectRadioButtons<N: Node>(under node: N, depth: Int, maxDepth: Int) -> [N] {
-        guard depth <= maxDepth else { return [] }
+    /// Every `AXRadioButton` under `node`, depth-bounded — the tabs of a candidate `AXTabGroup`,
+    /// and the test of whether it is one.
+    private static func collectRadioButtons<N: Node>(
+        under node: N, depth: Int, maxDepth: Int, isExpired: () -> Bool
+    ) -> [N] {
+        guard depth <= maxDepth, !isExpired() else { return [] }
         var found: [N] = []
         for child in node.children {
+            // Before the role read, which is the round trip.
+            guard !isExpired() else { break }
             if child.role == "AXRadioButton" { found.append(child) }
-            found += collectRadioButtons(under: child, depth: depth + 1, maxDepth: maxDepth)
+            found += collectRadioButtons(
+                under: child, depth: depth + 1, maxDepth: maxDepth, isExpired: isExpired)
         }
         return found
     }
@@ -128,9 +152,16 @@ enum TabEnumeration {
     }
 
     /// The tabs of one app's frontmost window, active tab first — cheaper for a caller that only
-    /// wants to show it ahead of its siblings than tagging every tile and sorting downstream.
-    static func tabs(pid: pid_t, frontWindow window: AXUIElement) -> [TabRef] {
-        guard let radios = findTabs(in: AXNode(element: window)) else { return [] }
+    /// wants to show it ahead of its siblings than tagging every tile and sorting downstream. Empty
+    /// when the walk runs past `deadline`; see `findTabs`. No deadline by default, for a caller
+    /// with no session to keep waiting — the opt-in harness test.
+    static func tabs(
+        pid: pid_t, frontWindow window: AXUIElement, deadline: DispatchTime = .distantFuture
+    ) -> [TabRef] {
+        guard
+            let radios = findTabs(
+                in: AXNode(element: window), isExpired: { DispatchTime.now() >= deadline })
+        else { return [] }
         let refs = radios.map { node in
             TabRef(
                 pid: pid, window: window, element: node.element,
@@ -142,9 +173,9 @@ enum TabEnumeration {
     /// Every tab of every given app's frontmost window, gathered within `deadline` — see
     /// `enumerationBudget`. An app that reports no windows (Ghostty while backgrounded) is skipped
     /// silently rather than logged, since "not running a window right now" is routine for it, not a
-    /// failure. An app the deadline catches mid-walk is simply not asked about again this pass; its
-    /// tiles come back on the next tabs-scoped session, the same as any other app the switcher was
-    /// too slow to reach.
+    /// failure. An app the deadline catches mid-walk contributes nothing this pass — the walk stops
+    /// at the node it had reached, see `findTabs` — and its tiles come back on the next tabs-scoped
+    /// session, the same as any other app the switcher was too slow to reach.
     ///
     /// Accessibility IPC throughout, so this belongs on the caller's background queue — same
     /// constraint as everything else in `AX`.
@@ -153,7 +184,7 @@ enum TabEnumeration {
         for pid in pids {
             guard DispatchTime.now() < deadline else { break }
             guard let window = AX.frontWindow(ofApplication: pid) else { continue }
-            all += tabs(pid: pid, frontWindow: window)
+            all += tabs(pid: pid, frontWindow: window, deadline: deadline)
         }
         return all
     }

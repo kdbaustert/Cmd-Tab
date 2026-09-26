@@ -50,6 +50,13 @@ final class TileThumbnails: ObservableObject {
     /// Which window ids the running task is capturing, so a refresh that changes nothing does not
     /// restart it and re-capture what is already on screen.
     private var inFlight: Set<CGWindowID> = []
+    /// Windows this session already tried and got nothing usable from — captured blank, or not
+    /// listed by ScreenCaptureKit at all.
+    ///
+    /// Not retried. `begin` runs on every list mutation, and each retry paid for a fresh
+    /// enumeration of every window on the system to arrive at the same answer. A thumbnail is a
+    /// photograph of a moment anyway; the next session tries again.
+    private var failed: Set<CGWindowID> = []
 
     /// Bumped by `cancel()`. A capture pass carries the value it started under and publishes
     /// nothing once that value has moved on.
@@ -76,13 +83,25 @@ final class TileThumbnails: ObservableObject {
     func begin(for targets: [SwitchTarget]) {
         guard isEnabled else { return }
         let wanted = targets.compactMap { target -> CGWindowID? in
-            // App tiles and launch tiles have no window to capture; a minimized window has no live
-            // surface, so it captures blank and keeps its icon.
-            guard case .window = target.kind, !target.isMinimized else { return nil }
+            // App tiles and launch tiles have no window to capture. A minimized one is captured
+            // like any other: the window server keeps its surface, and measured against the Dock
+            // every minimized window returned real pixels — see `WindowCapture.thumbnails`. One
+            // that does not is caught by the blank check and keeps its icon.
+            guard case .window = target.kind else { return nil }
             guard let id = target.windowID, id != 0 else { return nil }
             return id
         }
-        let missing = wanted.filter { images[$0] == nil && !inFlight.contains($0) }
+        // Photographs of windows that have left the list go with them. A stay-open session lasts
+        // until it is dismissed, and every window closed under it otherwise left its capture
+        // resident — and republished into `SwitcherModel.thumbnails` — for the rest of it. One
+        // assignment, so one `objectWillChange`, and only when there is something to drop.
+        let wantedSet = Set(wanted)
+        if images.keys.contains(where: { !wantedSet.contains($0) }) {
+            images = images.filter { wantedSet.contains($0.key) }
+        }
+        let missing = wanted.filter {
+            images[$0] == nil && !inFlight.contains($0) && !failed.contains($0)
+        }
         guard !missing.isEmpty else { return }
 
         inFlight.formUnion(missing)
@@ -106,6 +125,7 @@ final class TileThumbnails: ObservableObject {
         task?.cancel()
         task = nil
         inFlight.removeAll()
+        failed.removeAll()
         images.removeAll()
     }
 
@@ -149,6 +169,8 @@ final class TileThumbnails: ObservableObject {
             // One `merge` rather than a loop of subscript assignments, because `images` is
             // `@Published` and every one of those is its own `objectWillChange`.
             images.merge(captured) { _, new in new }
+            let landed = Set(captured.map(\.0))
+            failed.formUnion(chunk.filter { !landed.contains($0) })
         }
         release(ids, generation: generation)
     }

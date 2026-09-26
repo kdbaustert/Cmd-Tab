@@ -14,8 +14,10 @@ import CoreGraphics
 struct SessionRelease: Equatable {
     /// Whether this session is allowed to outlive the trigger being released.
     let isSticky: Bool
-    /// Modifiers of whichever hotkey opened the session. Empty for a menu-bar session, which has no
-    /// modifier to release at all.
+    /// Modifiers of whichever hotkey opened the session. Never empty in practice: every opener
+    /// refuses a chord without ⌘, ⌥ or ⌃ (`Hotkey.isUsableGlobally`), and the menu-bar session that
+    /// once opened with none is gone. An empty chord is always "still held" to `TriggerModifiers`,
+    /// so such a session would simply never end on release — Return, Escape or a click would.
     let activeHeld: CGEventFlags
 
     /// Whether releasing the trigger leaves the panel up rather than committing.
@@ -32,9 +34,9 @@ struct SessionRelease: Equatable {
     ///
     /// The chord decides. Still held, this is the classic ⌘-Tab cycle and Tab steps along the list —
     /// letting go is what takes you there. Already up, there is no release left to commit on: a
-    /// stay-open session, or one opened from the menu bar with no chord at all, would otherwise leave
-    /// Tab as a key that can only ever shuffle the highlight. So it becomes the go key, and the
-    /// highlight moves with the arrows, scroll or the mouse.
+    /// stay-open session would otherwise leave Tab as a key that can only ever shuffle the
+    /// highlight. So it becomes the go key, and the highlight moves with the arrows, scroll or the
+    /// mouse.
     ///
     /// Shift is the exception at both ends. ⇧-Tab means "step backwards" here, in the native switcher
     /// and everywhere else people bring the gesture from; promoting it to the go key along with plain
@@ -43,8 +45,6 @@ struct SessionRelease: Equatable {
     /// has to be checked before it.
     func tabCommits(flags: CGEventFlags) -> Bool {
         guard !flags.contains(.maskShift) else { return false }
-        // Nothing to hold, so nothing can be "still held" — `stillHeld` says yes to an empty chord.
-        guard !activeHeld.isEmpty else { return true }
         return !TriggerModifiers.stillHeld(flags, held: activeHeld)
     }
 
@@ -55,8 +55,6 @@ struct SessionRelease: Equatable {
     /// is the only event-driven recovery there is.
     func shouldCommit(flags: CGEventFlags) -> Bool {
         guard !TriggerModifiers.stillHeld(flags, held: activeHeld) else { return false }
-        // No modifier to release: a menu-bar session ends by clicking, Return or Escape, never here.
-        guard !activeHeld.isEmpty else { return false }
         // A sticky session's modifier is legitimately already up, so every event that follows looks
         // like a release. None of them may commit — that is the whole of Stay open.
         return !staysOpenOnRelease

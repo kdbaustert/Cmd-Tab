@@ -146,6 +146,29 @@ actor WindowCapture {
         return out
     }
 
+    /// The Dock-bound windows Accessibility reports that the strip has not already accounted for —
+    /// the supplement for anything ScreenCaptureKit missed.
+    ///
+    /// "Not already accounted for" is not "not in `liveIDs`" alone. `liveIDs` is SC's list *after*
+    /// its filters, so a minimized window a `.hide` title rule took out of it was, by that test,
+    /// one SC had missed — and came straight back in here, titled, one click from being restored.
+    /// The rule has to be applied again on this side for its promise to hold; see
+    /// `PreviewCoordinator.titleRules`.
+    ///
+    /// The untitled filter SC's list gets is deliberately *not* repeated. It exists for SC's
+    /// layer-0 debris, and this list is the app's own windows, where an empty title is far more
+    /// often a title Accessibility failed to read than a surface nobody could switch to.
+    nonisolated static func supplementalMinimized(
+        _ minimized: [(id: CGWindowID, title: String)], liveIDs: Set<CGWindowID>,
+        titleRules: [CompiledTitleRule], bundleID: String?
+    ) -> [(id: CGWindowID, title: String)] {
+        minimized.filter {
+            !liveIDs.contains($0.id)
+                && !CompiledTitleRule.matches(
+                    titleRules, bundleID: bundleID, title: $0.title, action: .hide)
+        }
+    }
+
     /// What Accessibility says an app's windows are.
     ///
     /// Internal rather than private so `WindowPreviewTests` can exercise the two rules built on it —
@@ -169,6 +192,27 @@ actor WindowCapture {
     private var content: SCShareableContent?
     private var contentFetchedAt: Date?
     private var axCache: [pid_t: (windows: AXWindows, at: Date)] = [:]
+
+    /// Bumped by `clearCaches`. A read in flight across the clear carries the value it started
+    /// under, and stores nothing once that has moved on.
+    ///
+    /// The actor keeps the caches free of data races, not of *stale writes*: every read below
+    /// suspends — in ScreenCaptureKit, or on a detached task — and a hover cancelled by the session
+    /// ending does not stop the system call it is waiting on. So `clearCaches` ran in the gap, the
+    /// read resumed, and wrote the full window list straight back into the cache it had just
+    /// emptied, to sit there until the next session ended.
+    private var cacheGeneration = 0
+
+    /// The window-list fetch in flight, so a hover arriving while another is waiting on it joins
+    /// that fetch rather than starting a second enumeration of every window on the system.
+    private var contentFetch: Task<ContentSnapshot?, Never>?
+
+    /// `SCShareableContent` is not `Sendable`, and a `Task`'s result has to be. Safe for the reason
+    /// `Entry` is: a read-only snapshot ScreenCaptureKit hands out for naming windows to capture,
+    /// and nothing here writes to it.
+    private struct ContentSnapshot: @unchecked Sendable {
+        let content: SCShareableContent
+    }
 
     /// The Dock-membership read, reused for `ttl` like `shareableContent` — it's the same shape of
     /// cost (a system-wide window-server walk) paid on the same hover-sweep path, and until now was
@@ -250,8 +294,11 @@ actor WindowCapture {
         }
         guard !Task.isCancelled else { return [] }
         // Back to healthy — say so, so a log read after the fact shows the recovery rather than
-        // leaving the last word as the failure.
-        if reported.remove(.permission) != nil || reported.remove(.enumeration) != nil {
+        // leaving the last word as the failure. Every fault at once: two `remove`s joined by `||`
+        // stopped at the first, and a fault left behind in the set was one `reportOnce` would then
+        // stay silent about the next time it happened.
+        if !reported.isEmpty {
+            reported.removeAll()
             Log.general.notice("preview: capture is working again")
         }
 
@@ -366,8 +413,9 @@ actor WindowCapture {
                 key: { SurfaceKey(title: $0.title ?? "", frame: $0.frame) })
         }
 
-        let liveIDs = Set(live.map(\.windowID))
-        let minimized = ax.minimized.filter { !liveIDs.contains($0.id) }
+        let minimized = Self.supplementalMinimized(
+            ax.minimized, liveIDs: Set(live.map(\.windowID)), titleRules: titleRules,
+            bundleID: bundleID)
         guard !live.isEmpty || !minimized.isEmpty, !Task.isCancelled else { return [] }
 
         // `NSScreen` is main-thread-only. Empty with a single display, which is what keeps the
@@ -433,15 +481,19 @@ actor WindowCapture {
 
     /// Drops the caches when a session ends.
     ///
-    /// Both TTLs are sub-second, so nothing would legitimately reuse these across sessions — but
-    /// `content` holds an `SCWindow` for every window on the system and `axCache` gains an entry
-    /// per app hovered. Left alone they stay resident for the life of the process, which for a
-    /// menu-bar agent is the life of the login.
+    /// Every TTL here is sub-second, so nothing would legitimately reuse these across sessions —
+    /// but `content` holds an `SCWindow` for every window on the system, and `axCache` and
+    /// `menuCache` gain an entry per app hovered. Left alone they stay resident for the life of
+    /// the process, which for a menu-bar agent is the life of the login. Bumping `cacheGeneration`
+    /// is what keeps a read still in flight from putting them straight back.
     func clearCaches() {
+        cacheGeneration &+= 1
         content = nil
         contentFetchedAt = nil
+        contentFetch = nil
         dockedCache = nil
         axCache.removeAll()
+        menuCache.removeAll()
         // `lastUsableAX` deliberately survives. This runs at the end of *every* session, and the gap
         // it exists to bridge is far longer than one — an app that answers nothing for half a minute
         // answers nothing for the whole of the session too, so a remembered answer dropped here
@@ -493,12 +545,27 @@ actor WindowCapture {
         if let content, let contentFetchedAt, Date().timeIntervalSince(contentFetchedAt) < ttl {
             return content
         }
-        guard
-            let fresh = try? await SCShareableContent.excludingDesktopWindows(
-                true, onScreenWindowsOnly: false)
-        else { return nil }
-        content = fresh
-        contentFetchedAt = Date()
+        // Joined rather than repeated. The actor serialises access to the cache, not the wait to
+        // fill it: a hover arriving while another was suspended in the fetch found the cache still
+        // empty and started an enumeration of its own.
+        if let contentFetch { return await contentFetch.value?.content }
+        let generation = cacheGeneration
+        let fetch = Task { () -> ContentSnapshot? in
+            guard
+                let fresh = try? await SCShareableContent.excludingDesktopWindows(
+                    true, onScreenWindowsOnly: false)
+            else { return nil }
+            return ContentSnapshot(content: fresh)
+        }
+        contentFetch = fetch
+        let fresh = await fetch.value?.content
+        // Only this fetch's own handle: a clear, and a new session's fetch, may have replaced it.
+        if contentFetch == fetch { contentFetch = nil }
+        guard let fresh else { return nil }
+        if generation == cacheGeneration {
+            content = fresh
+            contentFetchedAt = Date()
+        }
         return fresh
     }
 
@@ -510,8 +577,9 @@ actor WindowCapture {
         if let dockedCache, Date().timeIntervalSince(dockedCache.at) < ttl {
             return dockedCache.result
         }
+        let generation = cacheGeneration
         let fresh = await Task.detached { Self.dockedWindowIDs() }.value
-        dockedCache = (fresh, Date())
+        if generation == cacheGeneration { dockedCache = (fresh, Date()) }
         return fresh
     }
 
@@ -666,6 +734,7 @@ actor WindowCapture {
         if let entry = axCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.windows }
         // Shed everything else that has aged out while we are here.
         axCache = axCache.filter { now.timeIntervalSince($0.value.at) < ttl }
+        let generation = cacheGeneration
         let windows = await Task.detached { () -> AXWindows in
             let elements = AX.windows(of: AX.application(pid)).filter(AX.isWindow)
             var ids: Set<CGWindowID> = []
@@ -685,7 +754,8 @@ actor WindowCapture {
         // timestamp and never age out.
         if windows.resolvedEveryWindow { lastUsableAX[pid] = (windows, now) }
         lastUsableAX = lastUsableAX.filter { now.timeIntervalSince($0.value.at) < usableAXLifetime }
-        axCache[pid] = (windows, now)
+        // `lastUsableAX` above outlives a clear by design; this sub-second one does not.
+        if generation == cacheGeneration { axCache[pid] = (windows, now) }
         return windows
     }
 
@@ -706,10 +776,11 @@ actor WindowCapture {
         let now = Date()
         if let entry = menuCache[pid], now.timeIntervalSince(entry.at) < ttl { return entry.titles }
         menuCache = menuCache.filter { now.timeIntervalSince($0.value.at) < ttl }
+        let generation = cacheGeneration
         let titles = await Task.detached { () -> Set<String> in
             Set(Self.windowMenuItems(for: pid).map(\.title))
         }.value
-        menuCache[pid] = (titles, now)
+        if generation == cacheGeneration { menuCache[pid] = (titles, now) }
         return titles
     }
 

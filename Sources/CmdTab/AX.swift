@@ -45,11 +45,29 @@ enum AX {
 
     /// An app element with the timeout already applied. Always build them through here, so one
     /// hung app cannot hang the switcher.
+    ///
+    /// The per-element timeout covers this element and nothing derived from it: `AXUIElement.h`
+    /// says setting it on an element sets it "only for that object". Every window, child
+    /// and menu item read *through* it is a new object, and those fell back to the process-wide
+    /// default of about six seconds — so the cap held for the first call to an app and for none of
+    /// the calls after it, including the four `raise(element:)` makes on a stored window. Building
+    /// an app element is therefore also where the process-wide cap is installed, once; nothing
+    /// reaches another app's tree without passing through here first.
     static func application(_ pid: pid_t) -> AXUIElement {
+        _ = processWideTimeout
         let element = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(element, timeout)
         return element
     }
+
+    /// `timeout`, set on the system-wide element — which is how the API spells "every element this
+    /// process holds that has no timeout of its own". A `static let` so it runs exactly once, on
+    /// whichever thread first asks for an app element, with the runtime's lazy-static machinery
+    /// making that thread-safe. A caller that needs longer for one element — a press whose action
+    /// is real work in the other app, say — sets its own on that element, which wins over this.
+    private static let processWideTimeout: Void = {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), timeout)
+    }()
 
     /// Instrumented because this is where the messaging timeout earns its keep: one call, to one
     /// app, that a wedged app can stall for the full 250ms. A refresh makes this call per app, so
@@ -274,8 +292,10 @@ enum AX {
     /// inspectors and sheets as readily as on documents, and snapping a Find panel to half the
     /// screen is never what the user meant; `isSwitchableWindow` is the same filter the switcher's
     /// own window list uses. Second, `kAXFocusedWindow` comes back empty for some apps
-    /// (Electron/Catalyst), which is why `SwitchTarget.resolveWindow` walks the same three
-    /// attributes — focused, then main, then the window list.
+    /// (Electron/Catalyst), which is why this walks three attributes — focused, then main, then the
+    /// window list. `SwitchTarget.resolveWindow` calls this rather than keeping its own copy of the
+    /// walk, which it used to, without the filter: an app-mode close aimed at TextEdit closed its
+    /// Find panel.
     static func frontWindow(ofApplication pid: pid_t) -> AXUIElement? {
         let app = application(pid)
         let candidates = [
@@ -283,11 +303,14 @@ enum AX {
             copyElement(app, kAXMainWindowAttribute as String),
         ].compactMap { $0 }
         if let real = candidates.first(where: isSwitchableWindow) { return real }
-        if let window = windows(of: app).first(where: isSwitchableWindow) { return window }
+        // Read once: the fallback below wants the same list, and a second read is a second
+        // round trip to an app that has already been slow enough to get us this far.
+        let windows = windows(of: app)
+        if let window = windows.first(where: isSwitchableWindow) { return window }
         // Nothing passed the filter. Fall back to whatever focus reported rather than doing
         // nothing at all: an app whose only window reports an unexpected subrole is still a window
         // the user is looking at, and refusing to move it is the worse failure.
-        return candidates.first ?? windows(of: app).first(where: isWindow)
+        return candidates.first ?? windows.first(where: isWindow)
     }
 
     /// The app's window whose frame matches `bounds`, within a couple of points.

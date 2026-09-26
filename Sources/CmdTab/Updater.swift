@@ -109,6 +109,22 @@ final class Updater: ObservableObject {
         ]
     }
 
+    /// Catches up with an import or reset that rewrote Sparkle's keys behind its back.
+    ///
+    /// `exportedDefaultsKeys` are carried by export, import and reset, and those write
+    /// `UserDefaults` directly. The two toggles read Sparkle's properties afresh, but nothing told
+    /// SwiftUI to ask again, so the About pane kept showing the old answer; and Sparkle's timer was
+    /// scheduled from the old one — its header asks for exactly this call after a change made
+    /// "behind Sparkle's back". Deliberately not a write-back of either property: after a reset the
+    /// keys are absent, and assigning the value Sparkle reads would store today's Info.plist
+    /// default as though the user had chosen it.
+    func reload() {
+        guard let controller else { return }
+        objectWillChange.send()
+        lastCheck = controller.updater.lastUpdateCheckDate
+        controller.updater.resetUpdateCycleAfterShortDelay()
+    }
+
     /// The explicit check, from the button in Settings → About.
     ///
     /// Distinct from the scheduled one in a way that matters: this one is allowed to report "you are

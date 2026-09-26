@@ -65,6 +65,10 @@ enum SwitcherFallbacks {
         var offerSearch: Bool
         var offerShell: Bool
         var searchTemplate: String
+
+        /// Whether any fallback is on — and so whether a query may need the punctuation an address,
+        /// a search or a command is written in. See `SwitcherController.typedCharacter`.
+        var anyEnabled: Bool { offerURL || offerSearch || offerShell }
     }
 
     static let defaultSearchTemplate = "https://duckduckgo.com/?q=%s"

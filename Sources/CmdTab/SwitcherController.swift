@@ -68,6 +68,8 @@ final class SwitcherController {
     /// happened to complete before the panel drew, which on a cold list is nothing.
     private var thumbnailSubscription: AnyCancellable?
     private var tap: EventTap?
+    /// Which withheld key-downs are still waiting for their key-up. See `KeyPairing`.
+    private var keyPairing = KeyPairing()
     private var isVisible = false {
         didSet {
             publishTapState()
@@ -307,6 +309,9 @@ final class SwitcherController {
             dragSnap.titleRules = titleRules
             mouseWindowDrag.titleRules = titleRules
             targetHighlight.titleRules = titleRules
+            launchArrangements.titleRules = titleRules
+            displayLayouts.titleRules = titleRules
+            desktopAssignments.titleRules = titleRules
             provider.refresh()
         }
     }
@@ -408,7 +413,7 @@ final class SwitcherController {
             searchTemplate: settings.fallbackSearchTemplate)
         stickyMode = settings.stickyMode
         sameAppHotkey = settings.sameAppHotkey
-        // Last, and a plain assignment so its `didSet` still re-syncs the system ⌘-Tab.
+        // Last, and a plain assignment so its `didSet` re-syncs the system ⌘-Tab when it changed.
         hotkey = settings.hotkey
 
         if needsRefresh { provider.refresh() }
@@ -431,15 +436,25 @@ final class SwitcherController {
     /// Optional second trigger that opens the frontmost app's windows instead of the whole list.
     /// nil leaves the combination alone, which matters because the default (⌘-`) is one apps use
     /// themselves.
-    var sameAppHotkey: Hotkey? { didSet { publishTapState() } }
+    var sameAppHotkey: Hotkey? {
+        didSet {
+            publishTapState()
+            if sameAppHotkey != oldValue { warnAboutShadowedActions() }
+        }
+    }
 
     /// The combination that opens the switcher. Changing it re-syncs the system ⌘-Tab: the native
     /// switcher is suppressed only while *our* trigger is exactly ⌘-Tab.
+    ///
+    /// The shadow warning runs on a change only. `apply` assigns this on every `BehaviorStore`
+    /// notification, which a slider drag posts once per tick, and a config carrying a collision
+    /// wrote the same `.error` lines into the log for every one of them.
     var hotkey: Hotkey = .commandTab {
         didSet {
             publishTapState()
+            guard hotkey != oldValue else { return }
             warnAboutShadowedActions()
-            guard hotkey != oldValue, isRunning else { return }
+            guard isRunning else { return }
             SystemSwitcher.setNativeEnabled(!hotkey.isCommandTab)
         }
     }
@@ -482,6 +497,9 @@ final class SwitcherController {
                 forName: NSApplication.didResignActiveNotification, object: nil, queue: .main,
                 using: republish),
         ]
+        // The other ambient input, and the same arrangement: a recorder arming or disarming
+        // republishes, and `liveTapState` reads `KeyRecorder.isArmed` itself.
+        KeyRecorder.onChange = { [weak self] in self?.publishTapState() }
         // Seeded rather than assumed: the notifications report only *changes*, and Settings can
         // already be frontmost by the time trust is granted and this runs.
         publishTapState()
@@ -490,6 +508,7 @@ final class SwitcherController {
     private func stopActiveMirror() {
         activeObservers.forEach(NotificationCenter.default.removeObserver)
         activeObservers = []
+        KeyRecorder.onChange = nil
     }
 
     /// The decision inputs as they are right now, read from the live properties.
@@ -514,6 +533,7 @@ final class SwitcherController {
             // The AppKit truth, deliberately — see `startActiveMirror` for why this one field is
             // read live rather than taken from a cache the notifications maintain.
             isAppActive: NSApp.isActive,
+            isRecordingShortcut: KeyRecorder.isArmed,
             hasQuery: !model.query.isEmpty)
     }
 
@@ -649,6 +669,10 @@ final class SwitcherController {
                 // (`showWith` calls `begin` every time), so this leaves it in the state the next one
                 // would have put it in regardless.
                 self.model.begin(targets)
+                // `begin` clears the query, and the query is mirrored — see `setQuery`. After a
+                // restart that follows a session ended mid-filter, skipping this left the mirror
+                // saying there was a query, which `verify` reported as a missed publish.
+                self.publishTapState()
                 self.panels.prewarm()
             }
         }
@@ -659,6 +683,8 @@ final class SwitcherController {
         cancel()
         tap?.stop()
         tap = nil
+        // A key held across the restart would have its key-up withheld by the next tap otherwise.
+        keyPairing = KeyPairing()
         stopActiveMirror()
         SystemSwitcher.restoreNativeIfNeeded()
     }
@@ -683,7 +709,7 @@ final class SwitcherController {
         // Key-downs only. This is scaffolding on the hottest path in the app, where the rule is that
         // nothing but trivial state changes hands, and building a `TapState` walks a few small
         // collections to compare them. Key-down is where every routing decision is actually taken —
-        // `flagsChanged` returns above and a key-up is either swallowed or ignored — so restricting
+        // `flagsChanged` returns below and a key-up is paired rather than decided — so restricting
         // it costs no coverage: any publish a modifier event failed to make is caught by the next
         // key-down, which is the first event that could act on it.
         if type == .keyDown { tapMirror.verify(against: liveTapState) }
@@ -709,6 +735,29 @@ final class SwitcherController {
             return false
         }
 
+        let code = Int(event.getIntegerValueField(.keyboardEventKeycode))
+
+        // A key-up is not decided at all: it goes wherever its own key-down went. Deciding it from
+        // the session's state *now* is what sent a trigger's key-up to the app in front after the
+        // session had ended, and withheld the key-up of a key held since before the panel opened —
+        // see `KeyPairing`. What survives is the one thing a key-up can still *do*: end a session
+        // whose modifier release never arrived as a `flagsChanged` (see
+        // `SessionRelease.shouldCommit`).
+        if type == .keyUp {
+            if isVisible, release.shouldCommit(flags: flags) { commit() }
+            return keyPairing.keyUp(code)
+        }
+
+        let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        let swallow = handleKeyDown(code, flags, event, isAutorepeat: isAutorepeat)
+        keyPairing.keyDown(code, isAutorepeat: isAutorepeat, swallowed: swallow)
+        return swallow
+    }
+
+    /// Everything a key-down can do, and whether it is withheld from the app in front.
+    private func handleKeyDown(
+        _ code: Int, _ flags: CGEventFlags, _ event: CGEvent, isAutorepeat: Bool
+    ) -> Bool {
         // A key going down while a mouse chord is held is proof that chord is being used as a
         // *keyboard* gesture, so the hold-and-point gesture stands down exactly as it does when a
         // drag claims it — see `ModifierTargetHighlight.standDown(claimedBy:)`.
@@ -737,12 +786,11 @@ final class SwitcherController {
         //
         // Placed above the three branches below rather than inside any of them, because it holds
         // for all of them: a keystroke taken by an open panel is no more a pointing gesture than
-        // one claimed by a tiling chord. Key-down only, since a key-up is the tail of a press this
-        // has already answered for, and `standDown` returns at its first guard when no gesture is
-        // armed — which is every keystroke on a machine where the chord is not held.
-        if type == .keyDown { targetHighlight.standDown(claimedBy: "a keystroke") }
-
-        let code = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        // one claimed by a tiling chord. Key-downs only — a key-up is the tail of a press this has
+        // already answered for, and never reaches this function — and `standDown` returns at its
+        // first guard when no gesture is armed, which is every keystroke on a machine where the
+        // chord is not held.
+        targetHighlight.standDown(claimedBy: "a keystroke")
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
@@ -751,14 +799,12 @@ final class SwitcherController {
                 commit()
                 return false
             }
-            if type == .keyUp { return true }
             resetStickyIdle()
-            return handleVisibleKey(code, flags, event)
+            return handleVisibleKey(code, flags, event, isAutorepeat: isAutorepeat)
         }
 
         // Armed: a trigger press is waiting out the show-delay. A second press shows immediately.
         if armed {
-            if type == .keyUp { return true }
             // The same sticky guard `flagsChanged` carries: a stay-open session does not end on
             // release. Without it, a key landing inside the show delay after ⌘ was let go — a
             // release `flagsChanged` had rightly ignored — quick-switched to the previous app
@@ -784,11 +830,10 @@ final class SwitcherController {
         // logging.
         let isAppActive = NSApp.isActive
         let decision = TapRouting.idle(
-            TapRouting.Event(
-                type: type, keyCode: code, flags: flags,
-                isAutorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0),
+            TapRouting.Event(keyCode: code, flags: flags, isAutorepeat: isAutorepeat),
             bindings: routingBindings(),
-            isAppActive: isAppActive)
+            isAppActive: isAppActive,
+            isRecording: KeyRecorder.isArmed)
 
         switch decision {
         case .pass:
@@ -796,7 +841,7 @@ final class SwitcherController {
             // the per-keystroke path while still catching "I pressed the chord and nothing
             // happened". Skipped while we are frontmost: there the chord is inert by design, which
             // `.tilingInert` already reports, and "no binding" would be the wrong explanation.
-            if !isAppActive, type == .keyDown, tiling.isEnabled,
+            if !isAppActive, tiling.isEnabled,
                 !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty {
                 Log.tap.log(
                     level: Log.traceLevel,
@@ -837,11 +882,18 @@ final class SwitcherController {
     /// callback, synchronously, and the controller outlives the tap it owns.
     private func routingBindings() -> TapRouting.Bindings {
         TapRouting.Bindings(
+            // `isUsableGlobally` on both built-ins, as every other global binding already checks.
+            // A config carrying a key code and no modifier made a bare key an opener: every plain
+            // Tab on the machine opened a session with no modifier to release — so no commit on
+            // release and no watchdog — and Tab could no longer be typed anywhere.
             openerMatches: { [unowned self] code, flags in
-                code == self.hotkey.keyCode && self.modifiersMatch(flags, self.hotkey.heldModifiers)
+                self.hotkey.isUsableGlobally && code == self.hotkey.keyCode
+                    && self.modifiersMatch(flags, self.hotkey.heldModifiers)
             },
             sameAppMatches: { [unowned self] code, flags in
-                guard let sameApp = self.sameAppHotkey else { return false }
+                guard let sameApp = self.sameAppHotkey, sameApp.isUsableGlobally else {
+                    return false
+                }
                 return code == sameApp.keyCode
                     && self.modifiersMatch(flags, sameApp.heldModifiers)
             },
@@ -977,7 +1029,9 @@ final class SwitcherController {
         scheduleLayout()
     }
 
-    private func handleVisibleKey(_ code: Int, _ flags: CGEventFlags, _ event: CGEvent) -> Bool {
+    private func handleVisibleKey(
+        _ code: Int, _ flags: CGEventFlags, _ event: CGEvent, isAutorepeat: Bool
+    ) -> Bool {
         // The trigger key. While the chord is held it advances the selection, the classic cycle; once
         // the chord is up — a stay-open session — it switches to whatever is highlighted, because
         // there is no longer a release to do that job. Deliberately *before* `endSteering`, so a Tab
@@ -996,8 +1050,7 @@ final class SwitcherController {
             // fresh press meaning "go". Letting ⌘ up a moment before Tab is the ordinary way this
             // gesture ends, and without this the next repeat commits and closes the panel — exactly
             // the stay-open failure this predicate was written to fix.
-            let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-            if code == Key.tab, !repeated, release.tabCommits(flags: flags) {
+            if code == Key.tab, !isAutorepeat, release.tabCommits(flags: flags) {
                 commit()
                 return true
             }
@@ -1048,14 +1101,15 @@ final class SwitcherController {
         }
         // A digit jumps straight to that tile — but only with no query, so a query can still contain
         // digits (typing into a filtered list rather than jumping).
-        if model.query.isEmpty, Key.digits[code] != nil {
-            jump(to: Key.digits[code]!)
+        if model.query.isEmpty, let number = Key.digits[code] {
+            jump(to: number)
             return true
         }
         // Anything else that resolves to a visible character extends the filter query. ⌥/⌃ are action
         // modifiers, so a key held with either never types.
         if extra.intersection([.maskAlternate, .maskControl]).isEmpty,
-            let character = Self.typedCharacter(from: event) {
+            let character = Self.typedCharacter(
+                from: event, allowsPunctuation: fallbackSettings.anyEnabled) {
             setQuery(model.query + character)
             return true
         }
@@ -1107,8 +1161,7 @@ final class SwitcherController {
     /// keystroke is disk-backed LaunchServices work inline on the key path — the one thing the
     /// class comment's invariant says must never go there.
     private func updateLaunchSuggestions(for query: String) {
-        let anyFallback =
-            fallbackSettings.offerURL || fallbackSettings.offerSearch || fallbackSettings.offerShell
+        let anyFallback = fallbackSettings.anyEnabled
         guard (launchFromSearch || anyFallback), !query.isEmpty else {
             model.setLaunchSuggestions([])
             return
@@ -1292,8 +1345,8 @@ final class SwitcherController {
 
     /// The character a key event would type, ignoring ⌘/⌥/⌃ (Shift/Caps kept for case) and honouring
     /// the active keyboard layout, so type-to-filter follows the physical keys the user actually
-    /// presses. Returns nil for control keys and anything that isn't a plain letter/number/space/dash.
-    private static func typedCharacter(from event: CGEvent) -> String? {
+    /// presses. Returns nil for control keys and anything `isTypable` refuses.
+    private static func typedCharacter(from event: CGEvent, allowsPunctuation: Bool) -> String? {
         guard let copy = event.copy() else { return nil }
         copy.flags = copy.flags.intersection([.maskShift, .maskAlphaShift])
         var length = 0
@@ -1301,10 +1354,27 @@ final class SwitcherController {
         copy.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &buffer)
         guard length == 1 else { return nil }
         let string = String(utf16CodeUnits: buffer, count: 1)
-        guard let scalar = string.unicodeScalars.first else { return nil }
-        let allowed = CharacterSet.alphanumerics.union(.whitespaces)
+        guard let scalar = string.unicodeScalars.first,
+            isTypable(scalar, allowsPunctuation: allowsPunctuation)
+        else { return nil }
+        return string
+    }
+
+    /// Whether a character may extend the filter query.
+    ///
+    /// A plain letter, number, space, dash, underscore, dot or apostrophe — what an app or window
+    /// name is written in — unless a fallback is on, when punctuation and symbols are let in too.
+    /// The fallbacks are the one thing a query can do besides match a name, and each is written in
+    /// characters the narrow set refused: `localhost:3000`, which `SwitcherFallbacks.url` exists to
+    /// recognise, could not be typed at all, and neither could a path or a pipe for the shell.
+    /// Without a fallback those characters could only ever make a query match nothing, so they stay
+    /// out.
+    nonisolated static func isTypable(_ scalar: Unicode.Scalar, allowsPunctuation: Bool) -> Bool {
+        let narrow = CharacterSet.alphanumerics.union(.whitespaces)
             .union(CharacterSet(charactersIn: "-_.'"))
-        return allowed.contains(scalar) ? string : nil
+        if narrow.contains(scalar) { return true }
+        guard allowsPunctuation else { return false }
+        return CharacterSet.punctuationCharacters.union(.symbols).contains(scalar)
     }
 
     // MARK: - Actions
@@ -1610,7 +1680,7 @@ final class SwitcherController {
             // code owns.
             stopWatchdog()
             startStickyGuards()
-        } else if !activeHeld.isEmpty {
+        } else {
             startWatchdog()
         }
 
@@ -1695,9 +1765,16 @@ final class SwitcherController {
         target.focus()
     }
 
-    private func commit() {
+    /// - Parameter picked: the tile was named outright — clicked, or ⌘-numbered — rather than
+    ///   reached by letting go. A query that matches nothing leaves the highlight on a dimmed tile
+    ///   the user was not choosing; releasing on it used to switch there anyway, so an implicit
+    ///   commit now just closes the panel. A named tile is still taken, dimmed or not.
+    private func commit(picked: Bool = false) {
         guard isVisible else { return }
-        let target = model.selected
+        let target = picked || model.matchesAnything ? model.selected : nil
+        if !picked, !model.matchesAnything {
+            Log.tap.notice("commit: query matched nothing — closing without switching")
+        }
         let rules = appRules
         hide()
         // Off the tap callback — activating an app is an AX / NSWorkspace round-trip against a
@@ -1920,7 +1997,7 @@ final class SwitcherController {
         // The id rather than the title: titles are deliberately left redacted (see `Log`), and
         // a line reading "cmd-4: -> <private>" said nothing the commit line after it did not.
         Log.tap.notice("cmd-\(number): -> \(self.model.targets[index].id, privacy: .public)")
-        commit()
+        commit(picked: true)
     }
 
     /// Dismiss only when nothing is left at all (a query matching nothing keeps the panel up),
@@ -1961,7 +2038,11 @@ final class SwitcherController {
         guard model.selected?.isLaunchable == false else { return }
         // Off the tap callback: every one of these reaches Accessibility or NSWorkspace, and
         // `hideOthers` walks the whole running-application list. See the type's doc comment.
-        DispatchQueue.main.async { [weak self] in
+        //
+        // A run-loop hop rather than the usual dispatch one, because quit and force-quit may put up
+        // `confirmThenExecute`'s modal from inside it, and a modal inside a main-queue block
+        // freezes the main queue while the tap keeps firing — see `MainRunLoop`.
+        MainRunLoop.perform { [weak self] in
             guard let self, self.isVisible else { return }
             guard !self.confirmsDestructiveActions || !action.isDestructive else {
                 self.confirmThenExecute(action)
@@ -2096,7 +2177,10 @@ final class SwitcherController {
     /// Optimistic like `quitSelected`, and deliberately without a refresh: the close is an async AX
     /// call on another queue, so refreshing here can enumerate the window before it is gone and fold
     /// it straight back in.
-    private func closeTargets(_ targets: [SwitchTarget]) {
+    ///
+    /// `clearsMarks` is false only for a tile's own close button, which acts on that tile and so
+    /// has no business discarding a marked set it never touched — see `closeTile`.
+    private func closeTargets(_ targets: [SwitchTarget], clearsMarks: Bool = true) {
         guard !targets.isEmpty else { return }
         for target in targets { target.closeWindow() }
         // Window mode: drop just those tiles. App mode: the app stays (it may have other windows).
@@ -2106,7 +2190,7 @@ final class SwitcherController {
                 return target.id
             })
         model.remove { windowIDs.contains($0.id) }
-        model.clearMarks()
+        if clearsMarks { model.clearMarks() }
         finishListMutation()
     }
 
@@ -2183,17 +2267,22 @@ final class SwitcherController {
     /// `WindowTiler`'s home-display resolution (which otherwise measures where a window already
     /// sits) lands every one of them together — which is the entire point of tiling a set instead of
     /// tiling each window where `⌥T` happened to catch it.
+    ///
+    /// A target with no `displayIndex` on a machine with one display is on that display. The
+    /// provider only resolves an index when there is more than one display to tell apart, so
+    /// requiring one refused every set on every Mac without an external monitor. With several
+    /// displays a missing index is a window that could not be placed, and that still refuses.
     private func tileMarkedWindows() {
         let marked = model.markedTargets
+        let areas = WindowTiler.visibleAreas()
         guard let arrangement = MarkedTiling.arrangements(for: marked.count),
             marked.allSatisfy({ if case .window = $0.kind { true } else { false } }),
-            let displayIndex = marked[0].displayIndex
+            let displayIndex = marked[0].displayIndex ?? (areas.count == 1 ? 0 : nil),
+            areas.indices.contains(displayIndex)
         else {
             Log.tap.notice("tileMarked: refusing (\(marked.count, privacy: .public) marked)")
             return
         }
-        let areas = WindowTiler.visibleAreas()
-        guard areas.indices.contains(displayIndex) else { return }
         let area = [areas[displayIndex]]
         for (target, slot) in zip(marked, arrangement) {
             let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
@@ -2224,23 +2313,32 @@ final class SwitcherController {
     private func pick(_ index: Int) {
         guard isVisible, model.targets.indices.contains(index) else { return }
         model.selection = index
-        commit()
+        commit(picked: true)
     }
 
     /// A tile's close button was clicked.
     ///
-    /// Routed through the same `perform(_:)` every bound key goes through rather than calling
-    /// `closeSelectedWindow` directly, so the pointer and ⌥W cannot drift apart in what they do to a
-    /// window — the guard on launch tiles, the hop off the tap callback and the list bookkeeping
-    /// afterwards are all in there and all needed here.
+    /// Closes *that tile*, resolved at the click, and deliberately not through `perform(.close)`.
+    /// ⌥W acts on `actionTargets()`, which is the marked set whenever there is one — right for a
+    /// key, which is aimed at nothing in particular, and wrong for a button drawn on one tile: with
+    /// two tiles marked, clicking a third tile's ✕ closed the two marked windows and left the one
+    /// clicked open. What the two routes must agree on is still shared: `closeTargets` does the
+    /// close and the list bookkeeping for both (leaving the marked set alone here, since this never
+    /// acted on it), the launch-tile guard is repeated below, and the hop keeps the list from
+    /// changing under the click that is still being dispatched.
     ///
-    /// The selection is moved first because every action acts on the selection. In practice the
-    /// cursor has already put it there — a button is only drawn on the tile under the pointer — but
-    /// "in practice" is not a thing to close someone's window on.
+    /// The selection is still moved, so the highlight sits where the list closes up around it.
     private func closeTile(_ index: Int) {
         guard isVisible, actionsEnabled, model.targets.indices.contains(index) else { return }
+        let target = model.targets[index]
+        guard !target.isLaunchable else { return }
         model.selection = index
-        perform(.close)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            // pid, not title, for the reason `execute` gives.
+            Log.tap.notice("close button on pid \(target.pid, privacy: .public)")
+            self.closeTargets([target], clearsMarks: false)
+        }
     }
 
     /// A tile was ⌥-clicked: toggle its mark, the mouse's way of doing what ⌥-Space does from the

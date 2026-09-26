@@ -732,12 +732,32 @@ final class BehaviorStore: ObservableObject {
 
     /// A hotkey lives in two keys — the key code and the modifier mask. An absent *code* is the
     /// signal that the user has never set one, and selects `fallback`.
+    ///
+    /// So does a stored pair that could not open anything safely. Every recorder refuses a bare
+    /// key, but these keys also arrive from a hand-edited config or an import, and the modifier
+    /// half defaults to 0 — so a file that set only `"hotkeyKeyCode": 50` bound the switcher to a
+    /// bare backtick, swallowed on every keystroke machine-wide, with `stillHeld` then true
+    /// forever. The global bindings have refused that shape all along through `isUsableGlobally`;
+    /// the two openers are the ones that took it as it came. Refused here, the stored value is left
+    /// for the user to see and fix, and the switcher keeps working meanwhile.
     private static func loadHotkey(
         code: Defaults.Key<Int?>, mods: Defaults.Key<Int>, default fallback: Hotkey
     ) -> Hotkey {
         guard let keyCode = Defaults[code] else { return fallback }
-        return Hotkey(
-            keyCode: keyCode, modifierRaw: UInt64(bitPattern: Int64(Defaults[mods])))
+        if let stored = usableHotkey(keyCode: keyCode, modifiers: Defaults[mods]) { return stored }
+        Log.general.error(
+            """
+            hotkey: stored \(code.name, privacy: .public) is key \(keyCode, privacy: .public) with \
+            no ⌘, ⌥ or ⌃; using \(fallback.displayString, privacy: .public) instead
+            """)
+        return fallback
+    }
+
+    /// The stored pair as a hotkey, or nil when it is not one a trigger may use. The pure half of
+    /// `loadHotkey`, so the rule can be checked without a real `UserDefaults`.
+    nonisolated static func usableHotkey(keyCode: Int, modifiers: Int) -> Hotkey? {
+        let hotkey = Hotkey(keyCode: keyCode, modifierRaw: UInt64(bitPattern: Int64(modifiers)))
+        return hotkey.isUsableGlobally ? hotkey : nil
     }
 
     /// Suppresses per-field `onChange` during a bulk `reload()`, so an import/reset/theme-apply

@@ -70,6 +70,11 @@ struct TapState: Equatable, Sendable {
     /// `SwitcherController.startActiveMirror`.
     var isAppActive = false
 
+    /// Whether a settings-window shortcut recorder is armed, which stands the two built-in triggers
+    /// down so the recorder can hear their chords — see `TapRouting.idle`. Mirrored off
+    /// `KeyRecorder.onChange` for the same reason `isAppActive` is mirrored off notifications.
+    var isRecordingShortcut = false
+
     /// Whether a filter query is being typed, which decides whether a digit jumps to a tile or types
     /// into the query. The query text itself is never needed — only whether there is one.
     var hasQuery = false
@@ -160,6 +165,9 @@ final class TapStateMirror: @unchecked Sendable {
         if published.shortcuts != live.shortcuts { fields.append("shortcuts") }
         if published.actionsEnabled != live.actionsEnabled { fields.append("actionsEnabled") }
         if published.isAppActive != live.isAppActive { fields.append("isAppActive") }
+        if published.isRecordingShortcut != live.isRecordingShortcut {
+            fields.append("isRecordingShortcut")
+        }
         if published.hasQuery != live.hasQuery { fields.append("hasQuery") }
         return fields.isEmpty ? "unknown field" : fields.joined(separator: ", ")
     }
