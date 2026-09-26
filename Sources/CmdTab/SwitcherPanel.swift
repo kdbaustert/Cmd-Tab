@@ -442,8 +442,18 @@ extension NSWindow {
     /// Whatever pins the window is not understood, so it may pin it again straight after the repair
     /// — and a signal meant to mark a rare event must not become a line per ⌘-Tab and per hover
     /// for as long as that lasts. A minute keeps every distinct occurrence and drops the repeats.
+    ///
+    /// The remove and the insert land on *separate run-loop turns*, and that is the whole repair.
+    /// Measured 2026-09-26, live occurrence plus a control probe: toggled back-to-back in one turn,
+    /// the two writes coalesce into no window-server message at all — the previous version of this
+    /// repair transmitted nothing, which is why every occurrence logged "repair did not take".
+    /// Split across turns, both writes reach the server. The server applies them asynchronously
+    /// (the probe read the old tag right after each write and the new one ~0.3s later), so the
+    /// verification read waits rather than racing the apply, and the window is ordered front again
+    /// after the insert so the show that found the pin also draws.
     func restoreAllSpaces(_ label: String) {
         guard windowNumber > 0, collectionBehavior.contains(.canJoinAllSpaces),
+            !AllSpacesRepair.isRepairing(window: windowNumber),
             let space = SpaceMover.confinement(of: CGWindowID(windowNumber))
         else { return }
         if AllSpacesRepair.shouldLog(window: windowNumber) {
@@ -453,14 +463,21 @@ extension NSWindow {
                 to all Spaces
                 """)
         }
+        AllSpacesRepair.beginRepair(window: windowNumber)
         collectionBehavior.remove(.canJoinAllSpaces)
-        collectionBehavior.insert(.canJoinAllSpaces)
-        // Re-read rather than assumed. The toggle was measured on a control panel pinned by hand;
-        // whether it takes against whatever pins these windows in the wild is exactly what is not
-        // yet known, and a repair that quietly failed would look like the bug never recurring.
-        if let still = SpaceMover.confinement(of: CGWindowID(windowNumber)) {
-            Log.general.error(
-                "\(label, privacy: .public) repair did not take; still confined to space \(still, privacy: .public)")
+        DispatchQueue.main.async {
+            self.collectionBehavior.insert(.canJoinAllSpaces)
+            // The show that detected the pin ordered the window in while its tag was still wrong;
+            // order it again now the tag is queued to be right. Between sessions the panel rests
+            // ordered out, and this must not be what brings it back.
+            if self.isVisible { self.orderFrontRegardless() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                AllSpacesRepair.endRepair(window: self.windowNumber)
+                if let still = SpaceMover.confinement(of: CGWindowID(self.windowNumber)) {
+                    Log.general.error(
+                        "\(label, privacy: .public) repair did not take; still confined to space \(still, privacy: .public)")
+                }
+            }
         }
     }
 }
@@ -471,10 +488,19 @@ private enum AllSpacesRepair {
     private static var lastLogged: [Int: Date] = [:]
     private static let interval: TimeInterval = 60
 
+    /// Windows whose two-turn repair is still in flight. The drag overlays call `restoreAllSpaces`
+    /// per pointer event, so without this a still-applying repair is re-detected as a fresh pin
+    /// and the flag toggles every turn, remove racing insert, for as long as the server takes.
+    private static var repairing: Set<Int> = []
+
     static func shouldLog(window: Int) -> Bool {
         let now = Date()
         if let last = lastLogged[window], now.timeIntervalSince(last) < interval { return false }
         lastLogged[window] = now
         return true
     }
+
+    static func isRepairing(window: Int) -> Bool { repairing.contains(window) }
+    static func beginRepair(window: Int) { repairing.insert(window) }
+    static func endRepair(window: Int) { repairing.remove(window) }
 }
