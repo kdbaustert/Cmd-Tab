@@ -13,6 +13,10 @@ full documentation — building, every setting, how it works — is in
 [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
 
 <p align="center">
+  <img src="docs/switcher.png" alt="The switcher, showing eight running apps with Ghostty selected" width="738">
+</p>
+
+<p align="center">
   <img src="docs/settings.png" alt="The Settings window, General tab" width="900">
 </p>
 
