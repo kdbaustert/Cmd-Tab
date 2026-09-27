@@ -84,7 +84,6 @@ full documentation — building, every setting, how it works — is in
 
 - `cmdtab://` URL scheme for tiling, focus and activation from any script.
 - Native Shortcuts, Spotlight and Siri actions for the same set — no URL required.
-- Raycast extension and Alfred workflow in [`integrations/`](integrations/).
 
 ### Updates
 

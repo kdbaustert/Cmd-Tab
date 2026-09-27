@@ -1104,15 +1104,6 @@ against the live titles by `AppIntentsTests`, so adding an arrangement without i
 fails the suite. CI checks the assembled bundle for the metadata, since a bundle without it
 carries no other symptom.
 
-### Raycast and Alfred
-
-`integrations/` packages the same `open cmdtab://...` calls above as a Raycast extension and an
-Alfred workflow, so tiling, activation and hide/show are reachable from a launcher's own search
-rather than a hand-typed `open`. Neither integration hard-codes the arrangement list: both read
-`integrations/arrangements.json`, so adding a `WindowArrangement` case — or a future verb like
-`restore` or `layout` — is one edit there instead of one per launcher. See each subdirectory's
-README for installing it.
-
 ## Switching to an app whose windows are all minimized
 
 Activating an app whose windows are *all* minimized leaves you looking at its menu bar and an
