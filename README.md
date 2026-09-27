@@ -26,14 +26,15 @@ full documentation — building, every setting, how it works — is in
 
 - Switch between apps, or between every window across all apps.
 - Rebindable trigger (⌘-Tab by default), plus optional extra shortcuts scoped to this app's
-  windows, the current display, the current Desktop, minimized windows, or browser and terminal
-  tabs.
+  windows, every window, the current display, the current Desktop, minimized windows, browser and
+  terminal tabs, or the Desktops overview.
 - A searchable Desktops overview: every window of every app, grouped under a header per Desktop.
 - Keyboard and mouse navigation: arrows, ⌘-1…⌘-0 to jump straight to a tile, hover and click.
 - Order by recent use or alphabetically; optionally group windows by app, limit to the current
   Desktop, or hide apps with no windows.
 - Favorites pinned to the front, with dimmed launch tiles for favorites that aren't running.
-- Per-app rules: exclude an app, give it its own shortcut, or always list its windows individually.
+- Per-app rules: exclude an app, give it its own shortcut, always list its windows individually,
+  or keep tiling shortcuts away from it.
 - Window-title rules to hide, expand or protect specific windows.
 - Switching to an app whose windows are all minimized brings one back.
 
@@ -48,8 +49,8 @@ full documentation — building, every setting, how it works — is in
 
 ### Window actions
 
-- Close, quit, force-quit, hide, minimize or zoom the highlighted tile without leaving the
-  switcher.
+- Close, quit, force-quit, hide, hide others, minimize or zoom the highlighted tile without
+  leaving the switcher — or move it to another display, or tile it to half the screen.
 - Mark several tiles and act on all of them at once, or tile two to four of them side by side.
 
 ### Window management
@@ -70,7 +71,9 @@ full documentation — building, every setting, how it works — is in
 ### Appearance
 
 - Grid or list layout, with adjustable icon size, spacing and padding.
-- Highlight color, light or dark appearance, and a glass material.
+- Highlight color, a light, dark or system-matched appearance, and a glass material.
+- Badges on each tile: its ⌘-number, unread counts from the Dock, and which display and Desktop
+  it is on.
 - Show the panel centered, on the active screen, or near the pointer, on one display or all of
   them.
 - Optional live window previews and thumbnail tiles, plus a full-size preview on Space —
