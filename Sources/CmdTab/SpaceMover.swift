@@ -353,6 +353,17 @@ enum SpaceMover {
         return []
     }
 
+    /// The most user Spaces any display has right now — how many "Move to desktop N" rows name a
+    /// Desktop that exists. The maximum rather than any one display's count, because the rows act
+    /// on whichever display the focused window is on at press time, and a row that works on one
+    /// display of a mixed desk should not vanish because the other has fewer. One round trip.
+    static func maxUserSpaceCount() -> Int {
+        managedDisplays().map { display in
+            ((display["Spaces"] as? [[String: Any]]) ?? [])
+                .filter { ($0["type"] as? Int) == 0 }.count
+        }.max() ?? 0
+    }
+
     /// Every user Space that exists right now, keyed by the UUID macOS files app bindings under.
     ///
     /// The bridge between a stored assignment and a live Desktop. `com.apple.spaces`'s

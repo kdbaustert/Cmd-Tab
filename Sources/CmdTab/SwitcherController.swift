@@ -7,6 +7,7 @@ private enum Key {
     static let tab = 48
     static let escape = 53
     static let delete = 51
+    static let space = 49
     static let leftArrow = 123
     static let rightArrow = 124
     static let downArrow = 125
@@ -56,6 +57,10 @@ final class SwitcherController {
     private let provider = TargetProvider()
     private lazy var panels = PanelGroup(model: model)
     private lazy var preview = PreviewCoordinator(switcher: panels) { [weak self] in
+        self?.isVisible ?? false
+    }
+    /// The Space-toggled full-size preview of the highlighted tile. Off by default; see the type.
+    private lazy var quickPreview = QuickPreview(switcher: panels) { [weak self] in
         self?.isVisible ?? false
     }
     /// Live window thumbnails drawn as tile artwork in window mode. Off by default; see the type.
@@ -326,6 +331,7 @@ final class SwitcherController {
         didSet {
             provider.titleRules = titleRules
             preview.titleRules = titleRules
+            quickPreview.titleRules = titleRules
             dragSnap.titleRules = titleRules
             mouseWindowDrag.titleRules = titleRules
             targetHighlight.titleRules = titleRules
@@ -417,6 +423,10 @@ final class SwitcherController {
         panels.screens = settings.panelScreens
         panels.fade = settings.fade
         panels.windowPreviewEnabled = settings.windowPreview
+        quickPreview.isEnabled = settings.quickPreview
+        // Turning it off mid-session takes an open preview down with it, or the setting would
+        // read as broken until the panel next closed.
+        if !settings.quickPreview { quickPreview.dismiss() }
         // Turning it off clears whatever was captured, so a later session cannot show a photograph
         // of a window as it looked before the feature was switched off.
         thumbnails.isEnabled = settings.windowThumbnailTiles
@@ -426,6 +436,7 @@ final class SwitcherController {
         showDelay = settings.showDelay
         windowSpaceScope = settings.windowSpaceScope
         launchFromSearch = settings.launchFromSearch
+        learnsSearchShortcuts = settings.learnSearchShortcuts
         fallbackSettings = SwitcherFallbacks.Settings(
             offerURL: settings.offerURLFallback,
             offerSearch: settings.offerSearchFallback,
@@ -1000,11 +1011,21 @@ final class SwitcherController {
             // A Desktop move is not geometry, so it does not go to the tiler. `WindowTiler.apply`
             // computes a frame and writes it over Accessibility; there is no frame that expresses
             // "one Desktop along", and the move takes seconds and drives the pointer. See
-            // `DesktopMover`.
-            if let step = arrangement.desktopStep {
-                Log.tap.notice(
-                    "desktop move: pid \(pid, privacy: .public), step \(step, privacy: .public)")
-                DesktopMover.move(pid: pid, to: .step(step), follow: follows) { [weak self] in
+            // `DesktopMover`. Both spellings of the move — the relative step and the named
+            // `desktopN` — share the branch, so the refresh below covers them alike.
+            if arrangement.isDesktopMove {
+                let destination: DesktopMover.Destination
+                if let index = arrangement.desktopIndex {
+                    Log.tap.notice(
+                        "desktop move: pid \(pid, privacy: .public), desktop \(index + 1, privacy: .public)")
+                    destination = .index(index)
+                } else {
+                    let step = arrangement.desktopStep ?? 0
+                    Log.tap.notice(
+                        "desktop move: pid \(pid, privacy: .public), step \(step, privacy: .public)")
+                    destination = .step(step)
+                }
+                DesktopMover.move(pid: pid, to: destination, follow: follows) { [weak self] in
                     // The gesture activates Mission Control, so the activation notifications it
                     // fires rebuild the list while the window is between Desktops — and nothing
                     // rebuilds it again once the window has landed. Under a Desktop order that
@@ -1039,7 +1060,7 @@ final class SwitcherController {
     func perform(_ command: URLCommand) {
         switch command {
         case .arrangement(let arrangement):
-            if arrangement.desktopStep != nil, !tiling.desktopMoves {
+            if arrangement.isDesktopMove, !tiling.desktopMoves {
                 Log.general.notice("url: desktop moves are switched off; ignoring")
                 return
             }
@@ -1124,6 +1145,12 @@ final class SwitcherController {
         // Navigation and editing keys.
         switch code {
         case Key.escape:
+            // The preview first, the session second — the same layering Quick Look gives Finder,
+            // and the panel is still one further Escape away.
+            if quickPreview.isShowing {
+                quickPreview.dismiss()
+                return true
+            }
             cancel()
             return true
         case Key.rightArrow: advance(1); return true
@@ -1145,6 +1172,13 @@ final class SwitcherController {
             jump(to: number)
             return true
         }
+        // Space toggles the full-size preview of the highlighted tile — but only with no query,
+        // the same rule the digits follow just above: once a query has started, Space is its word
+        // separator. An auto-repeat is one press held, not a flurry of toggles.
+        if code == Key.space, quickPreview.isEnabled, model.query.isEmpty, !isAutorepeat {
+            quickPreview.toggle(for: model.selected)
+            return true
+        }
         // Anything else that resolves to a visible character extends the filter query. ⌥/⌃ are action
         // modifiers, so a key held with either never types.
         if extra.intersection([.maskAlternate, .maskControl]).isEmpty,
@@ -1160,9 +1194,12 @@ final class SwitcherController {
     /// Applies a new filter query and relays out — the list, and often its column count, change.
     ///
     /// The suggestions are built first and handed over with the query, so the list is scored once
-    /// per keystroke — see `SwitcherModel.setQuery(_:suggestions:)`.
+    /// per keystroke — see `SwitcherModel.setQuery(_:suggestions:)`. The learned binding rides
+    /// along the same way: one store lookup per keystroke (a scan of a few dozen entries, safe on
+    /// the tap callback), handed in rather than read by the model so the ranking stays testable.
     private func setQuery(_ query: String) {
-        model.setQuery(query, suggestions: launchSuggestions(for: query))
+        let learned = learnsSearchShortcuts ? SearchShortcutsStore.shared.bundleID(for: query) : nil
+        model.setQuery(query, suggestions: launchSuggestions(for: query), learned: learned)
         // The one decision input `didSet` cannot reach, since the query lives on the model. Only
         // whether there *is* one is mirrored — see `TapState.hasQuery`.
         publishTapState()
@@ -1171,6 +1208,9 @@ final class SwitcherController {
 
     /// Whether a query that matches nothing running may offer installed apps to launch.
     var launchFromSearch = true
+
+    /// Whether committing a typed query remembers which app it chose — see `SearchShortcutsStore`.
+    var learnsSearchShortcuts = true
 
     /// The fallback tier: whether, and how, a query that matches nothing running *and* nothing
     /// installed may offer to open it as a URL, search for it, or run it as a shell command. Each
@@ -1260,7 +1300,8 @@ final class SwitcherController {
                     }
                     return SwitchTarget(
                         id: "launch:\(entry.bundleID)", kind: .launch(entry.url), title: entry.name,
-                        appName: entry.name, icon: icon, isMinimized: false, isHidden: false)
+                        appName: entry.name, icon: icon, isMinimized: false, isHidden: false,
+                        bundleID: entry.bundleID)
                 } : []
         // The fallback tier, one rung below: only reached when this tier came up empty *and*
         // nothing already running answers the query either. Asked in that order, so the running
@@ -1342,6 +1383,9 @@ final class SwitcherController {
                 // After `layout()` on purpose: it reads the tile's reported frame to place the
                 // strip, and a selection that has just moved has not been laid out until then.
                 self.panels.previewSelection()
+                // The full-size preview follows the highlight the same way the strip does, with
+                // its own debounce; a session that never pressed Space pays one guard here.
+                self.quickPreview.selectionChanged(self.model.selected)
                 self.announceSelection()
             }
         }
@@ -1599,7 +1643,9 @@ final class SwitcherController {
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
             case .show:
-                self.showWith(targets: filtered, backwards: backwards, mode: .windows)
+                self.showWith(
+                    targets: filtered, backwards: backwards, mode: .windows,
+                    groupsByDesktop: scope == .desktopsOverview)
             case .focus(let index):
                 // Tapped and released before the list landed: switch without ever drawing.
                 self.pendingSameAppReleased = false
@@ -1621,11 +1667,14 @@ final class SwitcherController {
     }
 
     /// Narrows a window list to a scope. `.frontApp`, `.allWindows` and `.tabs` are already exactly
-    /// what was fetched, so only the three filtering scopes do anything here.
+    /// what was fetched, so only the filtering scopes do anything here — and the overview, which
+    /// keeps every window and changes only the order.
     private static func filter(_ targets: [SwitchTarget], to scope: SwitcherScope) -> [SwitchTarget] {
         switch scope {
         case .frontApp, .allWindows, .tabs:
             return targets
+        case .desktopsOverview:
+            return groupedByDesktop(targets)
         case .minimized:
             return targets.filter(\.isMinimized)
         case .currentDisplay:
@@ -1661,6 +1710,22 @@ final class SwitcherController {
         // the scan below settles it for both without leaving the process.
         guard targets.contains(where: { $0.spaceID != nil }) else { return targets }
         return narrowed(targets, toSpaces: SpaceMover.currentSpaceIDs())
+    }
+
+    /// The overview's order: the same windows, stably sorted by the Desktop they live on, so each
+    /// Desktop's windows form one contiguous run the view can put a header over. Windows with no
+    /// Desktop at all — minimized ones, and anything the window server could not place — sort to
+    /// the very end, one group rather than scattered. Stable, so within a Desktop the list keeps
+    /// the order the provider built (MRU, usually). Pure so it can be tested.
+    ///
+    /// On a single-Desktop machine no target carries a `spaceIndex` and the sort is the identity,
+    /// which is also what suppresses the headers — see `SwitcherModel.desktopSections`.
+    nonisolated static func groupedByDesktop(_ targets: [SwitchTarget]) -> [SwitchTarget] {
+        targets.enumerated().sorted { a, b in
+            let ia = a.element.spaceIndex ?? Int.max
+            let ib = b.element.spaceIndex ?? Int.max
+            return ia == ib ? a.offset < b.offset : ia < ib
+        }.map(\.element)
     }
 
     /// The filter itself, over a Space set already read. Pure so it can be tested: an empty set is
@@ -1732,7 +1797,8 @@ final class SwitcherController {
     /// way the provider built it. The same-app cycle passes `.windows` explicitly — it shows one
     /// app's windows whatever the setting says, which is the whole point of it.
     private func showWith(
-        targets: [SwitchTarget], backwards: Bool, mode: SwitcherMode? = nil
+        targets: [SwitchTarget], backwards: Bool, mode: SwitcherMode? = nil,
+        groupsByDesktop: Bool = false
     ) {
         // An explicit `mode` is exactly what distinguishes a narrowed session from the global one:
         // only `openSameApp` and `openScoped` pass it, and both hand in a list already filtered to
@@ -1743,6 +1809,9 @@ final class SwitcherController {
         let token = sessionToken
         let mode = mode ?? provider.mode
         model.mode = mode
+        // Assigned every session rather than only by the overview, so an ordinary session after an
+        // overview one draws no headers.
+        model.groupsByDesktop = groupsByDesktop
         model.begin(targets)
         // The frontmost app/window is index 0, so a plain tap lands on the previous one — unless
         // pinned favourites hold the front of the list, which is what `tapIndex` answers for.
@@ -1838,6 +1907,7 @@ final class SwitcherController {
         stopStickyGuards()
         panels.hide()
         preview.teardown()
+        quickPreview.dismiss()
         // A thumbnail is a photograph of a moment. Showing the next session what the last one
         // looked like is worse than showing it an icon.
         thumbnails.cancel()
@@ -1884,11 +1954,21 @@ final class SwitcherController {
             Log.tap.notice("commit: released on a shell fallback — closing without running it")
             target = nil
         }
+        // Read before `hide()`, whose session teardown is what ends the query's life.
+        let query = model.query
         hide()
         // Off the tap callback — activating an app is an AX / NSWorkspace round-trip against a
         // process that may not answer promptly.
         DispatchQueue.main.async {
             guard let target else { return }
+            // A committed query learns the app it chose, so the same query ranks it first next
+            // time — see `SearchShortcutsStore`. Off the tap callback with the switch itself,
+            // since learning persists to `UserDefaults`. Launch tiles learn too (committing a
+            // query to something not yet running is the same statement of intent); the fallback
+            // tiles carry no bundle id, so they never do.
+            if self.learnsSearchShortcuts, let bundleID = target.bundleID {
+                SearchShortcutsStore.shared.learn(query: query, bundleID: bundleID)
+            }
             self.switchTo(target)
         }
     }

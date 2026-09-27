@@ -273,34 +273,82 @@ struct SwitcherView: View {
         .onPreferenceChange(CloseButtonFrameKey.self) { onCloseFrames($0) }
     }
 
+    @ViewBuilder
     private var grid: some View {
-        LazyVGrid(
-            columns: Array(
-                repeating: GridItem(.fixed(tile.width), spacing: Metrics.tileGap),
-                count: max(columns, 1)),
-            spacing: Metrics.tileGap
-        ) {
-            ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, target in
-                TargetTile(
-                    target: target,
-                    size: tile,
-                    iconSize: metrics.icon(for: model.mode),
-                    titleSpacing: metrics.titleSpacing,
-                    showsTitle: model.showsTitle,
-                    isSelected: index == model.selection,
-                    isMatch: isMatch(index),
-                    highlightColor: model.highlightColor,
-                    corner: model.tileCorner,
-                    titleFont: model.titleFont(size: model.titleFontSize),
-                    number: number(for: index),
-                    showsDisplayBadges: model.showDisplayBadges,
-                    showsSpaceBadges: model.showSpaceBadges,
-                    isMarked: model.isMarked(at: index),
-                    thumbnail: thumbnail(for: target))
-                    .closeButton(at: index, model: model, target: target)
-                    .reportingFrame(at: index)
+        if model.groupsByDesktop {
+            sectionedGrid
+        } else {
+            LazyVGrid(columns: gridColumns, spacing: Metrics.tileGap) {
+                ForEach(Array(model.targets.enumerated()), id: \.element.id) { index, _ in
+                    gridTile(at: index)
+                }
             }
         }
+    }
+
+    /// The overview's grid: the same tiles at the same indices, drawn as one wrapping grid per
+    /// Desktop with a header over each. Indices stay global — hit-testing, ⌘-digits and the frame
+    /// map never learn the list was sectioned. One section draws no headers at all: that is the
+    /// single-Desktop machine (nothing carries a Desktop), where a header over everything would
+    /// only restate the panel.
+    private var sectionedGrid: some View {
+        let sections = SwitcherModel.desktopSections(model.targets)
+        return VStack(alignment: .leading, spacing: Metrics.tileGap) {
+            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                if sections.count > 1 {
+                    sectionHeader(section)
+                }
+                LazyVGrid(columns: gridColumns, spacing: Metrics.tileGap) {
+                    ForEach(Array(section.range), id: \.self) { index in
+                        gridTile(at: index)
+                    }
+                }
+            }
+        }
+    }
+
+    /// "Desktop N" the way the Spaces Bar counts, or "Elsewhere" for the windows on none —
+    /// minimized ones, mostly, which occupy no Space while they sit in the Dock.
+    private func sectionHeader(_ section: SwitcherModel.DesktopSection) -> some View {
+        Group {
+            if let space = section.spaceIndex {
+                Text("Desktop \(space + 1)")
+            } else {
+                Text("Elsewhere")
+            }
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .frame(width: contentWidth, alignment: .leading)
+    }
+
+    private var gridColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.fixed(tile.width), spacing: Metrics.tileGap),
+            count: max(columns, 1))
+    }
+
+    /// One grid tile, shared by the flat grid and the overview's sections so the two cannot drift.
+    private func gridTile(at index: Int) -> some View {
+        let target = model.targets[index]
+        return TargetTile(
+            target: target,
+            size: tile,
+            iconSize: metrics.icon(for: model.mode),
+            titleSpacing: metrics.titleSpacing,
+            showsTitle: model.showsTitle,
+            isSelected: index == model.selection,
+            isMatch: isMatch(index),
+            highlightColor: model.highlightColor,
+            corner: model.tileCorner,
+            titleFont: model.titleFont(size: model.titleFontSize),
+            number: number(for: index),
+            showsDisplayBadges: model.showDisplayBadges,
+            showsSpaceBadges: model.showSpaceBadges,
+            isMarked: model.isMarked(at: index),
+            thumbnail: thumbnail(for: target))
+            .closeButton(at: index, model: model, target: target)
+            .reportingFrame(at: index)
     }
 
     /// The list layout: one target per row.

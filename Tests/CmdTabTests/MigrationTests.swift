@@ -96,7 +96,7 @@ final class MigrationTests: XCTestCase {
         migrate()
         for key in [
             "migratedBadgeSplit", "migratedRevivedSnapHighlightColor",
-            "migratedDroppedSavedLayouts",
+            "migratedDroppedSavedLayouts", "migratedDroppedMenuBarGlyph",
         ] {
             XCTAssertTrue(defaults.bool(forKey: key), key)
         }
@@ -173,6 +173,22 @@ final class MigrationTests: XCTestCase {
     func testNothingIsAnnouncedWhenThereWereNoSavedLayouts() {
         let messages = migrate()
         XCTAssertTrue(messages.filter { $0.contains("saved-layouts") }.isEmpty, "\(messages)")
+    }
+
+    // MARK: - menuBarIcon
+
+    /// Deleted outright like the saved layouts: the glyph picker is gone, no code reads the key,
+    /// and a stored choice is a value nothing will ever look at.
+    func testTheMenuBarGlyphChoiceIsDeleted() {
+        defaults.set("keycap", forKey: "menuBarIcon")
+        let messages = migrate()
+        XCTAssertNil(stored("menuBarIcon"))
+        XCTAssertEqual(messages.filter { $0.contains("menu-bar glyph") }.count, 1)
+    }
+
+    func testNothingIsAnnouncedWhenNoGlyphWasEverChosen() {
+        let messages = migrate()
+        XCTAssertTrue(messages.filter { $0.contains("menu-bar glyph") }.isEmpty, "\(messages)")
     }
 
     // MARK: - Incoming payloads

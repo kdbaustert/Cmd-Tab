@@ -173,6 +173,14 @@ final class PanelGroup {
         let appearance: NSAppearance?
     }
 
+    /// The highlighted tile's rect and placement, for the quick preview — or nil while the tile's
+    /// geometry has not been reported yet, which the caller treats the way the strip does: ask
+    /// again later rather than standing in a zero rect.
+    func selectedTilePlacement() -> (tileRect: NSRect, placement: PreviewPlacement)? {
+        guard let rect = tileScreenRect(for: model.selection) else { return nil }
+        return (rect, placement(forTileAt: rect))
+    }
+
     func placement(forTileAt rect: NSRect) -> PreviewPlacement {
         let centre = NSPoint(x: rect.midX, y: rect.midY)
         // The panel that actually contains the tile. Mirrored panels are one per display and never

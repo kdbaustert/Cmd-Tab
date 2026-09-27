@@ -155,67 +155,42 @@ enum PanelPosition: String, CaseIterable {
     }
 }
 
-/// Which glyph the menu-bar item shows. Every case maps to a template PNG set that ships loose in
-/// the bundle Resources (`<name>.png` plus `@2x`/`@3x`), so AppKit picks the scale for the display
-/// and tints the artwork for a light or dark menu bar.
+/// The menu-bar item's glyph: a template PNG set that ships loose in the bundle Resources
+/// (`<name>.png` plus `@2x`/`@3x`), so AppKit picks the scale for the display and tints the artwork
+/// for a light or dark menu bar.
 ///
-/// The artwork ships on a 22pt canvas, and each glyph was trimmed of the padding its own artboard
-/// carried and rescaled to fill 95% of that canvas on its longest side. That trimming still matters:
-/// the source art padded each glyph differently, so shipping it as drawn left the ⌘ around 12pt
-/// while the keycap sat near 18, and they read as inconsistent whatever size they are drawn at.
-///
-/// The canvas no longer sets the on-screen height, though — `image` resizes to `drawnHeight`, which
-/// is what the menu bar actually shows.
-///
-/// The raw values are persisted, so renaming a case drops that user back to the default.
-enum MenuBarIcon: String, CaseIterable {
-    case command
-    case switcher
-    case windows
-    case keycap
-    case commandTab
+/// The artwork is the app icon's two keys: a solid ⌘ key with the ⌘ cut out of it, and the Tab key
+/// behind it at 42% alpha — the secondary layer of SF Symbols' hierarchical rendering, which a
+/// template image keeps. It is cut at the size the menu bar shows it — `drawnHeight` tall, 18pt —
+/// with straight edges snapped to the pixel grid at every scale, so each representation is drawn
+/// 1:1. The artwork used to ship on a 22pt canvas and be shrunk to 18pt in `image`, and that
+/// resampling softened every stroke.
+enum MenuBarGlyph {
+    /// The one glyph the menu bar shows. This used to be a five-way picker (`MenuBarIcon`); the
+    /// setting is gone, and one glyph replaced all five. The file keeps the name of the picker's
+    /// default, ⌘, which the new artwork still centres on.
+    private static let imageName = "menuCommandTemplate"
 
-    var title: String {
-        switch self {
-        case .command: return "Command"
-        case .switcher: return "Switcher"
-        case .windows: return "Windows"
-        case .keycap: return "Keycap"
-        case .commandTab: return "Command-Tab"
-        }
-    }
-
-    var imageName: String {
-        switch self {
-        case .command: return "menuCommandTemplate"
-        case .switcher: return "menuSwitcherTemplate"
-        case .windows: return "menuWindowsTemplate"
-        case .keycap: return "menuKeycapTemplate"
-        case .commandTab: return "menuCommandTabTemplate"
-        }
-    }
-
-    /// How tall the glyph is drawn in the menu bar, on its longest side.
+    /// How tall the glyph is drawn in the menu bar.
     ///
-    /// The PNGs are cut at 22pt, which `NSImage.size` picks up from the @1x pixel size, and at that
-    /// height they sat noticeably larger than the system's own menu-bar items. Resized here rather
-    /// than re-cut, so the @2x/@3x representations survive — AppKit still picks the right one for
-    /// the display, and only the drawn size changes.
+    /// 22pt sat noticeably larger than the system's own menu-bar items. The PNGs are cut at this
+    /// height, which `NSImage.size` picks up from the @1x pixel size, so for the shipped artwork the
+    /// resize in `image` changes nothing; it stays so art cut at any other size still lands here, and
+    /// it keeps the @2x/@3x representations — AppKit still picks the right one for the display.
     private static let drawnHeight: CGFloat = 18
 
-    /// The artwork, ready for either a status item or a menu of choices. Marked as a template here
-    /// rather than at each call site — every one of these is a template, and an unflagged one would
-    /// render as flat black on a dark menu bar.
-    var image: NSImage? {
+    /// The artwork, ready for the status item. Marked as a template here rather than at the call
+    /// site — an unflagged one would render as flat black on a dark menu bar.
+    static var image: NSImage? {
         // A copy: `NSImage(named:)` hands back a shared cached instance, and resizing that would
         // reach every other user of the same artwork.
         guard let image = NSImage(named: imageName)?.copy() as? NSImage else { return nil }
         image.isTemplate = true
-        // Fitted by the longest side rather than forced square: the Command-Tab glyph is wider than
-        // it is tall, and setting both dimensions would squash it.
+        // Fitted by height, keeping the aspect ratio, so art cut at any other size still lands at
+        // the height the menu bar expects.
         let size = image.size
         if size.width > 0, size.height > 0 {
-            let scale = Self.drawnHeight / max(size.width, size.height)
+            let scale = Self.drawnHeight / size.height
             image.size = NSSize(width: size.width * scale, height: size.height * scale)
         }
         return image
@@ -338,7 +313,6 @@ extension PanelAppearance: Defaults.Serializable {}
 extension PanelMaterial: Defaults.Serializable {}
 extension PanelPosition: Defaults.Serializable {}
 extension PanelScreens: Defaults.Serializable {}
-extension MenuBarIcon: Defaults.Serializable {}
 
 /// Typed keys for everything `BehaviorStore` persists.
 ///
@@ -426,9 +400,6 @@ extension Defaults.Keys {
     static let titleFontName = Key<String>("titleFontName", default: "")
     static let fade = Key<Bool>("fadeAnimation", default: false)
     static let showMenuBarIcon = Key<Bool>("showMenuBarIcon", default: true)
-    /// `.command` is the plain ⌘ glyph, which is what the menu bar showed before this was
-    /// selectable — so an existing install sees no change until it picks something else.
-    static let menuBarIcon = Key<MenuBarIcon>("menuBarIcon", default: .command)
     /// Off by default: it is the one feature that needs Screen Recording, and switching it on is
     /// what asks for the permission. Defaulted on, an ungranted install would show nothing on hover
     /// with no hint as to why.
@@ -442,9 +413,16 @@ extension Defaults.Keys {
     /// Off by default, like the hover preview and for the same reason — it needs Screen Recording,
     /// and this app's permission story is that it needs Accessibility and nothing else.
     static let windowThumbnailTiles = Key<Bool>("windowThumbnailTiles", default: false)
+    /// Space floats one large live capture of the highlighted tile. Off by default with the other
+    /// two capture features, on the same Screen Recording argument.
+    static let quickPreview = Key<Bool>("quickPreview", default: false)
     /// Offer installed apps when a query matches nothing running. On by default: it only ever
     /// appears in place of "No matches", so it costs nothing when it is not wanted.
     static let launchFromSearch = Key<Bool>("launchFromSearch", default: true)
+    /// Remember which app a typed query was committed to and rank it first next time. On by
+    /// default: it claims no chord and no permission, and an unlearned query behaves exactly as
+    /// before. The bindings themselves live in `SearchShortcutsStore`.
+    static let learnSearchShortcuts = Key<Bool>("learnSearchShortcuts", default: true)
     /// The fallback tier below `launchFromSearch`: it leaves the machine's own apps behind, so each
     /// of the three is its own key and every one defaults off — see `FallbackAction`.
     static let offerURLFallback = Key<Bool>("offerURLFallback", default: false)
@@ -485,8 +463,8 @@ final class BehaviorStore: ObservableObject {
         .blurOverride, .blurRadius,
         .showNumbers, .showDisplayBadges, .showSpaceBadges, .notificationBadges,
         .tileCorner, .titleFontSize, .titleFontName,
-        .fade, .showMenuBarIcon, .menuBarIcon, .windowPreview, .windowThumbnailTiles,
-        .launchFromSearch,
+        .fade, .showMenuBarIcon, .windowPreview, .windowThumbnailTiles, .quickPreview,
+        .launchFromSearch, .learnSearchShortcuts,
         .offerURLFallback, .offerSearchFallback, .offerShellFallback, .fallbackSearchTemplate,
         .verboseLogging,
     ]
@@ -497,7 +475,8 @@ final class BehaviorStore: ObservableObject {
         AppearanceStore.defaultsKeys + ExclusionStore.defaultsKeys + FavoritesStore.defaultsKeys
         + WindowTilingStore.defaultsKeys + ConfigFile.defaultsKeys + GlobalActionsStore.defaultsKeys
         + ScopedTriggersStore.defaultsKeys + AppRulesStore.defaultsKeys + TitleRulesStore.defaultsKeys
-        + SwitcherShortcutsStore.defaultsKeys + Updater.exportedDefaultsKeys
+        + SwitcherShortcutsStore.defaultsKeys + SearchShortcutsStore.defaultsKeys
+        + Updater.exportedDefaultsKeys
 
     /// The keys export/import/reset operate on.
     static var ownedDefaultsKeys: [String] { ownedKeys.map(\.name) + otherStoreKeys }
@@ -626,11 +605,6 @@ final class BehaviorStore: ObservableObject {
     @Published var showMenuBarIcon: Bool = Defaults[.showMenuBarIcon] {
         didSet { persist(showMenuBarIcon, oldValue, to: .showMenuBarIcon) }
     }
-    /// Which glyph that item shows. Kept independent of `showMenuBarIcon` so hiding the item and
-    /// bringing it back does not lose the choice.
-    @Published var menuBarIcon: MenuBarIcon = Defaults[.menuBarIcon] {
-        didSet { persist(menuBarIcon, oldValue, to: .menuBarIcon) }
-    }
     /// Hovering a tile floats live thumbnails of that app's windows; clicking one goes straight to
     /// that window. Needs Screen Recording.
     @Published var windowThumbnailTiles: Bool = Defaults[.windowThumbnailTiles] {
@@ -640,9 +614,16 @@ final class BehaviorStore: ObservableObject {
     @Published var windowPreview: Bool = Defaults[.windowPreview] {
         didSet { persist(windowPreview, oldValue, to: .windowPreview) }
     }
+    /// Space floats one large live capture of the highlighted tile. Needs Screen Recording.
+    @Published var quickPreview: Bool = Defaults[.quickPreview] {
+        didSet { persist(quickPreview, oldValue, to: .quickPreview) }
+    }
     /// Offer installed apps to launch when a query matches nothing on screen.
     @Published var launchFromSearch: Bool = Defaults[.launchFromSearch] {
         didSet { persist(launchFromSearch, oldValue, to: .launchFromSearch) }
+    }
+    @Published var learnSearchShortcuts: Bool = Defaults[.learnSearchShortcuts] {
+        didSet { persist(learnSearchShortcuts, oldValue, to: .learnSearchShortcuts) }
     }
     /// Offers "Open <query>" as a URL when it looks like one. Off by default — see
     /// `FallbackAction`.
@@ -719,10 +700,11 @@ final class BehaviorStore: ObservableObject {
         titleFontName = Defaults[.titleFontName]
         fade = Defaults[.fade]
         showMenuBarIcon = Defaults[.showMenuBarIcon]
-        menuBarIcon = Defaults[.menuBarIcon]
         windowPreview = Defaults[.windowPreview]
+        quickPreview = Defaults[.quickPreview]
         windowThumbnailTiles = Defaults[.windowThumbnailTiles]
         launchFromSearch = Defaults[.launchFromSearch]
+        learnSearchShortcuts = Defaults[.learnSearchShortcuts]
         offerURLFallback = Defaults[.offerURLFallback]
         offerSearchFallback = Defaults[.offerSearchFallback]
         offerShellFallback = Defaults[.offerShellFallback]

@@ -26,13 +26,46 @@ fi
 swift build -c "$CONFIG" ${ARCH_ARGS[@]+"${ARCH_ARGS[@]}"}
 BIN="$(swift build -c "$CONFIG" ${ARCH_ARGS[@]+"${ARCH_ARGS[@]}"} --show-bin-path)/CmdTab"
 
+# ---------------------------------------------------------------- App Intents const values
+#
+# The Shortcuts/Spotlight actions in AppIntents.swift only exist to the system through a
+# Metadata.appintents bundle, which Xcode builds produce and `swift build` does not. The metadata
+# processor (run after assembly, below) reads `.swiftconstvalues` files the compiler emits when
+# asked — Xcode's SWIFT_EMIT_CONST_VALUES setting — so a compile has to be told to emit them, for
+# the protocols named in a JSON list.
+#
+# A *separate* build in its own scratch path, always carrying the emission flags, rather than the
+# flags on the main build above. Measured: llbuild does not fingerprint `-Xswiftc` flags, so
+# adding them to an up-to-date tree rebuilds nothing and emits nothing — and a universal build
+# compiles once per architecture, both racing to write the one output path. A scratch path whose
+# every compile has carried the flags has neither problem: the first build pays one host-arch
+# module compile, after which it is incremental, and any source change that could alter the
+# metadata recompiles and re-emits. The const values are architecture-independent, so the host
+# arch stands for both slices of a universal build.
+# Absolute paths throughout: the emission path is resolved against the compiler's own working
+# directory, not the package's, and a relative one silently lands nowhere at all.
+INTENTS_DIR="$(pwd)/.build/appintents"
+mkdir -p "$INTENTS_DIR"
+CONSTVALS="$INTENTS_DIR/CmdTab.swiftconstvalues"
+printf '%s' '["AppIntent","AppEntity","AppEnum","AppShortcutsProvider","TransientAppEntity","EntityQuery","DynamicOptionsProvider","EnumerableEntityQuery","AppIntentsPackage"]' \
+    > "$INTENTS_DIR/protocols.json"
+echo "==> Extracting App Intents const values"
+swift build -c "$CONFIG" --scratch-path "$INTENTS_DIR/scratch" \
+    -Xswiftc -emit-const-values-path -Xswiftc "$CONSTVALS" \
+    -Xswiftc -Xfrontend -Xswiftc -const-gather-protocols-file \
+    -Xswiftc -Xfrontend -Xswiftc "$INTENTS_DIR/protocols.json" >/dev/null
+if [[ ! -s "$CONSTVALS" ]]; then
+    echo "==> ERROR: $CONSTVALS was not emitted — Shortcuts actions would be invisible" >&2
+    exit 1
+fi
+
 echo "==> Assembling bundle"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/CmdTab"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-# App icon (CFBundleIconFile=AppIcon) and the menu-bar template PNGs, looked up by NSImage(named:).
-# One template set per MenuBarIcon case — all of them ship, since the choice is made at runtime.
+# App icon (CFBundleIconFile=AppIcon) and the menu-bar glyph's template PNGs (@1x/@2x/@3x), looked
+# up by NSImage(named:) — see `MenuBarGlyph`.
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Flattened out of Resources/MenuBar: NSImage(named:) only searches the top level of the bundle's
 # resource directory, so the subfolder is a repo-tidiness measure that must not survive the copy.
@@ -53,6 +86,37 @@ if [[ -f "$CATALOG" ]]; then
     # They happen to be the English text, so the failure is invisible until a translation exists.
     LOCALES=$(find "$APP/Contents/Resources" -maxdepth 1 -name '*.lproj' -exec basename {} .lproj \; | sort | tr '\n' ' ')
     echo "    locales: ${LOCALES:-none}"
+fi
+
+# ---------------------------------------------------------------- App Intents metadata
+#
+# Turns the const values emitted above into Contents/Resources/Metadata.appintents — where every
+# Xcode-built macOS app carries it (measured across /Applications), and the one place codesign
+# accepts it: at Contents/ it is taken for a subcomponent and fails the whole bundle's signature.
+# It is what Shortcuts, Spotlight and Siri actually index — without it every intent in the binary
+# is invisible. Run before signing, because the app's seal covers it. The processor wants the
+# *source* list as well as the const values, and a deployment target and triple that match the
+# build.
+echo "==> App Intents metadata"
+find "$(pwd)/Sources/CmdTab" -name '*.swift' > "$INTENTS_DIR/sources.txt"
+echo "$CONSTVALS" > "$INTENTS_DIR/constvals.txt"
+HOST_ARCH="$(uname -m)"
+INTENTS_TOOL="$(xcrun --find appintentsmetadataprocessor)"
+xcrun appintentsmetadataprocessor \
+    --output "$APP/Contents/Resources" \
+    --toolchain-dir "${INTENTS_TOOL%/usr/bin/appintentsmetadataprocessor}" \
+    --module-name CmdTab \
+    --sdk-root "$(xcrun --show-sdk-path --sdk macosx)" \
+    --xcode-version "$(xcodebuild -version | tail -1 | awk '{print $3}')" \
+    --platform-family macOS \
+    --deployment-target 14.0 \
+    --target-triple "$HOST_ARCH-apple-macos14.0" \
+    --source-file-list "$INTENTS_DIR/sources.txt" \
+    --swift-const-vals-list "$INTENTS_DIR/constvals.txt" \
+    --force --quiet-warnings >/dev/null
+if [[ ! -f "$APP/Contents/Resources/Metadata.appintents/extract.actionsdata" ]]; then
+    echo "==> ERROR: Metadata.appintents did not materialise — the Shortcuts actions would be invisible" >&2
+    exit 1
 fi
 
 # ---------------------------------------------------------------- Sparkle

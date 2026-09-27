@@ -102,6 +102,11 @@ struct SwitchTarget: Identifiable {
     var spaceID: UInt64? = nil
     /// The app's Dock notification badge ("3", "•"), when it has one.
     var badge: String? = nil
+    /// The owning app's bundle identifier, when it has one — the key the learned search shortcuts
+    /// bind to, carried on the tile because resolving it at scoring time would be a LaunchServices
+    /// query per tile per keystroke. nil for an app with no identifier and for the fallback tiles,
+    /// which are built from the query rather than from an app.
+    var bundleID: String? = nil
 
     var pid: pid_t {
         switch kind {

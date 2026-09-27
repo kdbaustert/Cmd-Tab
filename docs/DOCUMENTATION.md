@@ -45,6 +45,7 @@ stands in for whatever combination is bound; the held modifier is whatever that 
 | ⌫ | Delete the last character of the filter |
 | ⌥W | Close the highlighted window (with **Enable window actions** on) — the ⌥ keys act on the tile without leaving the switcher; see [Window actions](#shortcuts) |
 | ⌥-Space | Mark or unmark the highlighted tile (with **Enable window actions** on). ⌥-click marks whatever tile the pointer is on. Marks are a session and clear when the switcher closes; with any marked, ⌥Q/⌥⇧Q/⌥W/⌥H/⌥M act on the whole set instead of just the highlighted tile |
+| Space | With **Full-size preview** on and no filter typed: float one large live capture of the highlighted tile — Finder's Quick Look gesture, aimed at the switcher. Space again or ⎋ puts it away (⎋ then still closes the panel on the next press), moving the highlight re-points it, and once a query has started Space types into it as it always did — the same rule the ⌘-digits follow. See [Full-size preview](#full-size-preview) |
 | ⌥T | Tile 2-4 marked window tiles side by side on the first one's display; a no-op with an app tile marked, or more than four |
 | ⌘-1 … ⌘-9, ⌘-0 | Switch straight to that tile (no filter active). 0 is the tenth tile |
 | Esc | Dismiss the switcher — always, filter or not. While the panel is up it owns every key on the machine, so this is the one exit that must never depend on any other state |
@@ -80,6 +81,19 @@ tile takes the highlight only when nothing running answered, which is exactly wh
 The suggestions are offered, not imposed. Turn them off entirely with *Launch apps from search*.
 Because you are still holding ⌘, the character each key would type is read from the event honouring
 your keyboard layout, so it follows the physical keys rather than assuming a US layout.
+
+The filter also **learns**. Committing a query — releasing on it, Return, a click — remembers which
+app it chose, and the same query then ranks that app first however the letters score. The scoring
+re-derives its answer from scratch on every keystroke, which is right for a query it has never seen
+and wasteful for one you type every day: `ma` weighs Mail against MailMate on their letters alone,
+however many hundred times you have answered that question the same way. The binding records the
+answer. It sits **on top of** the ranking rather than replacing it: something running still
+outranks something launchable whatever is learned, within the learned app the best-scoring window
+still wins, and a query that has learned nothing behaves exactly as before. One binding per query,
+capped at the 64 most recently confirmed; a wrong one is corrected by committing that query to the
+right app once, since the newer commit replaces the older binding. **Learn search shortcuts**
+(Settings → Behavior, on by default) turns the learning off — stored bindings then stop applying but
+are kept — and **Forget search shortcuts** clears the slate.
 
 A key held with ⌥ or ⌃ is taken as deliberate rather than typed, so it never reaches the query. A
 digit still jumps to that tile when the filter is empty; once you have started a query, digits type
@@ -180,7 +194,6 @@ tooltip.
 | --- | --- | --- |
 | Show menu-bar icon | Off leaves no menu-bar item; reopening Cmd-Tab from Finder is then the way back to Settings. | On |
 | Start at login | Registers the app as a login item via `SMAppService`. | Off |
-| Menu-bar glyph | Which artwork the menu-bar item shows. The menu shows each glyph rather than only its name. | Command |
 | Settings file | Export or import every preference, favourites and exclusions included, as JSON. | — |
 | Import shortcuts | Carries the chords over from another switcher — see below. | — |
 | Reset to defaults | Clears every Cmd-Tab preference. | — |
@@ -441,7 +454,7 @@ running the XML through Jekyll and mangling it.
 | --- | --- | --- |
 | Switcher shortcut | The combination that opens the switcher. Click, then press a new combination — a modifier (⌘/⌥/⌃) is required, since the switcher stays open only while it is held. The native ⌘-Tab is suppressed only while the shortcut *is* ⌘-Tab; a custom combination leaves the system switcher alone. | ⌘-Tab |
 | Cycle app windows | A second shortcut showing only the frontmost app's windows. Off by default — ⌘-` is a shortcut apps use themselves. | Off, ⌘-` |
-| Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, windows on the current display, windows on the current **Desktop**, minimized windows, or browser and terminal tabs. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. See [Tab search](#tab-search) for the tabs scope. | None |
+| Scoped shortcuts | Extra triggers that open the switcher on *part* of the window list: this app's windows, all windows, a **Desktops overview** grouped by Desktop, windows on the current display, windows on the current **Desktop**, minimized windows, or browser and terminal tabs. Held and released like the main trigger and never sticky — a scoped cycle is a jump, not a panel to browse. Unbound when added, since choosing the scope and choosing the chord are separate decisions. Persists as `scopedTriggers`. See [Tab search](#tab-search) for the tabs scope and [Desktops overview](#desktops-overview) for the overview. | None |
 | Overview | Every binding in the app in one list, with cross-store conflicts flagged, including chords macOS itself already owns (Mission Control, Spotlight, the screenshot combinations, and anything bound in System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts). Each pane warns about clashes inside its own store; nothing could see *across* them, and the kinds of binding are spread over several stores — a tiling chord and a direct activation on the same keys produced no warning anywhere. A system chord is read from the two preference domains it lives in (`AppleSymbolicHotKeys` and `NSUserKeyEquivalents`) and treated like any other family: shown under the system's own name for it, flagged if a Cmd-Tab binding sits on the same keys, silent if it's present but switched off in System Settings, since then it isn't claiming anything. One honest gap: an id with no entry in `AppleSymbolicHotKeys` at all is at its OS default, which may still be enabled, and this can't see that — only entries actually present in the plist are checked. Shows which of a clashing pair actually fires. | — |
 | In-switcher keys | The keys the panel handles while it is open, listed for reference: Tab/⇧Tab and ←/→ move the selection, Return switches, 1–9/0 jump, typing filters, ⌫ deletes a filter character, ⎋ closes. Not rebindable. | — |
 
@@ -470,6 +483,27 @@ other part of the switcher answers by picking the front one rather than asking y
 
 See *Known limitations* for the two apps this does not reach.
 
+### Desktops overview
+
+A scoped trigger with a different shape of answer: **every window of every app, grouped under a
+header per Desktop** — Desktop 1's windows, then Desktop 2's, with the windows that live on no
+Desktop (minimized ones, mostly, which occupy no Space while they sit in the Dock) gathered under
+**Elsewhere** at the end. It is the map Mission Control shows you drawn as a switcher: searchable
+with the same fuzzy filter as everything else, so `saf 2` finds Safari's second window whichever
+Desktop it lives on, and picking a tile travels there the way picking any cross-Desktop tile
+already did. Nothing else — not AltTab, not Contexts, not macOS itself — offers a *searchable*
+view across every Desktop at once.
+
+It is deliberately a **presentation** of the existing machinery rather than a new panel: the same
+tiles at the same indices (hit-testing, ⌘-digits and the mouse never learn the list was
+sectioned), the same commit path, the same session rules as every scoped trigger — and with
+**Thumbnail tiles** on, the same live captures, which ScreenCaptureKit takes for windows on
+Spaces that are not frontmost anyway. Within each Desktop the windows keep the order the list was
+built in. The headers count the way the Spaces Bar does; on a single-Desktop machine nothing
+carries a Desktop, the whole list is one section, and no header is drawn at all. The grouping is
+grid-only — the list layout already labels every row with its Desktop marker, so a second scaffold
+there would say the same thing twice.
+
 ### Windows
 
 Global hotkeys that snap the **focused** window — they fire with nothing open and act on whatever
@@ -497,6 +531,7 @@ you are looking at, which is why they are not on the Shortcuts tab with the swit
 | Restore the layout when displays change | Remembers where every window sat under each set of monitors and puts them back when that set returns — the undo macOS has never had for undocking. See [Restoring a layout across a display change](#restoring-a-layout-across-a-display-change). | Off |
 | Focus left / right / up / down | Moves the **keyboard** to the nearest window in that direction. The other half of tiling, which could always place windows and never let you walk between them. Live whether or not tiling is on, since focus resizes nothing. Unbound by default: ⌃⌘, ⌃⇧⌘ and ⌃⌥⌘ arrows are all spoken for, and the only combination left is the four-modifier ⌃⌥⇧⌘. | Unbound |
 | Focus follows the pointer | Rest the cursor over a window and the keyboard goes to it, with no click. Off by default, with a rest delay you set. See [Focus follows the pointer](#focus-follows-the-pointer). | Off, 250 ms |
+| Move to desktop 1 … 9 | Names the destination Desktop instead of counting to it — the same argument as the display rows above, and stronger, since Desktops routinely run to five or more and "three along from here" is arithmetic nobody does mid-thought. Numbered against the window's own display's Spaces Bar, the way Mission Control draws it, and performed by exactly the same gesture as the relative pair below — same switch, same pointer cost, same refusals. Rows appear only for Desktops that exist right now, refreshed when the desk changes or a Space switch happens (adding a Desktop posts no notification of its own, but the trip through Mission Control to add one all but always ends in a switch). Nine cases exist because the raw values are a fixed URL grammar; the relative moves still walk to anything beyond. | Unbound |
 | Move to previous / next desktop | Sends the focused window to the next **desktop** (Space) along, stopping at the first and last rather than wrapping. ⌥ on the halves' own arrows, one row along from the display moves' ⇧ — same key again, "further still". **Off by default**, and the only move with a switch of its own: macOS offers no way to move another app's window between desktops, so this performs the gesture instead — it picks the window up, opens Mission Control for a moment and drops it on the destination's thumbnail. That takes over the pointer for roughly six-tenths of a second, or about 1.3s with **Follow the window** on, which is still not something to claim on your behalf. It acts on the frontmost app's focused window, and because it has to *grab* that window it declines — with a line in the log rather than a half-move — if the title bar is covered at the moment it presses, or if the window is full screen or minimized. The synthetic drag is posted with the modifier flags explicitly cleared: a `leftMouseDown` inherits the live modifier state, and since the chord that triggered it is still under your fingers, a ⌃ riding along would make the press a Control-click — a right click — and nothing would move. Two settings sit with it. **Follow the window** (on) switches you to the desktop it landed on, by pressing that desktop's own thumbnail — a real transition performed by macOS, not the bookkeeping-only private Space switch. And the window is put back on the frame it started with: the drag genuinely carries it up to the Spaces Bar, so macOS drops it wherever the gesture ended, which read as the move shoving windows to the left. The synthetic drag is also stamped as ours (`SyntheticEvent`) so *Snap by dragging* and the modifier-drag ignore it — without that, the route across the top of the screen is the maximize snap zone, and a moved window arrived maximized or inset by the gap. Persisted as `windowTilingDesktopMoves` and `windowTilingFollowsDesktopMove`. | Off / On, ⌃⌥⌘ ← → |
 | Snap by dragging | Drag a window to a screen edge or corner and drop it to tile there — edges give halves, the top gives maximize, corners give quarters, **the centre of the screen gives full screen**, with a translucent preview of where it will land. Grab the window **anywhere**, not just its titlebar: what tells a window drag from a text selection is not where the press landed but whether the window actually *moved* — origin changed, size unchanged — which is also how Rectangle's `SnappingManager` decides. Independent of the shortcuts, so you can have either or both. Off by default. | Off |
 | Move and resize with the mouse | Hold a modifier and drag **anywhere** in a window to move it; hold the other and drag to resize from the corner of the quarter you pressed in, with the opposite corner pinned. Defaults are ⌃⌥ to move and ⌃⌘ to resize — Rectangle's — and both are recorded rather than picked from a list: click the row and hold any combination of ⌃⌥⇧⌘, released to commit. At least one of ⌃/⌥/⌘ is required, since ⇧ alone would make every drag on the machine a window drag. Unlike *Snap by dragging*, which watches passively, this one owns the drag: a real event tap swallows the mouse while the modifier is held, so a move across a document does not select text on the way. While the chord is held, the window under the cursor is **outlined** so it is never a guess which one the gesture will grab — an outline, where the snap preview is a filled block, because "this is the window" and "this is where it lands" should not look alike. **Snaps like a titlebar drag**: carry the cursor to a screen edge or corner and that zone lights up in the same overlay drag-snapping uses — let go there and the window tiles to it, gaps included — while a drop away from any edge leaves the free move or resize where you put it. Both gestures snap, since a resize dragged into a corner means what a move dragged there does. The zone geometry is shared with `DragSnap`, so an edge snaps identically however you reach it. Independent of the tiling switch. Persisted as `windowMouseDragEnabled`, `windowMouseDragMoveModifiers`, `windowMouseDragResizeModifiers`. Or skip the button entirely: **hold the chord and point**. The window under the cursor is outlined, a dot marks where the cursor started, moving away from it in any of eight directions lights up that destination, and releasing the chord snaps the window there — staying within 45pt of the dot means the whole screen. Adding a modifier beyond the chord while it is armed **cancels** the gesture instead of snapping, so reaching for another shortcut mid-gesture does not move the window. This is the gesture Rectangle Pro inherited from Hookshot, and it needs no grab at all: the window is never clicked, focused, or brought forward. The dot's colour is selectable, defaulting to the system accent; the outline and the landing block are fixed at light grey on black — Rectangle's own footprint styling (`FootprintWindow`: `borderColor = .lightGray`, `fillColor = .black`, `borderWidth = 2`, alpha `0.3`) — and are not configurable — they are large and translucent, and read as the system's own highlighting, where the dot is 14pt of solid colour and the one mark worth making yours. | Off, ⌃⌥ / ⌃⌘ |
@@ -549,6 +584,9 @@ window through every width.
 | --- | --- | --- |
 | Switch between | **Applications** — one tile per running app, the way ⌘-Tab has always worked — or **Windows**, one tile per open window across every app, each carrying its own title. Window tiles get a smaller icon to pay for the title, and in window mode *Hide apps with no windows* and *Preview windows* are both moot and disabled. Persists as `switcherMode`. | Applications |
 | Show delay | How long to wait before drawing the panel, so a quick tap switches with no flash. | 0 ms |
+| Launch apps from search | Typing offers installed apps alongside whatever the query found running, appended after it and capped at five — see [Type to filter](#type-to-filter). Anything already open still outranks them. | On |
+| Learn search shortcuts | Committing a typed query remembers the app it chose, and the same query ranks that app first next time — see [Type to filter](#type-to-filter). Persists as `learnSearchShortcuts`; the bindings themselves as `searchShortcuts`. | On |
+| Forget search shortcuts | Clears every learned query→app pairing. One wrong pairing is fixed faster by committing that query to the right app once. | — |
 | Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
 | Group windows by app | Window mode only. On keeps each app's windows in a run, which is what the list has always done — not by decision, but because it is built by walking the sorted *app* list. Off ranks every window against every other by when you last used it, so one tap of the trigger reaches the window you were in before this one whichever app it belongs to. That order was not previously reachable at all. Alphabetical always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them. Persists as `groupWindowsByApp`. | On |
@@ -557,6 +595,7 @@ window through every width.
 | Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
 | Show on | Which displays get a panel. | Automatic |
 | Preview windows | See [Window preview](#window-preview). | Off |
+| Full-size preview | See [Full-size preview](#full-size-preview). | Off |
 
 Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `sortOrder`, `stickyMode`,
 `showDelayMs`, `hideEmptyApps`, `panelPosition`, `panelScreens`).
@@ -822,6 +861,34 @@ Measured end to end on the case that prompted all of this: **seven tiles before,
 runs in a row, with the other apps on the desk unchanged at one apiece — including Spotify, whose
 menu names no windows at all and which therefore keeps every tile it has.
 
+### Full-size preview
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Full-size preview | Space, with no filter typed, floats one large live capture of the highlighted tile. Space again or ⎋ puts it away; moving the highlight re-points it. Persists as `quickPreview`. | Off |
+
+The hover strip answers "which of this app's windows is which" with a row of thumbnails; at that
+size a window is recognisable and not readable. This answers "is this the one I mean" — one window,
+drawn big enough to actually read, before committing to it. It is Finder's Quick Look gesture aimed
+at the switcher, and it deliberately borrows the rest of that grammar too: Space toggles, Escape
+takes the preview down before it takes anything else, and cycling with it up re-points it — after
+the same 0.28s debounce the strip uses, so flicking through ten tiles captures once, for the tile
+you stop on.
+
+Space only means this while **no filter is typed**, the same rule the ⌘-digits follow: once a query
+has started, Space is its word separator and types as it always did. The panel is deaf to the mouse
+— it is a picture, not a control; the tile it previews is still the thing to click. It sits centred
+in the band between the switcher and the top of the screen when it fits there, so the tiles stay
+visible, and centred on the screen outright when it does not.
+
+A window tile previews its own window; an app tile previews the app's frontmost. It reuses the
+strip's capture pipeline (`WindowCapture`), narrowed to the one window asked about, so everything
+that machinery already solved — the phantom-window veto, Screen Recording degradation — holds here
+without a second implementation. A minimized window has no live surface, so its tile previews as
+the app icon at icon size rather than a blank blown up to the ceiling. Off by default with the
+other two capture features and for the same reason: turning it on is what prompts for Screen
+Recording.
+
 ### Thumbnail tiles
 
 | Setting | What it does | Default |
@@ -987,6 +1054,7 @@ open 'cmdtab://tile/growRight'         # one edge, the other three pinned
 open 'cmdtab://tile/almostMaximize'
 open 'cmdtab://tile/restore'           # and again to toggle back to the tile
 open 'cmdtab://tile/display2'          # by name, not by counting
+open 'cmdtab://tile/desktop3'          # the Desktop too (obeys the Desktop-moves switch)
 open 'cmdtab://activate/com.apple.Safari'
 open 'cmdtab://windows/hideAll'        # or showAll
 ```
@@ -1014,6 +1082,27 @@ applications, and a URL claims nothing from anybody — refusing to tile because
 hotkeys is off would be a setting doing something it never described. The Desktop switch is not
 about chords at all. It guards a gesture that seizes the pointer and flashes Mission Control for the
 better part of a second, and consent to that is not something a URL should route around.
+
+### Shortcuts, Spotlight and Siri
+
+The same actions are native **App Intents**: *Tile the Focused Window* (every arrangement as a
+picker, not a typed string), *Activate an App* (by bundle identifier) and *Hide or Show All
+Windows* appear as steps in the Shortcuts editor, as Spotlight actions, and to Siri — no
+hand-typed `open cmdtab://…` required. Each step calls the very function the URL parser calls
+(`IntentActions.perform` is pointed at `SwitcherController.perform` at launch), so a step, a URL
+and a chord cannot drift apart in what they do — and both deliberate boundaries hold: nothing that
+ends a process or closes a window is offered, and the Desktop moves still obey their own switch.
+
+Two build facts are worth knowing, because `swift build` alone produces neither. The system only
+sees intents through `Contents/Resources/Metadata.appintents`, which Xcode builds emit and SwiftPM
+does not — `build.sh` runs the toolchain's `appintentsmetadataprocessor` itself, fed by
+`.swiftconstvalues` the compiler emits from a dedicated scratch-path build (llbuild does not
+fingerprint `-Xswiftc` flags, so the flags live on a build whose cache has never been without
+them). And the arrangement names Shortcuts shows are a *literal* dictionary in `AppIntents.swift`
+— the metadata extractor reads source at compile time and rejects anything computed — pinned
+against the live titles by `AppIntentsTests`, so adding an arrangement without its Shortcuts name
+fails the suite. CI checks the assembled bundle for the metadata, since a bundle without it
+carries no other symptom.
 
 ### Raycast and Alfred
 
@@ -1240,6 +1329,8 @@ after that. Remove the identity in Keychain Access to undo it.
 | `SwitcherModel.swift` | Resolves the chosen title font, so the switcher and the Settings preview agree |
 | `WindowPreview.swift` | Window-preview capture (ScreenCaptureKit), its floating panel, and the three ways it asks an app which of its windows are real — see [Windows that are not there any more](#windows-that-are-not-there-any-more) |
 | `PreviewCoordinator.swift` | Owns the hover preview: the debounce before a capture starts, and the grace period before it goes |
+| `QuickPreview.swift` | The Space-toggled full-size preview of the highlighted tile — see [Full-size preview](#full-size-preview) |
+| `SearchShortcuts.swift` | Learned query→app bindings for type-to-filter, and their bounded store |
 | `TileThumbnails.swift` | Live window captures drawn as tile artwork in window mode |
 | `SwitchTarget.swift` | An app or window, and how to raise it |
 | `AX.swift` | Shared Accessibility helpers, with the messaging timeout baked in |
@@ -1262,6 +1353,7 @@ after that. Remove the identity in Keychain Access to undo it.
 | `DisplayLayouts.swift` | The window layout under each set of displays, and putting it back when one returns |
 | `FocusFollowsMouse.swift` | Focus the window the pointer comes to rest over |
 | `URLCommands.swift` | The `cmdtab://` grammar, and what is deliberately outside it |
+| `AppIntents.swift` | The same actions as native Shortcuts/Spotlight steps — see [Shortcuts, Spotlight and Siri](#shortcuts-spotlight-and-siri) |
 | `DragSnap.swift` | Drag-to-edge snapping: gesture inference, zone geometry, preview overlay |
 | `MouseWindowDrag.swift` | Modifier-drag to move or resize: mouse event tap, frame maths, recorded chords |
 | `ShortcutAudit.swift` | Every binding in one list, and cross-store conflict detection |

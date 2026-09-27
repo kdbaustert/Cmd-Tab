@@ -71,7 +71,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 /// Section anchors, so the search index and the sections themselves agree on one spelling.
 enum SettingsAnchor {
     static let startup = "general.startup"
-    static let menuBar = "general.menuBar"
     static let backup = "general.backup"
     static let recovery = "general.recovery"
     static let configFile = "general.configFile"
@@ -135,8 +134,6 @@ enum SettingsIndex {
              ["menu bar", "status item", "hide icon", "tray"]),
         item("startAtLogin", .general, SettingsAnchor.startup, "Startup", "Start at login",
              ["login", "launch", "boot", "autostart", "startup"]),
-        item("menuBarGlyph", .general, SettingsAnchor.menuBar, "Menu bar", "Menu-bar glyph",
-             ["icon", "glyph", "symbol", "artwork", "command", "keycap"]),
         item("export", .general, SettingsAnchor.backup, "Backup", "Export settings",
              ["export", "backup", "save", "json", "share"]),
         item("import", .general, SettingsAnchor.backup, "Backup", "Import settings",
@@ -235,6 +232,12 @@ enum SettingsIndex {
         item("launchFromSearch", .behavior, SettingsAnchor.session, "Session",
              "Launch apps from search",
              ["launch", "launcher", "open app", "search", "not running", "no matches"]),
+        item("learnSearchShortcuts", .behavior, SettingsAnchor.session, "Session",
+             "Learn search shortcuts",
+             ["learn", "remember", "search shortcut", "binding", "habit", "ranking", "query"]),
+        item("forgetSearchShortcuts", .behavior, SettingsAnchor.session, "Session",
+             "Forget search shortcuts",
+             ["forget", "clear", "reset", "learned", "search shortcut"]),
 
         item("openAsURL", .behavior, SettingsAnchor.fallback, "Fallback", "Open as URL",
              ["url", "address", "website", "browser", "open", "fallback", "no matches"]),
@@ -273,6 +276,10 @@ enum SettingsIndex {
              "Thumbnail tiles",
              ["thumbnail", "thumbnails", "preview", "screenshot", "window contents", "alttab",
               "alt-tab", "live", "capture", "screen recording", "tile artwork"]),
+        item("quickPreview", .behavior, SettingsAnchor.placement, "Placement",
+             "Full-size preview",
+             ["preview", "quick look", "space", "spacebar", "zoom", "large", "full size",
+              "capture", "screen recording"]),
 
         item("layout", .appearance, SettingsAnchor.layout, "Layout", "Layout",
              ["layout", "grid", "list", "rows", "shape"]),
@@ -625,29 +632,6 @@ struct GeneralSettings: View {
                     isOn: Binding(
                         get: { loginItem.startAtLogin },
                         set: { loginItem.setStartAtLogin($0) }))
-            }
-
-            SettingsSection(title: "Menu bar", anchor: SettingsAnchor.menuBar) {
-                // Shows the artwork rather than only its name — the names are labels of
-                // convenience, and which glyph you want is a thing you decide by looking at it.
-                SettingsPicker(
-                    title: "Menu-bar glyph",
-                    subtitle: behavior.showMenuBarIcon
-                        ? "Which icon the menu-bar item shows."
-                        : "Which icon the menu-bar item shows — nothing to pick while the icon is "
-                            + "switched off above.",
-                    selection: $behavior.menuBarIcon,
-                    width: 175
-                ) {
-                    ForEach(MenuBarIcon.allCases, id: \.self) { icon in
-                        HStack(spacing: 6) {
-                            icon.image.map { Image(nsImage: $0) }
-                            Text(icon.title)
-                        }
-                        .tag(icon)
-                    }
-                }
-                .disabled(!behavior.showMenuBarIcon)
             }
 
             SettingsSection(
@@ -1036,6 +1020,7 @@ struct ShortcutSettings: View {
 
 struct BehaviorSettings: View {
     @ObservedObject var behavior: BehaviorStore
+    @ObservedObject private var searchShortcuts = SearchShortcutsStore.shared
 
     var body: some View {
         SettingsPage(title: "Behavior", subtitle: "How the switcher opens, what it lists, and where "
@@ -1054,6 +1039,24 @@ struct BehaviorSettings: View {
                     subtitle: "Releasing the trigger leaves the switcher up instead of switching. "
                         + "Tab, Return, a click or 1–9/0 then picks; Escape backs out.",
                     isOn: $behavior.stickyMode)
+                SettingsToggle(
+                    title: "Launch apps from search",
+                    subtitle: "Typing offers installed apps alongside whatever is running; "
+                        + "picking one launches it. Anything already open still outranks them.",
+                    isOn: $behavior.launchFromSearch)
+                SettingsToggle(
+                    title: "Learn search shortcuts",
+                    subtitle: "Committing a typed query remembers the app it chose, so the same "
+                        + "query lands on it first next time.",
+                    isOn: $behavior.learnSearchShortcuts)
+                SettingsRow(
+                    title: "Forget search shortcuts",
+                    subtitle: "Clears every learned pairing. One wrong pairing is fixed faster by "
+                        + "committing that query to the right app once."
+                ) {
+                    Button("Forget") { searchShortcuts.removeAll() }
+                        .disabled(searchShortcuts.bindings.entries.isEmpty)
+                }
             }
 
             SettingsSection(title: "Fallback", anchor: SettingsAnchor.fallback) {
@@ -1170,7 +1173,17 @@ struct BehaviorSettings: View {
                     .onChange(of: behavior.windowPreview) {
                         if behavior.windowPreview { Permissions.ensureScreenCaptureForPreview() }
                     }
-                if behavior.windowPreview || behavior.windowThumbnailTiles {
+                SettingsToggle(
+                    title: "Full-size preview",
+                    subtitle: "Space, with nothing typed, floats one large live capture of the "
+                        + "highlighted tile — press it again or Escape to put it away. Needs "
+                        + "Screen Recording permission.",
+                    isOn: $behavior.quickPreview)
+                    .onChange(of: behavior.quickPreview) {
+                        if behavior.quickPreview { Permissions.ensureScreenCaptureForPreview() }
+                    }
+                if behavior.windowPreview || behavior.windowThumbnailTiles
+                    || behavior.quickPreview {
                     ScreenRecordingWarning()
                 }
             }

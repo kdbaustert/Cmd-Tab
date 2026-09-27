@@ -120,6 +120,57 @@
         }
       }
     },
+    "Action": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action"
+          }
+        }
+      }
+    },
+    "Activate an App": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activate an App"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer une app"
+          }
+        }
+      }
+    },
+    "All Windows Action": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Windows Action"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action sur toutes les fenêtres"
+          }
+        }
+      }
+    },
     "All desktops": {
       "extractionState": "manual",
       "localizations": {
@@ -290,6 +341,23 @@
         }
       }
     },
+    "Applies a window arrangement to the focused window — halves, thirds, corners, moves between displays and desktops, focus and swap. The same set the cmdtab:// scheme exposes; moving between desktops obeys its own switch in Settings.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies a window arrangement to the focused window — halves, thirds, corners, moves between displays and desktops, focus and swap. The same set the cmdtab:// scheme exposes; moving between desktops obeys its own switch in Settings."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applique une disposition à la fenêtre active — moitiés, tiers, coins, déplacements entre écrans et bureaux, focus et échange. Le même ensemble que le schéma cmdtab:// ; le déplacement entre bureaux obéit à son propre réglage."
+          }
+        }
+      }
+    },
     "Apps": {
       "extractionState": "manual",
       "localizations": {
@@ -303,6 +371,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Applications"
+          }
+        }
+      }
+    },
+    "Arrangement": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrangement"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disposition"
           }
         }
       }
@@ -477,6 +562,23 @@
         }
       }
     },
+    "Brings an app forward by bundle identifier, launching it if it is not running — com.apple.Safari, for example.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brings an app forward by bundle identifier, launching it if it is not running — com.apple.Safari, for example."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Met une app au premier plan par son identifiant de bundle, en la lançant si elle n'est pas ouverte — com.apple.Safari, par exemple."
+          }
+        }
+      }
+    },
     "Browser and terminal tabs": {
       "extractionState": "manual",
       "localizations": {
@@ -507,6 +609,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Version de compilation"
+          }
+        }
+      }
+    },
+    "Bundle Identifier": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bundle Identifier"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Identifiant de bundle"
           }
         }
       }
@@ -613,6 +732,23 @@
         }
       }
     },
+    "Clears every learned pairing. One wrong pairing is fixed faster by committing that query to the right app once.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clears every learned pairing. One wrong pairing is fixed faster by committing that query to the right app once."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Efface toutes les associations apprises. Une association erronée se corrige plus vite en validant cette recherche sur la bonne app."
+          }
+        }
+      }
+    },
     "Close window": {
       "extractionState": "manual",
       "localizations": {
@@ -643,6 +779,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ferme la fenêtre sélectionnée, ou la fenêtre au premier plan de l'application sélectionnée."
+          }
+        }
+      }
+    },
+    "Committing a typed query remembers the app it chose, so the same query lands on it first next time.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Committing a typed query remembers the app it chose, so the same query lands on it first next time."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valider une recherche saisie mémorise l'app choisie ; la même recherche la placera en tête la prochaine fois."
           }
         }
       }
@@ -783,6 +936,23 @@
         }
       }
     },
+    "Desktop %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desktop %lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bureau %lld"
+          }
+        }
+      }
+    },
     "Desktops": {
       "extractionState": "manual",
       "localizations": {
@@ -796,6 +966,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bureaux"
+          }
+        }
+      }
+    },
+    "Desktops overview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desktops overview"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vue d'ensemble des bureaux"
           }
         }
       }
@@ -936,6 +1123,23 @@
         }
       }
     },
+    "Elsewhere": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elsewhere"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ailleurs"
+          }
+        }
+      }
+    },
     "Enable window actions": {
       "extractionState": "manual",
       "localizations": {
@@ -966,6 +1170,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Activer le pavage des fenêtres"
+          }
+        }
+      }
+    },
+    "Every window of every app, grouped under a header per Desktop — a searchable map of the whole desk. Type to filter it exactly like the main switcher.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every window of every app, grouped under a header per Desktop — a searchable map of the whole desk. Type to filter it exactly like the main switcher."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toutes les fenêtres de toutes les apps, regroupées sous un en-tête par bureau — une carte du bureau entier, avec recherche. La saisie filtre exactement comme dans le sélecteur principal."
           }
         }
       }
@@ -1191,6 +1412,57 @@
         }
       }
     },
+    "Forget": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forget"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oublier"
+          }
+        }
+      }
+    },
+    "Forget search shortcuts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forget search shortcuts"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oublier les raccourcis de recherche"
+          }
+        }
+      }
+    },
+    "Full-size preview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Full-size preview"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu en grand"
+          }
+        }
+      }
+    },
     "Gap": {
       "extractionState": "manual",
       "localizations": {
@@ -1344,6 +1616,23 @@
         }
       }
     },
+    "Hide All Windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide All Windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer toutes les fenêtres"
+          }
+        }
+      }
+    },
     "Hide all windows": {
       "extractionState": "manual",
       "localizations": {
@@ -1412,6 +1701,23 @@
         }
       }
     },
+    "Hide or Show All Windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide or Show All Windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer ou afficher toutes les fenêtres"
+          }
+        }
+      }
+    },
     "Hide other apps": {
       "extractionState": "manual",
       "localizations": {
@@ -1425,6 +1731,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Masquer les autres applications"
+          }
+        }
+      }
+    },
+    "Hides every app to clear the screen, or brings back exactly what Hide All hid.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hides every app to clear the screen, or brings back exactly what Hide All hid."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque toutes les apps pour dégager l'écran, ou raffiche exactement ce que Tout masquer avait masqué."
           }
         }
       }
@@ -1735,6 +2058,23 @@
         }
       }
     },
+    "Launch apps from search": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch apps from search"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lancer des apps depuis la recherche"
+          }
+        }
+      }
+    },
     "Layout": {
       "extractionState": "manual",
       "localizations": {
@@ -1748,6 +2088,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Disposition"
+          }
+        }
+      }
+    },
+    "Learn search shortcuts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Learn search shortcuts"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mémoriser les raccourcis de recherche"
           }
         }
       }
@@ -1973,40 +2330,6 @@
         }
       }
     },
-    "Menu bar": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Menu bar"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Barre des menus"
-          }
-        }
-      }
-    },
-    "Menu-bar glyph": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Menu-bar glyph"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Icône de la barre des menus"
-          }
-        }
-      }
-    },
     "Middle third": {
       "extractionState": "manual",
       "localizations": {
@@ -2122,6 +2445,159 @@
           "stringUnit": {
             "state": "translated",
             "value": "Déplacer et redimensionner à la souris"
+          }
+        }
+      }
+    },
+    "Move to desktop 1": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 1"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 1"
+          }
+        }
+      }
+    },
+    "Move to desktop 2": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 2"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 2"
+          }
+        }
+      }
+    },
+    "Move to desktop 3": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 3"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 3"
+          }
+        }
+      }
+    },
+    "Move to desktop 4": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 4"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 4"
+          }
+        }
+      }
+    },
+    "Move to desktop 5": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 5"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 5"
+          }
+        }
+      }
+    },
+    "Move to desktop 6": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 6"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 6"
+          }
+        }
+      }
+    },
+    "Move to desktop 7": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 7"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 7"
+          }
+        }
+      }
+    },
+    "Move to desktop 8": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 8"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 8"
+          }
+        }
+      }
+    },
+    "Move to desktop 9": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to desktop 9"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer vers le bureau 9"
           }
         }
       }
@@ -3350,6 +3826,23 @@
         }
       }
     },
+    "Show All Windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show All Windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher toutes les fenêtres"
+          }
+        }
+      }
+    },
     "Show all windows": {
       "extractionState": "manual",
       "localizations": {
@@ -3635,6 +4128,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Espace laissé autour d'une fenêtre pavée : l'écart entier contre un bord d'écran, la moitié là où deux fenêtres se rejoignent — les voisines sont ainsi séparées d'exactement un écart. 0 les laisse jointives."
+          }
+        }
+      }
+    },
+    "Space, with nothing typed, floats one large live capture of the highlighted tile — press it again or Escape to put it away. Needs Screen Recording permission.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Space, with nothing typed, floats one large live capture of the highlighted tile — press it again or Escape to put it away. Needs Screen Recording permission."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La barre d'espace, sans rien de saisi, affiche une grande capture en direct de la tuile sélectionnée — appuyez de nouveau ou sur Échap pour la retirer. Nécessite l'autorisation Enregistrement de l'écran."
           }
         }
       }
@@ -4200,6 +4710,23 @@
         }
       }
     },
+    "Tile the Focused Window": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tile the Focused Window"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disposer la fenêtre active"
+          }
+        }
+      }
+    },
     "Tile to bottom half": {
       "extractionState": "manual",
       "localizations": {
@@ -4472,6 +4999,23 @@
         }
       }
     },
+    "Typing offers installed apps alongside whatever is running; picking one launches it. Anything already open still outranks them.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Typing offers installed apps alongside whatever is running; picking one launches it. Anything already open still outranks them."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La saisie propose des apps installées aux côtés de ce qui est ouvert ; en choisir une la lance. Ce qui est déjà ouvert passe toujours devant."
+          }
+        }
+      }
+    },
     "Unbound by default: these act system-wide and have no natural home key, so the combination is yours to pick rather than ours to claim.": {
       "extractionState": "manual",
       "localizations": {
@@ -4710,23 +5254,6 @@
         }
       }
     },
-    "Which icon the menu-bar item shows.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Which icon the menu-bar item shows."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "L'icône affichée dans la barre des menus."
-          }
-        }
-      }
-    },
     "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch above, and of Snap by dragging.": {
       "extractionState": "manual",
       "localizations": {
@@ -4757,6 +5284,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Fenêtre"
+          }
+        }
+      }
+    },
+    "Window Arrangement": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window Arrangement"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disposition de fenêtre"
           }
         }
       }

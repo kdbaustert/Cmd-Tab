@@ -47,6 +47,8 @@ struct SwitcherSettings: Equatable {
     var windowPreview = false
     /// Window mode: draw a live capture as the tile artwork. See `TileThumbnails`.
     var windowThumbnailTiles = false
+    /// Space floats one large live capture of the highlighted tile. See `QuickPreview`.
+    var quickPreview = false
 
     // Model-backed: what a tile looks like.
     var highlightColor: Color = .accentColor
@@ -63,6 +65,9 @@ struct SwitcherSettings: Equatable {
     // Session behaviour, held directly by the controller.
     var showDelay: TimeInterval = 0
     var launchFromSearch = true
+    /// Remember which app a committed query chose and rank it first next time — see
+    /// `SearchShortcutsStore`.
+    var learnSearchShortcuts = true
     /// The fallback tier: offering a query nothing running or installed answered as a URL, a web
     /// search, or a shell command. Off by default, each of the three — see `FallbackAction`.
     var offerURLFallback = false

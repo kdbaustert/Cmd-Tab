@@ -67,6 +67,39 @@ final class SwitcherModel: ObservableObject {
     /// Font family for tile titles and the caption. Empty means the system font.
     @Published var titleFontName: String = ""
 
+    /// Whether this session is a Desktops overview: the targets arrive sorted by Desktop and the
+    /// grid draws a header per Desktop. Set per session by the controller — see the
+    /// `.desktopsOverview` scoped trigger.
+    @Published var groupsByDesktop = false
+
+    /// A contiguous run of overview targets on one Desktop — what one header stands over.
+    struct DesktopSection: Equatable {
+        /// The 0-based Desktop, or nil for the trailing group that is on none: minimized windows,
+        /// and anything the window server could not place.
+        let spaceIndex: Int?
+        /// Indices into `targets`, so tile identity — hit-testing, ⌘-digits, the frame map — is
+        /// untouched by the grouping.
+        let range: Range<Int>
+    }
+
+    /// Splits a Desktop-sorted list into its sections. Pure over the one ordering
+    /// `SwitcherController.groupedByDesktop` produces; a list where no target carries a Desktop —
+    /// a single-Desktop machine, or a failed placement read — comes back as one section, which is
+    /// what suppresses the headers entirely rather than drawing one header over everything.
+    static func desktopSections(_ targets: [SwitchTarget]) -> [DesktopSection] {
+        var sections: [DesktopSection] = []
+        var start = 0
+        for index in targets.indices {
+            let next = index + 1
+            if next == targets.count || targets[next].spaceIndex != targets[index].spaceIndex {
+                sections.append(
+                    DesktopSection(spaceIndex: targets[index].spaceIndex, range: start..<next))
+                start = next
+            }
+        }
+        return sections
+    }
+
     /// The marked set, by target id. Session-scoped — the controller clears it in `hide()`, which
     /// every dismissal path (commit, cancel, an emptied list) already funnels through, so there is
     /// one place that has to remember to do it rather than one per exit.
@@ -153,6 +186,11 @@ final class SwitcherModel: ObservableObject {
     /// Installed apps offered because the query matched nothing running. Appended after the real
     /// targets, so every existing index — hit-testing, ⌘-number, the caption — keeps its meaning.
     private var suggestions: [SwitchTarget] = []
+    /// The app the current query has learned, looked up by the controller and handed in with the
+    /// query — see `SearchShortcutsStore`. Kept so a background refresh (`reapply`) re-ranks under
+    /// the same binding the keystroke did. nil when the query has learned nothing, or learning is
+    /// off.
+    private var learnedBundleID: String?
 
     /// What the panel actually shows.
     private var composed: [SwitchTarget] { allTargets + suggestions }
@@ -249,6 +287,7 @@ final class SwitcherModel: ObservableObject {
         targets = new
         matchingIndices = []
         markedIDs = []
+        learnedBundleID = nil
     }
 
     /// Keeps the highlight on the same target across a background refresh, so the tile the user
@@ -271,13 +310,19 @@ final class SwitcherModel: ObservableObject {
     ///
     /// With no match the highlight stays on the tile it was on, found again by id since the
     /// suggestions may have moved under it, and clamps only when that tile is gone.
-    func setQuery(_ new: String, suggestions newSuggestions: [SwitchTarget]? = nil) {
+    ///
+    /// `learned` is the app the query's stored binding names, or nil for a query that has learned
+    /// nothing — see `bestMatch` for what it changes.
+    func setQuery(
+        _ new: String, suggestions newSuggestions: [SwitchTarget]? = nil, learned: String? = nil
+    ) {
         let anchor = selected?.id
         query = new
+        learnedBundleID = learned
         if let newSuggestions { suggestions = newSuggestions }
         // Keep all targets visible, track which indices match
         targets = composed
-        let matches = Self.matches(targets, query: query)
+        let matches = Self.matches(targets, query: query, learned: learnedBundleID)
         matchingIndices = Self.matchingIndices(matches)
         // The *best* match, not the first one in list order — see `bestMatch`.
         if let best = Self.bestMatch(matches) {
@@ -299,7 +344,7 @@ final class SwitcherModel: ObservableObject {
 
     private func reapply(anchor: String?) {
         targets = composed
-        let matches = Self.matches(targets, query: query)
+        let matches = Self.matches(targets, query: query, learned: learnedBundleID)
         matchingIndices = Self.matchingIndices(matches)
         if let anchor, let index = targets.firstIndex(where: { $0.id == anchor }),
            (matchingIndices.isEmpty || matchingIndices.contains(index)) {
@@ -339,9 +384,13 @@ final class SwitcherModel: ObservableObject {
         let index: Int
         let score: Int
         let running: Bool
+        /// Whether the target belongs to the app the query has learned — see `bestMatch`.
+        let learned: Bool
     }
 
-    private static func matches(_ list: [SwitchTarget], query: String) -> [Match] {
+    private static func matches(
+        _ list: [SwitchTarget], query: String, learned: String? = nil
+    ) -> [Match] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
         // Folded and split once for the whole list rather than once per tile.
         let words = words(of: query)
@@ -352,10 +401,12 @@ final class SwitcherModel: ObservableObject {
             // the group break towards the earlier index, which is what keeps the highlight on the
             // first fallback (URL, then search, then shell) whenever more than one is offered.
             if list[index].isFallback {
-                return Match(index: index, score: 0, running: false)
+                return Match(index: index, score: 0, running: false, learned: false)
             }
             return score(list[index], words: words).map {
-                Match(index: index, score: $0, running: !list[index].isLaunchable)
+                Match(
+                    index: index, score: $0, running: !list[index].isLaunchable,
+                    learned: learned != nil && list[index].bundleID == learned)
             }
         }
     }
@@ -375,8 +426,15 @@ final class SwitcherModel: ObservableObject {
     /// answer to the gesture that has always meant "go to the one I have". The suggestion is still
     /// *there* — one arrow key away, and selected the moment nothing running answers the query —
     /// which is the whole difference between offering a launcher and displacing the switcher.
-    static func bestMatch(_ list: [SwitchTarget], query: String) -> Int? {
-        bestMatch(matches(list, query: query))
+    ///
+    /// **A learned app wins its group, whatever it scores.** `learned` is the app the query's
+    /// stored binding names (see `SearchShortcutsStore`): a query committed to Mail every day
+    /// should land on Mail however the letters score against MailMate. Only *within* the group —
+    /// the running-beats-launchable rule stands above it, so a remembered app that is not running
+    /// is still only a launch tile, taken when nothing running answers. Within the learned app,
+    /// the higher score still wins, which in window mode is what picks its best-matching window.
+    static func bestMatch(_ list: [SwitchTarget], query: String, learned: String? = nil) -> Int? {
+        bestMatch(matches(list, query: query, learned: learned))
     }
 
     private static func bestMatch(_ matches: [Match]) -> Int? {
@@ -386,10 +444,12 @@ final class SwitcherModel: ObservableObject {
                 best = match
                 continue
             }
-            // Running beats launchable outright; within a group, the higher score wins and ties
-            // break towards the earlier index.
+            // Running beats launchable outright; within a group, learned beats unlearned, then the
+            // higher score wins and ties break towards the earlier index.
             if match.running != current.running {
                 if match.running { best = match }
+            } else if match.learned != current.learned {
+                if match.learned { best = match }
             } else if match.score > current.score {
                 best = match
             }

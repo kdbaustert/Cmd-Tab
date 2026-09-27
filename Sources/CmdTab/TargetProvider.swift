@@ -650,7 +650,8 @@ final class TargetProvider {
                 appName: app.name,
                 icon: app.icon,
                 isMinimized: false,
-                isHidden: app.isHidden)
+                isHidden: app.isHidden,
+                bundleID: app.bundleID)
         }
     }
 
@@ -1013,7 +1014,7 @@ final class TargetProvider {
     ) -> SwitchTarget {
         SwitchTarget(
             id: "launch:\(id)", kind: .launch(info.url), title: info.name, appName: info.name,
-            icon: info.icon, isMinimized: false, isHidden: false)
+            icon: info.icon, isMinimized: false, isHidden: false, bundleID: id)
     }
 
     /// Apps that currently own an on-screen window, front to back. Only used to seed the MRU
@@ -1104,7 +1105,8 @@ final class TargetProvider {
                 icon: app.icon,
                 isMinimized: false,
                 isHidden: app.isHidden,
-                badge: app.bundleID.flatMap { badges[$0] })
+                badge: app.bundleID.flatMap { badges[$0] },
+                bundleID: app.bundleID)
         }
     }
 
@@ -1182,7 +1184,8 @@ final class TargetProvider {
                     isMinimized: minimized,
                     isHidden: app.isHidden,
                     displayIndex: display,
-                    badge: app.bundleID.flatMap { badges[$0] })
+                    badge: app.bundleID.flatMap { badges[$0] },
+                    bundleID: app.bundleID)
                 rows.append((target, index, wid.flatMap { mruRank[$0] } ?? Int.max))
             }
             // Recently-used mode orders an app's windows by our tracked focus recency, falling back

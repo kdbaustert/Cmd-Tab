@@ -12,6 +12,7 @@ import SwiftUI
 enum SwitcherScope: String, CaseIterable, Identifiable {
     case frontApp
     case allWindows
+    case desktopsOverview
     case currentDisplay
     case currentDesktop
     case minimized
@@ -23,6 +24,7 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
         switch self {
         case .frontApp: return "This app's windows"
         case .allWindows: return "All windows"
+        case .desktopsOverview: return "Desktops overview"
         case .currentDisplay: return "Windows on this display"
         case .currentDesktop: return "Windows on this desktop"
         case .minimized: return "Minimized windows"
@@ -36,6 +38,9 @@ enum SwitcherScope: String, CaseIterable, Identifiable {
             return "The frontmost app's windows — the same list the app-window cycle shows."
         case .allWindows:
             return "Every window of every app, whatever the switcher is normally set to list."
+        case .desktopsOverview:
+            return "Every window of every app, grouped under a header per Desktop — a searchable "
+                + "map of the whole desk. Type to filter it exactly like the main switcher."
         case .currentDisplay:
             return "Only windows on the display you are working on."
         case .currentDesktop:

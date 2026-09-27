@@ -24,6 +24,7 @@ full documentation — building, every setting, how it works — is in
 - Rebindable trigger (⌘-Tab by default), plus optional extra shortcuts scoped to this app's
   windows, the current display, the current Desktop, minimized windows, or browser and terminal
   tabs.
+- A searchable Desktops overview: every window of every app, grouped under a header per Desktop.
 - Keyboard and mouse navigation: arrows, ⌘-1…⌘-0 to jump straight to a tile, hover and click.
 - Order by recent use or alphabetically; optionally group windows by app, limit to the current
   Desktop, or hide apps with no windows.
@@ -35,6 +36,8 @@ full documentation — building, every setting, how it works — is in
 ### Search
 
 - Start typing to filter — fuzzy, ranked, and case- and accent-insensitive.
+- Learned search shortcuts: committing a query remembers the app it chose and ranks it first next
+  time.
 - Launch installed apps straight from the filter.
 - Optional fallbacks when nothing matches: open as a URL, search the web, or run as a shell
   command.
@@ -50,7 +53,8 @@ full documentation — building, every setting, how it works — is in
 - Keyboard tiling: halves, thirds, two-thirds, corners, maximize, almost maximize and center, with
   adjustable gaps.
 - Resize, nudge, swap with a neighbor, and restore a window's size from before it was tiled.
-- Move windows to another display or another Desktop.
+- Move windows to another display or another Desktop — relatively, or straight to display 1–4 and
+  desktop 1–9 by name.
 - Snap by dragging a window to an edge or corner, or move and resize with a modifier-drag.
 - Hide every window to show the desktop, then bring them all back.
 - Move focus by direction, or let focus follow the pointer.
@@ -65,7 +69,8 @@ full documentation — building, every setting, how it works — is in
 - Highlight color, light or dark appearance, and a glass material.
 - Show the panel centered, on the active screen, or near the pointer, on one display or all of
   them.
-- Optional live window previews and thumbnail tiles.
+- Optional live window previews and thumbnail tiles, plus a full-size preview on Space —
+  Quick Look for the highlighted tile.
 - VoiceOver support; English and French.
 
 ### Settings
@@ -78,6 +83,7 @@ full documentation — building, every setting, how it works — is in
 ### Automation
 
 - `cmdtab://` URL scheme for tiling, focus and activation from any script.
+- Native Shortcuts, Spotlight and Siri actions for the same set — no URL required.
 - Raycast extension and Alfred workflow in [`integrations/`](integrations/).
 
 ### Updates
@@ -88,8 +94,8 @@ full documentation — building, every setting, how it works — is in
 ## Permissions
 
 Cmd-Tab needs **Accessibility** access (System Settings → Privacy & Security → Accessibility) and
-does nothing until it has it. **Screen Recording** is only needed for window previews and
-thumbnail tiles, both off by default.
+does nothing until it has it. **Screen Recording** is only needed for window previews, thumbnail
+tiles and the full-size preview, all off by default.
 
 Releases are not notarized yet, so the first launch needs right-click → **Open**, or
 `xattr -cr /path/to/Cmd-Tab.app` in Terminal. See

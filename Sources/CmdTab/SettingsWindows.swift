@@ -20,6 +20,10 @@ struct WindowSettings: View {
     /// Settings opened — and this is the one tab someone opens *because* they have just plugged
     /// something in.
     @State private var displayCount = NSScreen.screens.count
+    /// How many Desktops the desk has (the most on any one display), for the numbered rows below.
+    /// One window-server round trip, paid when the pane is built and on the notifications that can
+    /// change the answer — never on the key path.
+    @State private var desktopCount = SpaceMover.maxUserSpaceCount()
 
     /// Wider than the 168 the recorders use: a `ColorSettingControl` is three controls in a row, not
     /// one, and the hex field is unusable squeezed into a recorder's width.
@@ -66,6 +70,15 @@ struct WindowSettings: View {
     private static func displayTargets(count: Int) -> [WindowArrangement] {
         guard count > 1 else { return [] }
         return WindowArrangement.displayTargets.filter { ($0.displayIndex ?? 0) < count }
+    }
+
+    /// The absolute Desktop targets, one row per Desktop that actually exists — the same filter as
+    /// the display rows, for the same reason: a row captioned "Move to desktop 7" on a machine with
+    /// three Desktops is a control that cannot do anything. With one Desktop there is nowhere else
+    /// to send a window, so no rows at all.
+    private static func desktopTargets(count: Int) -> [WindowArrangement] {
+        guard count > 1 else { return [] }
+        return WindowArrangement.desktopTargets.filter { ($0.desktopIndex ?? 0) < count }
     }
 
     /// The send-it-elsewhere group. Its own card rather than a fifth entry in `groups` because it
@@ -366,9 +379,12 @@ struct WindowSettings: View {
                 title: Self.desktopGroup.0, anchor: anchor(for: Self.desktopGroup.0),
                 footer: "macOS has no way to move another app's window between desktops, so this "
                     + "performs the gesture instead: it picks the window up, opens Mission Control "
-                    + "for a moment and drops it on the next desktop along. That means it takes "
-                    + "over the pointer for about half a second, which is why it is off by default. "
-                    + "Stops at the first and last desktop rather than wrapping around."
+                    + "for a moment and drops it on the destination's thumbnail. That means it "
+                    + "takes over the pointer for about half a second, which is why it is off by "
+                    + "default. The relative pair stops at the first and last desktop rather than "
+                    + "wrapping around; the numbered rows name the destination outright, count the "
+                    + "way Mission Control's own bar reads, and appear for as many desktops as you "
+                    + "actually have."
             ) {
                 SettingsToggle(
                     title: "Move windows between desktops",
@@ -382,6 +398,18 @@ struct WindowSettings: View {
                         + "stay where you are.",
                     isOn: followsDesktopMove)
                 ForEach(Self.desktopGroup.1) { arrangement in
+                    SettingsRow(
+                        title: arrangement.title,
+                        subtitle: subtitle(for: arrangement),
+                        controlWidth: 168
+                    ) {
+                        TilingShortcutRecorder(arrangement: arrangement, store: store)
+                    }
+                }
+                // The named destinations, under the same switch as the relative pair — one
+                // gesture, however the Desktop is spelled. Rows appear for the Desktops you
+                // actually have, like the display rows above.
+                ForEach(Self.desktopTargets(count: desktopCount)) { arrangement in
                     SettingsRow(
                         title: arrangement.title,
                         subtitle: subtitle(for: arrangement),
@@ -432,6 +460,16 @@ struct WindowSettings: View {
                 for: NSApplication.didChangeScreenParametersNotification)
         ) { _ in
             displayCount = NSScreen.screens.count
+            desktopCount = SpaceMover.maxUserSpaceCount()
+        }
+        // Adding or removing a Desktop posts no notification of its own, but doing either takes a
+        // trip through Mission Control that all but always ends in a Space switch — so this is the
+        // moment the numbered rows are most likely to be stale, and the read is one round trip.
+        .onReceive(
+            NSWorkspace.shared.notificationCenter.publisher(
+                for: NSWorkspace.activeSpaceDidChangeNotification)
+        ) { _ in
+            desktopCount = SpaceMover.maxUserSpaceCount()
         }
     }
 
@@ -454,7 +492,7 @@ struct WindowSettings: View {
         }
         // Said on the row rather than only in the footer: a recorder showing a chord reads as bound,
         // and "bound but switched off" is exactly the state someone will press the key in.
-        if arrangement.desktopStep != nil, !store.desktopMoves {
+        if arrangement.isDesktopMove, !store.desktopMoves {
             return "Switched off above — this will not fire."
         }
         switch arrangement {

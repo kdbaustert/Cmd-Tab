@@ -90,4 +90,9 @@ jobs:
           # nothing anywhere saying so.
           [[ -f "$APP/Contents/Resources/fr.lproj/Localizable.strings" ]] \
             || { echo "the French strings were not compiled into the bundle" >&2; exit 1; }
-          echo "bundle OK — $count menu-bar glyph(s), strings compiled (en, fr)"
+          # The App Intents metadata. Without it every Shortcuts/Spotlight action is invisible,
+          # the binary carries no symptom, and build.sh's own guard is the only other thing that
+          # would say so — this re-checks the assembled artifact rather than trusting the script.
+          [[ -f "$APP/Contents/Resources/Metadata.appintents/extract.actionsdata" ]] \
+            || { echo "the App Intents metadata is missing from the bundle" >&2; exit 1; }
+          echo "bundle OK — $count menu-bar glyph(s), strings compiled (en, fr), intents metadata present"

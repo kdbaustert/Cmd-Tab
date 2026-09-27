@@ -28,6 +28,7 @@ enum Migration {
         splitBadgeToggle(defaults, report)
         reviveSnapHighlightColor(defaults, report)
         dropSavedLayouts(defaults, report)
+        dropMenuBarGlyph(defaults, report)
     }
 
     /// The production reporter. Injectable for the reason `TapStateMirror.report` documents: the
@@ -93,6 +94,22 @@ enum Migration {
 
     private static let layoutsDroppedKey = "migratedDroppedSavedLayouts"
     private static let layoutsKey = "windowLayouts"
+
+    /// The menu-bar glyph picker was removed — the item always shows the default ⌘ glyph now.
+    ///
+    /// Deleted outright for the same reason the saved layouts were: no code reads `menuBarIcon`
+    /// any more, so a stored choice is a value nothing will ever look at. An imported file that
+    /// still carries the key needs nothing here — an unowned key is never applied.
+    private static func dropMenuBarGlyph(_ defaults: UserDefaults, _ report: (String) -> Void) {
+        guard !defaults.bool(forKey: glyphDroppedKey) else { return }
+        defaults.set(true, forKey: glyphDroppedKey)
+        guard defaults.object(forKey: glyphKey) != nil else { return }
+        defaults.removeObject(forKey: glyphKey)
+        report("migrated: dropped the menu-bar glyph choice, the picker is gone")
+    }
+
+    private static let glyphDroppedKey = "migratedDroppedMenuBarGlyph"
+    private static let glyphKey = "menuBarIcon"
 
     /// `showBadges` was one switch over both the display and the Space marker; it is now two.
     ///

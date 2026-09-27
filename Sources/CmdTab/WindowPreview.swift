@@ -274,9 +274,12 @@ actor WindowCapture {
     ///
     /// `bundleID` is the app's, looked up by the caller along with its name — the one a title rule
     /// is scoped to, or nil for an app with none (which then only matches an any-app rule).
+    /// `only` narrows the whole pipeline to one window id — the quick preview's case, where
+    /// capturing an app's every window at reading size to draw one of them would be paying for the
+    /// strip without showing it.
     func thumbnails(
         for pid: pid_t, bundleID: String?, titleRules: [CompiledTitleRule] = [],
-        maxCount: Int = 12, maxHeight: CGFloat = 150
+        only: CGWindowID? = nil, maxCount: Int = 12, maxHeight: CGFloat = 150
     ) async -> [WindowThumb] {
         guard Permissions.canCaptureScreen else {
             reportOnce(
@@ -322,6 +325,7 @@ actor WindowCapture {
         // window a user could actually switch to has a title. Size alone let the dropdowns through.
         var live = content.windows.filter {
             $0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.windowID != 0
+                && (only == nil || $0.windowID == only)
                 && $0.frame.width > Self.minWindowSide && $0.frame.height > Self.minWindowSide
                 && !($0.title ?? "").isEmpty
                 // Never shown in a preview or thumbnail strip, the per-window version of an app

@@ -119,7 +119,7 @@ final class StringCatalogTests: XCTestCase {
                 // and never translated. A few words genuinely are the same in both languages, so
                 // those are listed by name — a rule that waved through every short string would
                 // wave through exactly the ones most likely to have been forgotten.
-                let identical = ["Diagnostics", "Position", "Session", "Version"]
+                let identical = ["Action", "Diagnostics", "Position", "Session", "Version"]
                 if unit.value == key && !identical.contains(key) {
                     XCTFail("\(language) is the English text verbatim: \(key.prefix(60))")
                 }

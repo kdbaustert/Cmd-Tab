@@ -112,6 +112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // waits on should not be registered from inside the pick that first needs it.
         SwitchTarget.warmSpaceTracking()
 
+        // The Shortcuts/Spotlight actions route through the same entry point the URL scheme uses,
+        // so a step and a `cmdtab://` URL cannot drift apart in what they do — see AppIntents.swift.
+        IntentActions.perform = { [weak self] command in self?.controller.perform(command) }
+
         installSignalHandlers()
 
         Log.general.notice(
@@ -187,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 fade: behavior.fade,
                 windowPreview: behavior.windowPreview,
                 windowThumbnailTiles: behavior.windowThumbnailTiles,
+                quickPreview: behavior.quickPreview,
                 highlightColor: behavior.highlightColor,
                 showNumbers: behavior.showNumbers,
                 showDisplayBadges: behavior.showDisplayBadges,
@@ -199,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // Stored in milliseconds, used in seconds.
                 showDelay: behavior.showDelay / 1000,
                 launchFromSearch: behavior.launchFromSearch,
+                learnSearchShortcuts: behavior.learnSearchShortcuts,
                 offerURLFallback: behavior.offerURLFallback,
                 offerSearchFallback: behavior.offerSearchFallback,
                 offerShellFallback: behavior.offerShellFallback,
@@ -345,8 +351,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = statusItem
             ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // Template PNGs ship loose in the bundle Resources; AppKit resolves the scale variants by
-        // name. `MenuBarIcon.image` flags them as templates so they tint for light/dark menu bars.
-        item.button?.image = behavior.menuBarIcon.image
+        // name. `MenuBarGlyph.image` flags it as a template so it tints for light/dark menu bars.
+        item.button?.image = MenuBarGlyph.image
         if item.menu == nil { item.menu = NSMenu() }
         statusItem = item
         refreshMenu()

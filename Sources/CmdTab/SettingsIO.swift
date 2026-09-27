@@ -308,6 +308,7 @@ enum SettingsIO {
         AppRulesStore.shared.reload()
         TitleRulesStore.shared.reload()
         SwitcherShortcutsStore.shared.reload()
+        SearchShortcutsStore.shared.reload()
         // Sparkle's two exported keys move underneath it here, and neither the About pane nor the
         // update schedule would otherwise hear about it. Only where an updater can exist at all —
         // see `Updater.isConfigured` for why building one elsewhere is the wrong thing to do.

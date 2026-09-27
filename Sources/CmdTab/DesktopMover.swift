@@ -97,6 +97,9 @@ enum DesktopMover {
         /// One specific Space, by the id `SpaceMover` reports. Ignored if it is not on the same
         /// display as the window — a Desktop move travels the Spaces Bar of one display.
         case space(UInt64)
+        /// The Nth Desktop (0-based) of the window's own display — the `desktop1…9` arrangements.
+        /// Refused, with a log line, when the display has no Nth Desktop.
+        case index(Int)
     }
 
     /// Moves the focused window of `pid` to `destination`, clamped to the ends of its display.
@@ -541,10 +544,23 @@ enum DesktopMover {
                 return nil
             }
             destination = index
+        case .index(let index):
+            // Said in its own words rather than falling through to the range guard below, whose
+            // "nothing beyond it" reads as the ends of a walk — this is a named destination that
+            // does not exist on this display.
+            guard spaces.indices.contains(index) else {
+                Log.general.notice(
+                    """
+                    desktop move: no desktop \(index + 1, privacy: .public) on this display — \
+                    it has \(spaces.count, privacy: .public)
+                    """)
+                return nil
+            }
+            destination = index
         }
-        // Already there. Only reachable on the `.space` path — `.step(0)` is turned away in `move`
-        // — and worth catching, because the gesture is not free: it would pick the window up, open
-        // Mission Control and drop it back on the thumbnail it started on.
+        // Already there. Only reachable on the `.space` and `.index` paths — `.step(0)` is turned
+        // away in `move` — and worth catching, because the gesture is not free: it would pick the
+        // window up, open Mission Control and drop it back on the thumbnail it started on.
         guard destination != current else { return nil }
         guard spaces.indices.contains(destination) else {
             Log.general.notice(

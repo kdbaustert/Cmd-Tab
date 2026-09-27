@@ -37,7 +37,9 @@ enum MarkedTiling {
     }
 }
 
-enum WindowArrangement: String, CaseIterable, Identifiable {
+// `Sendable` is stated so the App Intents conformance (`AppIntents.swift`), which implies it, can
+// live in its own file — a retroactive `Sendable` must be declared where the enum is.
+enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
     case leftHalf, rightHalf, topHalf, bottomHalf
     case leftThird, centerThird, rightThird
     case topThird, bottomThird
@@ -51,6 +53,8 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     case previousDisplay, nextDisplay
     case display1, display2, display3, display4
     case previousDesktop, nextDesktop
+    case desktop1, desktop2, desktop3, desktop4, desktop5
+    case desktop6, desktop7, desktop8, desktop9
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
 
@@ -103,6 +107,17 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         case .display4: return "Move to display 4"
         case .previousDesktop: return "Move to previous desktop"
         case .nextDesktop: return "Move to next desktop"
+        // Numbered the way Mission Control's own bar reads, and the way the tiles' Space badges
+        // count — the Nth Desktop of the display the window is on.
+        case .desktop1: return "Move to desktop 1"
+        case .desktop2: return "Move to desktop 2"
+        case .desktop3: return "Move to desktop 3"
+        case .desktop4: return "Move to desktop 4"
+        case .desktop5: return "Move to desktop 5"
+        case .desktop6: return "Move to desktop 6"
+        case .desktop7: return "Move to desktop 7"
+        case .desktop8: return "Move to desktop 8"
+        case .desktop9: return "Move to desktop 9"
         case .focusLeft: return "Focus window to the left"
         case .focusRight: return "Focus window to the right"
         case .focusUp: return "Focus window above"
@@ -177,6 +192,11 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         // many displays are plugged in — see `SettingsWindows.displayTargetGroup`, which shows only
         // the rows that name a display that exists.
         case .display1, .display2, .display3, .display4: return nil
+        // Absolute Desktop targets, unbound on the same argument — how many mean anything depends
+        // on how many Desktops the desk has, and the rows shown are filtered the same way.
+        case .desktop1, .desktop2, .desktop3, .desktop4, .desktop5,
+            .desktop6, .desktop7, .desktop8, .desktop9:
+            return nil
         // ⇧ on top of the halves' arrows: same key, "throw it further".
         case .previousDisplay:
             return Hotkey(
@@ -261,6 +281,34 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The Desktop this sends the window to outright, 0-based, or nil if it names no Desktop.
+    ///
+    /// The same argument as `displayIndex`, and stronger: the relative pair is one press and no
+    /// guess on two Desktops, and Desktops routinely run to five or more, where "three along from
+    /// here" is arithmetic nobody does mid-thought. Numbered against the window's own display's
+    /// Spaces Bar — Mission Control draws one per display, so "desktop 3" can only mean the third
+    /// of the bar this window's drag can travel. Nine of them, for the same fixed-grammar reason
+    /// there are four displays; the relative moves still walk to anything beyond.
+    var desktopIndex: Int? {
+        switch self {
+        case .desktop1: return 0
+        case .desktop2: return 1
+        case .desktop3: return 2
+        case .desktop4: return 3
+        case .desktop5: return 4
+        case .desktop6: return 5
+        case .desktop7: return 6
+        case .desktop8: return 7
+        case .desktop9: return 8
+        default: return nil
+        }
+    }
+
+    /// Whether this carries the window to another Desktop, however it names the destination — the
+    /// one family behind the Desktop-moves switch, so the gate and the URL guard cannot cover one
+    /// spelling of the move and miss the other.
+    var isDesktopMove: Bool { desktopStep != nil || desktopIndex != nil }
+
     /// Which way this moves *focus*, or nil if it does not move focus.
     var focusStep: WindowDirection? {
         switch self {
@@ -326,7 +374,7 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
     /// Everything else is tiling proper, off until asked for. See
     /// `WindowTilingBindings.arrangement(code:flags:)`, which is where that split is enforced. The
     /// Desktop moves carry a second switch of their own on top — see `desktopMoves` there.
-    var isMove: Bool { displayStep != nil || desktopStep != nil || displayIndex != nil }
+    var isMove: Bool { displayStep != nil || displayIndex != nil || isDesktopMove }
 
     /// Whether this carries the window to another display, however it names the destination.
     ///
@@ -361,6 +409,9 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
 
     /// The absolute display targets, in display order.
     static let displayTargets: [WindowArrangement] = allCases.filter { $0.displayIndex != nil }
+
+    /// The absolute Desktop targets, in Desktop order.
+    static let desktopTargets: [WindowArrangement] = allCases.filter { $0.desktopIndex != nil }
 
     /// Everything the tiling switch does **not** govern.
     ///
@@ -530,10 +581,13 @@ enum WindowArrangement: String, CaseIterable, Identifiable {
                 x: area.minX + (area.width - size.width) / 2,
                 y: area.minY + (area.height - size.height) / 2,
                 width: size.width, height: size.height)
-        // The absolute display targets join the relative pair: their destination is another
-        // display's area, which `apply` substitutes, not a rectangle on this one.
+        // The absolute display and Desktop targets join the relative pairs: their destination is
+        // another display's area or another Desktop, which `apply` or `DesktopMover` substitutes,
+        // not a rectangle on this one.
         case .restore, .previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop,
-            .display1, .display2, .display3, .display4:
+            .display1, .display2, .display3, .display4,
+            .desktop1, .desktop2, .desktop3, .desktop4, .desktop5,
+            .desktop6, .desktop7, .desktop8, .desktop9:
             return nil
         // Focus moves no window, and a swap needs a second window this function has never been told
         // about. Both are dispatched before the tiler is ever reached — see
@@ -852,7 +906,7 @@ struct WindowTilingBindings: Equatable {
     /// The Desktop moves answer to their own switch on top, so with it off their chords go back to
     /// whatever app wants them rather than being claimed and doing nothing.
     func fires(_ arrangement: WindowArrangement) -> Bool {
-        if arrangement.desktopStep != nil { return desktopMoves }
+        if arrangement.isDesktopMove { return desktopMoves }
         return isEnabled || arrangement.isUngated
     }
 

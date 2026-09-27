@@ -584,6 +584,29 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertNil(WindowArrangement.leftHalf.desktopStep)
     }
 
+    /// The named Desktop targets: 0-based, in Desktop order, disjoint from every other family, and
+    /// behind the same switch as the relative pair — one gesture, however the Desktop is spelled.
+    func testTheDesktopTargetsAreOrderedAndGatedLikeTheRelativeMoves() {
+        XCTAssertEqual(WindowArrangement.desktopTargets.compactMap(\.desktopIndex), Array(0...8))
+        XCTAssertEqual(WindowArrangement.desktop1.desktopIndex, 0)
+        XCTAssertEqual(WindowArrangement.desktop9.desktopIndex, 8)
+        XCTAssertNil(WindowArrangement.desktop3.desktopStep, "named, not relative")
+        XCTAssertNil(WindowArrangement.desktop3.displayIndex, "a Desktop, not a display")
+        XCTAssertTrue(WindowArrangement.desktop3.isDesktopMove)
+        XCTAssertTrue(WindowArrangement.desktop3.isMove)
+
+        var tiling = WindowTilingBindings.defaults
+        let chord = Hotkey(
+            keyCode: 22, modifierRaw: CGEventFlags.maskControl.union(.maskAlternate).rawValue)
+        tiling.bindings[.desktop3] = chord
+        tiling.desktopMoves = false
+        XCTAssertNil(
+            tiling.arrangement(code: chord.keyCode, flags: chord.modifiers),
+            "a named Desktop move answers to the Desktop-moves switch")
+        tiling.desktopMoves = true
+        XCTAssertEqual(tiling.arrangement(code: chord.keyCode, flags: chord.modifiers), .desktop3)
+    }
+
     /// The four move chords have to be four distinct combinations, or one of them silently shadows
     /// another — the arrows are shared and only the modifiers tell them apart.
     func testTheMoveChordsDoNotCollide() throws {
@@ -622,7 +645,7 @@ final class WindowTilingTests: XCTestCase {
             Set(WindowArrangement.moves),
             Set(
                 [.previousDisplay, .nextDisplay, .previousDesktop, .nextDesktop]
-                    + WindowArrangement.displayTargets))
+                    + WindowArrangement.displayTargets + WindowArrangement.desktopTargets))
         XCTAssertEqual(
             Set(WindowArrangement.ungated),
             Set(WindowArrangement.moves).union(WindowArrangement.focusMoves))
