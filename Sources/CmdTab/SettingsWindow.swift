@@ -415,6 +415,9 @@ enum SettingsIndex {
 @MainActor
 final class SettingsNavigator: ObservableObject {
     @Published var pendingAnchor: String?
+    /// The tab on screen. Here rather than in the view's `@State` because the window is dropped on
+    /// close, and Settings should reopen where it was left.
+    @Published var tab: SettingsTab = .general
 }
 
 // MARK: - Root
@@ -422,9 +425,12 @@ final class SettingsNavigator: ObservableObject {
 struct SettingsRootView: View {
     /// A jump asked for from outside the SwiftUI tree — see `SettingsPresenter.show(anchor:)`.
     /// `@ObservedObject` rather than `@StateObject`: the presenter owns this and it has to outlive
-    /// any one `SettingsRootView` instance, in the same way `window` outlives being closed.
+    /// any one `SettingsRootView` instance — each close drops the window and the view with it.
     @ObservedObject var navigator: SettingsNavigator
-    @State private var tab: SettingsTab = .general
+    private var tab: SettingsTab {
+        get { navigator.tab }
+        nonmutating set { navigator.tab = newValue }
+    }
     @State private var query = ""
     /// Anchor a search result asked for. Cleared once the scroll has happened, so picking the same
     /// result twice still moves.
@@ -1339,7 +1345,7 @@ private struct ScreenRecordingWarning: View {
 
 /// Hosts the settings window.
 ///
-/// Kept alive by the delegate so the window survives being closed. The window is
+/// Built on show and dropped on close — see `windowWillClose`. The window is
 /// full-size-content with a hidden title, which is what lets the sidebar run the full height with
 /// the traffic lights sitting over it — the shape System Settings has.
 @MainActor
@@ -1377,11 +1383,20 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
     /// Back to an agent when Settings goes away. Without this the Dock tile would outlive the only
     /// window it stands for, and the app would sit in ⌘-Tab and the Dock for the rest of the session
     /// with nothing to show for it.
+    ///
+    /// The window is let go of too. A hidden `NSHostingView` is not a paused one: kept, it held
+    /// `AppListModel`'s workspace observers for the life of the process, so every launch and quit
+    /// anywhere re-read every running app's icon and re-rendered a window nobody could see —
+    /// measured as the bulk of the app's idle CPU. Rebuilding on the next show is the cost
+    /// `makeWindow` already accepts for the first one; the tab lives on `navigator` and the frame
+    /// under the autosave name, so neither is lost.
     func windowWillClose(_ notification: Notification) {
         // Next turn of the run loop: at `willClose` the window is still on screen, and pulling the
-        // Dock tile out from under a window that is still closing can leave the tile behind.
-        DispatchQueue.main.async {
+        // Dock tile out from under a window that is still closing can leave the tile behind. The
+        // release waits for the same turn, so the window is not freed partway through its close.
+        DispatchQueue.main.async { [weak self] in
             NSApp.setActivationPolicy(.accessory)
+            self?.window = nil
         }
     }
 
@@ -1466,7 +1481,8 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
         // slides out from under a missed drag is worse than one that only moves by its titlebar —
         // which is still there, transparent, above the sidebar.
         window.isMovableByWindowBackground = false
-        // The presenter owns the window across closes, so AppKit must not free it out from under us.
+        // The presenter's reference is what frees it, after the close — see `windowWillClose`.
+        // AppKit releasing it as well would be one release too many.
         window.isReleasedWhenClosed = false
         window.contentView = glassContent(navigator: navigator)
         window.center()
