@@ -26,7 +26,7 @@ raise windows without it.
 
 The switcher itself never needs Screen Recording: tiles are app icons, and window *titles* come
 from the Accessibility API rather than `CGWindowListCopyWindowInfo`. The one exception is the
-optional **window preview** (Settings → Behavior) — its live thumbnails are captured
+optional **window preview** (Settings → Previews) — its live thumbnails are captured
 with ScreenCaptureKit, so turning it on prompts for Screen Recording. Leave it off and that second
 permission is never touched.
 
@@ -92,7 +92,7 @@ outranks something launchable whatever is learned, within the learned app the be
 still wins, and a query that has learned nothing behaves exactly as before. One binding per query,
 capped at the 64 most recently confirmed; a wrong one is corrected by committing that query to the
 right app once, since the newer commit replaces the older binding. **Learn search shortcuts**
-(Settings → Behavior, on by default) turns the learning off — stored bindings then stop applying but
+(Settings → Search, on by default) turns the learning off — stored bindings then stop applying but
 are kept — and **Forget search shortcuts** clears the slate.
 
 A key held with ⌥ or ⌃ is taken as deliberate rather than typed, so it never reaches the query. A
@@ -162,8 +162,9 @@ the keys *labelled* 0–9 on ANSI-style layouts.
   <img src="settings.png" alt="The Settings window, General tab" width="900">
 </p>
 
-**Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of seven tabs, each with
-its own gradient icon badge, and a search field above them. Typing in the search field replaces the
+**Menu bar → Settings…** opens a System Settings-shaped window: a sidebar of ten tabs — the
+switcher's own under a **Switcher** heading, the system-wide window management under a **Windows**
+heading — each with its own gradient icon badge, and a search field above them. Typing in the search field replaces the
 tab list with matching settings, named by the tab and section they live in; picking one switches to
 that tab, scrolls to the section and outlines it for a moment.
 
@@ -508,6 +509,9 @@ there would say the same thing twice.
 
 Global hotkeys that snap the **focused** window — they fire with nothing open and act on whatever
 you are looking at, which is why they are not on the Shortcuts tab with the switcher's own triggers.
+In Settings they span the three tabs under the **Windows** heading — **Tiling**, **Displays &
+Desktops** and **Mouse & Focus** — but they are one system sharing one store, and are documented
+together here.
 
 | Setting | What it does | Default |
 | --- | --- | --- |
@@ -584,9 +588,6 @@ window through every width.
 | --- | --- | --- |
 | Switch between | **Applications** — one tile per running app, the way ⌘-Tab has always worked — or **Windows**, one tile per open window across every app, each carrying its own title. Window tiles get a smaller icon to pay for the title, and in window mode *Hide apps with no windows* and *Preview windows* are both moot and disabled. Persists as `switcherMode`. | Applications |
 | Show delay | How long to wait before drawing the panel, so a quick tap switches with no flash. | 0 ms |
-| Launch apps from search | Typing offers installed apps alongside whatever the query found running, appended after it and capped at five — see [Type to filter](#type-to-filter). Anything already open still outranks them. | On |
-| Learn search shortcuts | Committing a typed query remembers the app it chose, and the same query ranks that app first next time — see [Type to filter](#type-to-filter). Persists as `learnSearchShortcuts`; the bindings themselves as `searchShortcuts`. | On |
-| Forget search shortcuts | Clears every learned query→app pairing. One wrong pairing is fixed faster by committing that query to the right app once. | — |
 | Stay open | Releasing the trigger leaves the switcher up instead of switching. The selection then moves with the arrows, ⇧-Tab, scroll or the mouse, and **Tab** switches to it — with the chord up there is no release left to do that job, so Tab takes over as the go key (⇧-Tab keeps its usual job of stepping backwards, or a released session would have no way to reverse-cycle) (**Return**, a click and **1–9**/**0** switch too; Escape backs out). A stay-open session dismisses itself after 20 s idle, 60 s outright, or a click anywhere outside it, so it can never sit on the keyboard. | Off |
 | Order | Recently used (an MRU list kept from activation notifications) or alphabetical. | Recently used |
 | Group windows by app | Window mode only. On keeps each app's windows in a run, which is what the list has always done — not by decision, but because it is built by walking the sorted *app* list. Off ranks every window against every other by when you last used it, so one tap of the trigger reaches the window you were in before this one whichever app it belongs to. That order was not previously reachable at all. Alphabetical always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them. Persists as `groupWindowsByApp`. | On |
@@ -594,11 +595,30 @@ window through every width.
 | Hide apps with no windows | Hides an app with no real window — one that owns only menu-bar or other helper windows. A window counts as real when it is on screen, placed on a Desktop, or window-sized; the last test is what keeps an app whose windows macOS fails to place on a Desktop (Ghostty, measured). An app whose windows are all minimized still shows — see *Known limitations*. | Off |
 | Position | Screen centre, the active screen's centre, or near the cursor. | Screen centre |
 | Show on | Which displays get a panel. | Automatic |
-| Preview windows | See [Window preview](#window-preview). | Off |
-| Full-size preview | See [Full-size preview](#full-size-preview). | Off |
 
 Each persists in `UserDefaults` (`hotkeyKeyCode`/`hotkeyModifiers`, `sortOrder`, `stickyMode`,
 `showDelayMs`, `hideEmptyApps`, `panelPosition`, `panelScreens`).
+
+### Search
+
+Everything typing can do beyond filtering, on one tab.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| Launch apps from search | Typing offers installed apps alongside whatever the query found running, appended after it and capped at five — see [Type to filter](#type-to-filter). Anything already open still outranks them. | On |
+| Learn search shortcuts | Committing a typed query remembers the app it chose, and the same query ranks that app first next time — see [Type to filter](#type-to-filter). Persists as `learnSearchShortcuts`; the bindings themselves as `searchShortcuts`. | On |
+| Forget search shortcuts | Clears every learned query→app pairing. One wrong pairing is fixed faster by committing that query to the right app once. | — |
+
+The three **Fallback** settings — *Open as URL*, *Search the web* and *Run as shell command* — sit
+under these, each off by default; what they do and why is covered in
+[Type to filter](#type-to-filter).
+
+### Previews
+
+The three live-capture features share a tab, because they share everything that matters: each draws
+real window contents, and each needs the Screen Recording permission. The features themselves are
+documented in [Thumbnail tiles](#thumbnail-tiles), [Window preview](#window-preview) and
+[Full-size preview](#full-size-preview).
 
 ### Appearance
 
@@ -1059,7 +1079,7 @@ open 'cmdtab://activate/com.apple.Safari'
 open 'cmdtab://windows/hideAll'        # or showAll
 ```
 
-Chords are the scarce resource here — almost every row in the Windows tab apologises for taking a
+Chords are the scarce resource here — almost every row on the window-management tabs apologises for taking a
 combination away from whatever app is in front, three families ship unbound because there is no
 arrow left to give them, and the Overview exists because it is genuinely hard to keep track of what
 is claimed. This is the way out of that, and it cost one `CFBundleURLTypes` entry plus a parser,
@@ -1329,12 +1349,12 @@ after that. Remove the identity in Keychain Access to undo it.
 | `AppearanceStore.swift` | The four appearance values, persisted |
 | `BehaviorStore.swift` | Every tunable that is not an appearance slider, coalescing a batch of writes into one `onChange` |
 | `Theme.swift` | A named bundle of *visual* settings — shareable precisely because it cannot change what a key does |
-| `SettingsWindow.swift` | Settings window shell, the search index, and the General/Shortcuts/Behavior tabs |
+| `SettingsWindow.swift` | Settings window shell, the search index, and the General/Shortcuts/Behavior/Search/Previews tabs |
 | `SettingsChrome.swift` | The settings window's vocabulary: pages, section cards, rows, sidebar badges |
 | `SettingsAppearance.swift` | The Appearance tab — layout, theme, panel and the metric sliders |
 | `SettingsApps.swift` | The Apps tab — the app list with its favourite and exclude controls |
 | `SettingsAbout.swift` | The About tab — version, permission status, source link |
-| `SettingsWindows.swift` | The Windows tab — the tiling switches and their shortcut recorders |
+| `SettingsWindows.swift` | The Tiling, Displays & Desktops, and Mouse & Focus tabs — the window-management switches and their shortcut recorders |
 | `SettingsRecorders.swift` | The one armed key recorder, whichever kind it is — two at once would swallow keys app-wide |
 | `SettingsGlobalRecorder.swift` | Records one global chord, with the keyboard monitor owned by the store rather than the view |
 | `SettingsIO.swift` | Export, import and reset over the owned keys, reloading the live stores so nothing needs a relaunch |
@@ -1444,7 +1464,7 @@ turn, letting a session end in between.
 ### Accessibility
 
 The Settings window is fully labelled for VoiceOver. That work is concentrated in `SettingsChrome`
-rather than spread across the seven tabs: every row there is a label on the left and a control on
+rather than spread across the ten tabs: every row there is a label on the left and a control on
 the right, and every control is built with `labelsHidden()` so the checkboxes line up down the
 card's edge — which reads correctly and announces as nothing, because a hidden label is hidden from
 VoiceOver too. `SettingsRow` states that association once, so it cannot be forgotten by the next row
@@ -1485,7 +1505,7 @@ them had ever resolved a key to anything but the English it started as. Adding a
 what turns the infrastructure from plausible into tested, and it found two real faults on the way in.
 
 **The catalogue was missing a third of the interface.** 88 strings were absent, and the pattern
-behind them is worth naming: the entire Windows tab is built by mapping over `WindowArrangement`, so
+behind them is worth naming: the entire window-management side is built by mapping over `WindowArrangement`, so
 its row titles never appear as literals at a call site the way every other title does — "Left half"
 and "Maximize" were untranslatable while the sentence explaining them three lines below was fine. In
 English that is invisible, because a missing key renders as the key and the keys *are* the English

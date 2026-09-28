@@ -1,45 +1,36 @@
 import AppKit
 import SwiftUI
 
-/// The Windows tab: global hotkeys that snap the focused window to a half, a corner, the whole
+// The window-management tabs: Tiling, Displays & Desktops, and Mouse & Focus. One tab of sixteen
+// cards outgrew itself the same way the old toolbar window did — the page's subtitle only ever
+// described tiling, and the desktop moves, the mouse gestures and focus-follows-mouse all lived
+// under a heading that promised none of them. The three panes share one store and one row
+// vocabulary, which is why they share this file: every shortcut row is a `TilingShortcutRecorder`,
+// and the subtitle logic they all use sits in the `WindowTilingStore` extension at the bottom.
+//
+// Separate from the Shortcuts tab, which is about the switcher — these fire with nothing open and
+// act on whatever window you are looking at, so grouping them with the in-switcher action keys
+// would put two quite different kinds of binding under one heading.
+
+/// Groups share the tiling anchor's prefix, so a search hit on "tile left" lands with the right
+/// card scrolled into view whichever of the three tabs it lives on.
+private func tilingAnchor(for title: String) -> String {
+    "\(SettingsAnchor.tiling).\(title.lowercased())"
+}
+
+// MARK: - Tiling
+
+/// The Tiling tab: global hotkeys that snap the focused window to a half, a corner, the whole
 /// screen or the centre.
-///
-/// Separate from the Shortcuts tab, which is about the switcher — these fire with nothing open and
-/// act on whatever window you are looking at, so grouping them with the in-switcher action keys
-/// would put two quite different kinds of binding under one heading.
-struct WindowSettings: View {
+struct TilingSettings: View {
     @ObservedObject var store: WindowTilingStore
-    @ObservedObject private var globals = GlobalActionsStore.shared
-
-    /// How many displays are plugged in, which decides how many of the absolute display targets
-    /// are worth showing.
-    ///
-    /// Held in state and refreshed from the screen-parameters notification rather than read inline:
-    /// SwiftUI has no reason to re-render this view when a monitor is plugged in, so a bare
-    /// `NSScreen.screens.count` in the body would leave the rows describing the desk as it was when
-    /// Settings opened — and this is the one tab someone opens *because* they have just plugged
-    /// something in.
-    @State private var displayCount = NSScreen.screens.count
-    /// How many Desktops the desk has (the most on any one display), for the numbered rows below.
-    /// One window-server round trip, paid when the pane is built and on the notifications that can
-    /// change the answer — never on the key path.
-    @State private var desktopCount = SpaceMover.maxUserSpaceCount()
-
-    /// Wider than the 168 the recorders use: a `ColorSettingControl` is three controls in a row, not
-    /// one, and the hex field is unusable squeezed into a recorder's width.
-    private static let colorControlWidth: CGFloat = 250
-
-    /// The rest-delay slider's range, named because the two ends of it do not fit on one line at
-    /// the call site and a `...` split across two does not parse.
-    private static let restRange =
-        FocusFollowsMouseSettings.minimumDelay...FocusFollowsMouseSettings.maximumDelay
 
     /// The order the rows read in: the four halves, then the thirds, then the four corners, then the
     /// three that are not a fraction of the screen at all, then the two families that are relative
     /// to wherever the window already is.
     ///
-    /// Every group here is governed by the tiling switch. The ones that are not have cards of their
-    /// own below, because each needs a footer saying why.
+    /// Every group here is governed by the tiling switch. The families that are not — the display
+    /// and Desktop moves, and the focus chords — have tabs of their own.
     private static let groups: [(title: String, arrangements: [WindowArrangement])] = [
         ("Halves", [.leftHalf, .rightHalf, .topHalf, .bottomHalf]),
         (
@@ -60,42 +51,6 @@ struct WindowSettings: View {
         ("Swap", WindowArrangement.swaps),
     ]
 
-    /// The absolute display targets, one row per display that is actually plugged in.
-    ///
-    /// Filtered rather than listed in full, because a row captioned "Move to display 3" on a laptop
-    /// with no external monitor is a control that cannot do anything — and the enum has to carry a
-    /// fixed four of them for the raw values to be a stable URL grammar. On a single display the
-    /// whole card is dropped: "move it to the display it is already on" is the one arrangement here
-    /// with nothing to offer at all.
-    private static func displayTargets(count: Int) -> [WindowArrangement] {
-        guard count > 1 else { return [] }
-        return WindowArrangement.displayTargets.filter { ($0.displayIndex ?? 0) < count }
-    }
-
-    /// The absolute Desktop targets, one row per Desktop that actually exists — the same filter as
-    /// the display rows, for the same reason: a row captioned "Move to desktop 7" on a machine with
-    /// three Desktops is a control that cannot do anything. With one Desktop there is nowhere else
-    /// to send a window, so no rows at all.
-    private static func desktopTargets(count: Int) -> [WindowArrangement] {
-        guard count > 1 else { return [] }
-        return WindowArrangement.desktopTargets.filter { ($0.desktopIndex ?? 0) < count }
-    }
-
-    /// The send-it-elsewhere group. Its own card rather than a fifth entry in `groups` because it
-    /// is the one the tiling switch does not govern, and the footer has to say so.
-    private static let moveGroup = ("Displays", [WindowArrangement.previousDisplay, .nextDisplay])
-
-    /// The focus chords. Outside `groups` on the same argument the display moves are: they are not
-    /// governed by the tiling switch, and a card whose rows quietly answered to a checkbox captioned
-    /// about resizing would be the confusion that split exists to prevent.
-    private static let focusGroup = ("Focus", WindowArrangement.focusMoves)
-
-    /// The Desktop moves. Their own card again, because they are the one family with a switch of
-    /// their own and the footer has to explain what that switch is protecting the user from.
-    private static let desktopGroup = (
-        "Desktops", [WindowArrangement.previousDesktop, .nextDesktop]
-    )
-
     private var isEnabled: Binding<Bool> {
         Binding(get: { store.isEnabled }, set: { store.isEnabled = $0 })
     }
@@ -112,48 +67,9 @@ struct WindowSettings: View {
         Binding(get: { Double(store.gap) }, set: { store.gap = CGFloat($0) })
     }
 
-    private var mouseDragEnabled: Binding<Bool> {
-        Binding(get: { store.mouseDrag.isEnabled }, set: { store.mouseDragEnabled = $0 })
-    }
-
-    private var desktopMoves: Binding<Bool> {
-        Binding(get: { store.desktopMoves }, set: { store.desktopMoves = $0 })
-    }
-
-    private var followsDesktopMove: Binding<Bool> {
-        Binding(get: { store.followsDesktopMove }, set: { store.followsDesktopMove = $0 })
-    }
-
-    private var pointerFollowsDisplayMove: Binding<Bool> {
-        Binding(
-            get: { store.pointerFollowsDisplayMove },
-            set: { store.pointerFollowsDisplayMove = $0 })
-    }
-
-    private var restoresDesktopAssignments: Binding<Bool> {
-        Binding(
-            get: { store.restoresDesktopAssignments },
-            set: { store.restoresDesktopAssignments = $0 })
-    }
-
-    private var restoresLayoutOnDisplayChange: Binding<Bool> {
-        Binding(
-            get: { store.restoresLayoutOnDisplayChange },
-            set: { store.restoresLayoutOnDisplayChange = $0 })
-    }
-
-    private var focusFollowsMouse: Binding<Bool> {
-        Binding(get: { store.focusFollowsMouse }, set: { store.focusFollowsMouse = $0 })
-    }
-
-    private var focusFollowsMouseDelay: Binding<Double> {
-        Binding(
-            get: { store.focusFollowsMouseDelay }, set: { store.focusFollowsMouseDelay = $0 })
-    }
-
     var body: some View {
         SettingsPage(
-            title: "Windows",
+            title: "Tiling",
             subtitle: "Snap the focused window without reaching for its edges. These work "
                 + "system-wide, whether or not the switcher is open."
         ) {
@@ -192,11 +108,327 @@ struct WindowSettings: View {
                     isOn: cycleWidths)
             }
 
+            // Deliberately *not* disabled while tiling is off. Setting the keys up before switching
+            // the feature on is the natural order to do this in, and a pane of dead recorders is
+            // exactly the shape of "you cannot define these".
+            ForEach(Self.groups, id: \.title) { group in
+                SettingsSection(title: group.title, anchor: tilingAnchor(for: group.title)) {
+                    ForEach(group.arrangements) { arrangement in
+                        SettingsRow(
+                            title: arrangement.title,
+                            subtitle: store.arrangementSubtitle(for: arrangement),
+                            controlWidth: 168
+                        ) {
+                            TilingShortcutRecorder(arrangement: arrangement, store: store)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Text("Click a shortcut and press a new combination. ⌫ clears it, ⎋ cancels.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Restore defaults", action: store.resetToDefaults)
+            }
+        }
+    }
+}
+
+// MARK: - Displays & Desktops
+
+/// The Displays & Desktops tab: sending a window somewhere else — another display or another
+/// Desktop — and what happens around a display change.
+struct DisplaysDesktopsSettings: View {
+    @ObservedObject var store: WindowTilingStore
+    @ObservedObject private var globals = GlobalActionsStore.shared
+
+    /// How many displays are plugged in, which decides how many of the absolute display targets
+    /// are worth showing.
+    ///
+    /// Held in state and refreshed from the screen-parameters notification rather than read inline:
+    /// SwiftUI has no reason to re-render this view when a monitor is plugged in, so a bare
+    /// `NSScreen.screens.count` in the body would leave the rows describing the desk as it was when
+    /// Settings opened — and this is the one tab someone opens *because* they have just plugged
+    /// something in.
+    @State private var displayCount = NSScreen.screens.count
+    /// How many Desktops the desk has (the most on any one display), for the numbered rows below.
+    /// One window-server round trip, paid when the pane is built and on the notifications that can
+    /// change the answer — never on the key path.
+    @State private var desktopCount = SpaceMover.maxUserSpaceCount()
+
+    /// The absolute display targets, one row per display that is actually plugged in.
+    ///
+    /// Filtered rather than listed in full, because a row captioned "Move to display 3" on a laptop
+    /// with no external monitor is a control that cannot do anything — and the enum has to carry a
+    /// fixed four of them for the raw values to be a stable URL grammar. On a single display the
+    /// whole card is dropped: "move it to the display it is already on" is the one arrangement here
+    /// with nothing to offer at all.
+    private static func displayTargets(count: Int) -> [WindowArrangement] {
+        guard count > 1 else { return [] }
+        return WindowArrangement.displayTargets.filter { ($0.displayIndex ?? 0) < count }
+    }
+
+    /// The absolute Desktop targets, one row per Desktop that actually exists — the same filter as
+    /// the display rows, for the same reason: a row captioned "Move to desktop 7" on a machine with
+    /// three Desktops is a control that cannot do anything. With one Desktop there is nowhere else
+    /// to send a window, so no rows at all.
+    private static func desktopTargets(count: Int) -> [WindowArrangement] {
+        guard count > 1 else { return [] }
+        return WindowArrangement.desktopTargets.filter { ($0.desktopIndex ?? 0) < count }
+    }
+
+    /// The send-it-elsewhere group. Ungoverned by the tiling switch, and the footer has to say so.
+    private static let moveGroup = ("Displays", [WindowArrangement.previousDisplay, .nextDisplay])
+
+    /// The Desktop moves: the one family with a switch of its own, and the footer has to explain
+    /// what that switch is protecting the user from.
+    private static let desktopGroup = (
+        "Desktops", [WindowArrangement.previousDesktop, .nextDesktop]
+    )
+
+    private var desktopMoves: Binding<Bool> {
+        Binding(get: { store.desktopMoves }, set: { store.desktopMoves = $0 })
+    }
+
+    private var followsDesktopMove: Binding<Bool> {
+        Binding(get: { store.followsDesktopMove }, set: { store.followsDesktopMove = $0 })
+    }
+
+    private var pointerFollowsDisplayMove: Binding<Bool> {
+        Binding(
+            get: { store.pointerFollowsDisplayMove },
+            set: { store.pointerFollowsDisplayMove = $0 })
+    }
+
+    private var restoresDesktopAssignments: Binding<Bool> {
+        Binding(
+            get: { store.restoresDesktopAssignments },
+            set: { store.restoresDesktopAssignments = $0 })
+    }
+
+    private var restoresLayoutOnDisplayChange: Binding<Bool> {
+        Binding(
+            get: { store.restoresLayoutOnDisplayChange },
+            set: { store.restoresLayoutOnDisplayChange = $0 })
+    }
+
+    var body: some View {
+        SettingsPage(
+            title: "Displays & Desktops",
+            subtitle: "Send a window to another display or Desktop, and put things back when "
+                + "displays come and go."
+        ) {
+            SettingsSection(
+                title: Self.moveGroup.0, anchor: tilingAnchor(for: Self.moveGroup.0),
+                footer: "The two moves keep the window's size and its relative position on the new "
+                    + "display, and are live whether or not tiling is on: a move changes no layout, "
+                    + "so the tiling switch does not govern it, and a bound chord is claimed "
+                    + "system-wide. The two switches below them are about what happens around a "
+                    + "display change rather than about the chords."
+            ) {
+                ForEach(Self.moveGroup.1) { arrangement in
+                    SettingsRow(
+                        title: arrangement.title,
+                        subtitle: store.arrangementSubtitle(for: arrangement),
+                        controlWidth: 168
+                    ) {
+                        TilingShortcutRecorder(arrangement: arrangement, store: store)
+                    }
+                }
+                SettingsToggle(
+                    title: "Take the pointer along",
+                    subtitle: "Warp the cursor onto the window after it lands on the other "
+                        + "display, so the next click and the next hover are where you are looking. "
+                        + "Off leaves the pointer on the display you threw the window from.",
+                    isOn: pointerFollowsDisplayMove)
+                SettingsToggle(
+                    title: "Restore the layout when displays change",
+                    subtitle: "Remembers where every window sat under each set of monitors and "
+                        + "puts them back when that set returns — the undo macOS has never had for "
+                        + "undocking. It has to have seen a desk before it can restore it, so the "
+                        + "first plug or unplug after switching this on only learns; the one after "
+                        + "that restores. Kept in memory for the session, never written to disk.",
+                    isOn: restoresLayoutOnDisplayChange)
+                SettingsToggle(
+                    title: "Put assigned apps back on their desktop",
+                    subtitle: "Unplugging a display moves its windows onto whichever desktop is in "
+                        + "front, ignoring any app you have assigned to a desktop in the Dock "
+                        + "(right-click the icon, Options, Assign To). This puts those apps back "
+                        + "where you assigned them once the displays settle. Only apps carrying an "
+                        + "assignment are touched, and only the front window of each. For each "
+                        + "one it switches to the desktop the window landed on, opens Mission "
+                        + "Control and moves the pointer for a moment, then switches back, because "
+                        + "macOS allows no quieter way to move another app's window between "
+                        + "desktops.",
+                    isOn: restoresDesktopAssignments)
+            }
+
+            // Only when there is more than one display — see `displayTargets(count:)`.
+            if !Self.displayTargets(count: displayCount).isEmpty {
+                SettingsSection(
+                    title: "Send to a display", anchor: tilingAnchor(for: "Send to a display"),
+                    footer: "Names the destination instead of counting to it: on three displays "
+                        + "\"next display\" is two presses and a guess about which way round they "
+                        + "are, where these land on the same screen every time. The numbers are the "
+                        + "ones on the window tiles' own display badges. Unbound, and ungoverned by "
+                        + "the tiling switch for the same reason the two moves above are. Rows "
+                        + "appear for the displays you actually have."
+                ) {
+                    ForEach(Self.displayTargets(count: displayCount)) { arrangement in
+                        SettingsRow(
+                            title: arrangement.title,
+                            subtitle: store.arrangementSubtitle(for: arrangement),
+                            controlWidth: 168
+                        ) {
+                            TilingShortcutRecorder(arrangement: arrangement, store: store)
+                        }
+                    }
+                }
+            }
+
+            // The only move behind a switch, and the footer says why rather than leaving someone to
+            // discover the Mission Control flash by pressing the key.
+            SettingsSection(
+                title: Self.desktopGroup.0, anchor: tilingAnchor(for: Self.desktopGroup.0),
+                footer: "macOS has no way to move another app's window between desktops, so this "
+                    + "performs the gesture instead: it picks the window up, opens Mission Control "
+                    + "for a moment and drops it on the destination's thumbnail. That means it "
+                    + "takes over the pointer for about half a second, which is why it is off by "
+                    + "default. The relative pair stops at the first and last desktop rather than "
+                    + "wrapping around; the numbered rows name the destination outright, count the "
+                    + "way Mission Control's own bar reads, and appear for as many desktops as you "
+                    + "actually have."
+            ) {
+                SettingsToggle(
+                    title: "Move windows between desktops",
+                    subtitle: "Off by default — unlike the display moves, this one drives the "
+                        + "mouse and flashes Mission Control, so it is not claimed until you ask.",
+                    isOn: desktopMoves)
+                SettingsToggle(
+                    title: "Follow the window",
+                    subtitle: "Switch to the desktop the window landed on, so you arrive with it "
+                        + "instead of watching it go. Turn this off to throw a window somewhere and "
+                        + "stay where you are.",
+                    isOn: followsDesktopMove)
+                ForEach(Self.desktopGroup.1) { arrangement in
+                    SettingsRow(
+                        title: arrangement.title,
+                        subtitle: store.arrangementSubtitle(for: arrangement),
+                        controlWidth: 168
+                    ) {
+                        TilingShortcutRecorder(arrangement: arrangement, store: store)
+                    }
+                }
+                // The named destinations, under the same switch as the relative pair — one
+                // gesture, however the Desktop is spelled. Rows appear for the Desktops you
+                // actually have, like the display rows above.
+                ForEach(Self.desktopTargets(count: desktopCount)) { arrangement in
+                    SettingsRow(
+                        title: arrangement.title,
+                        subtitle: store.arrangementSubtitle(for: arrangement),
+                        controlWidth: 168
+                    ) {
+                        TilingShortcutRecorder(arrangement: arrangement, store: store)
+                    }
+                }
+            }
+
+            SettingsSection(
+                title: "All windows", anchor: SettingsAnchor.allWindows,
+                footer: "Unbound by default: these act system-wide and have no natural home key, so "
+                    + "the combination is yours to pick rather than ours to claim."
+            ) {
+                SettingsRow(
+                    title: "Hide all windows",
+                    subtitle: "Hide every app to clear the screen to the desktop.",
+                    controlWidth: 168
+                ) {
+                    GlobalShortcutRecorder(
+                        id: "allWindows.hide", hotkey: globals.allWindows.hideAll,
+                        assign: globals.setHideAll, store: globals)
+                }
+                SettingsRow(
+                    title: "Show all windows",
+                    subtitle: "Bring back exactly what Hide all hid — apps you hid yourself stay "
+                        + "hidden.",
+                    controlWidth: 168
+                ) {
+                    GlobalShortcutRecorder(
+                        id: "allWindows.show", hotkey: globals.allWindows.showAll,
+                        assign: globals.setShowAll, store: globals)
+                }
+            }
+
+            Text("Click a shortcut and press a new combination. ⌫ clears it, ⎋ cancels.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        // The desk changing under an open Settings window is the case the display rows exist for.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didChangeScreenParametersNotification)
+        ) { _ in
+            displayCount = NSScreen.screens.count
+            desktopCount = SpaceMover.maxUserSpaceCount()
+        }
+        // Adding or removing a Desktop posts no notification of its own, but doing either takes a
+        // trip through Mission Control that all but always ends in a Space switch — so this is the
+        // moment the numbered rows are most likely to be stale, and the read is one round trip.
+        .onReceive(
+            NSWorkspace.shared.notificationCenter.publisher(
+                for: NSWorkspace.activeSpaceDidChangeNotification)
+        ) { _ in
+            desktopCount = SpaceMover.maxUserSpaceCount()
+        }
+    }
+}
+
+// MARK: - Mouse & Focus
+
+/// The Mouse & Focus tab: the pointer-driven gestures — drag to move, resize or snap — and the two
+/// ways of moving focus without clicking, by resting the pointer or by a directional chord.
+struct MouseFocusSettings: View {
+    @ObservedObject var store: WindowTilingStore
+
+    /// Wider than the 168 the recorders use: a `ColorSettingControl` is three controls in a row, not
+    /// one, and the hex field is unusable squeezed into a recorder's width.
+    private static let colorControlWidth: CGFloat = 250
+
+    /// The rest-delay slider's range, named because the two ends of it do not fit on one line at
+    /// the call site and a `...` split across two does not parse.
+    private static let restRange =
+        FocusFollowsMouseSettings.minimumDelay...FocusFollowsMouseSettings.maximumDelay
+
+    /// The focus chords: not governed by the tiling switch, and a card whose rows quietly answered
+    /// to a checkbox captioned about resizing would be the confusion that split exists to prevent.
+    private static let focusGroup = ("Focus", WindowArrangement.focusMoves)
+
+    private var mouseDragEnabled: Binding<Bool> {
+        Binding(get: { store.mouseDrag.isEnabled }, set: { store.mouseDragEnabled = $0 })
+    }
+
+    private var focusFollowsMouse: Binding<Bool> {
+        Binding(get: { store.focusFollowsMouse }, set: { store.focusFollowsMouse = $0 })
+    }
+
+    private var focusFollowsMouseDelay: Binding<Double> {
+        Binding(
+            get: { store.focusFollowsMouseDelay }, set: { store.focusFollowsMouseDelay = $0 })
+    }
+
+    var body: some View {
+        SettingsPage(
+            title: "Mouse & Focus",
+            subtitle: "Move, resize and focus windows with the pointer — or move focus by "
+                + "keyboard."
+        ) {
             SettingsSection(
                 title: "Mouse", anchor: SettingsAnchor.mouseDrag,
                 footer: "While the modifier is held, the drag is Cmd-Tab's and the app underneath "
                     + "never sees it — so a move across a document does not select text on the way. "
-                    + "Independent of the tiling switch above, and of Snap by dragging."
+                    + "Independent of the tiling switch, and of Snap by dragging."
             ) {
                 SettingsToggle(
                     title: "Move and resize with the mouse",
@@ -266,96 +498,10 @@ struct WindowSettings: View {
                     .disabled(!store.focusFollows.isEnabled)
             }
 
-            // Deliberately *not* disabled while tiling is off. Setting the keys up before switching
-            // the feature on is the natural order to do this in, and a pane of dead recorders is
-            // exactly the shape of "you cannot define these".
-            ForEach(Self.groups, id: \.title) { group in
-                SettingsSection(title: group.title, anchor: anchor(for: group.title)) {
-                    ForEach(group.arrangements) { arrangement in
-                        SettingsRow(
-                            title: arrangement.title,
-                            subtitle: subtitle(for: arrangement),
-                            controlWidth: 168
-                        ) {
-                            TilingShortcutRecorder(arrangement: arrangement, store: store)
-                        }
-                    }
-                }
-            }
-
-            // The one card that does not answer to the switch above.
-            SettingsSection(
-                title: Self.moveGroup.0, anchor: anchor(for: Self.moveGroup.0),
-                footer: "The two moves keep the window's size and its relative position on the new "
-                    + "display, and are live whether or not tiling is on: a move changes no layout, "
-                    + "so the switch above does not govern it, and a bound chord is claimed "
-                    + "system-wide. The two switches below them are about what happens around a "
-                    + "display change rather than about the chords."
-            ) {
-                ForEach(Self.moveGroup.1) { arrangement in
-                    SettingsRow(
-                        title: arrangement.title,
-                        subtitle: subtitle(for: arrangement),
-                        controlWidth: 168
-                    ) {
-                        TilingShortcutRecorder(arrangement: arrangement, store: store)
-                    }
-                }
-                SettingsToggle(
-                    title: "Take the pointer along",
-                    subtitle: "Warp the cursor onto the window after it lands on the other "
-                        + "display, so the next click and the next hover are where you are looking. "
-                        + "Off leaves the pointer on the display you threw the window from.",
-                    isOn: pointerFollowsDisplayMove)
-                SettingsToggle(
-                    title: "Restore the layout when displays change",
-                    subtitle: "Remembers where every window sat under each set of monitors and "
-                        + "puts them back when that set returns — the undo macOS has never had for "
-                        + "undocking. It has to have seen a desk before it can restore it, so the "
-                        + "first plug or unplug after switching this on only learns; the one after "
-                        + "that restores. Kept in memory for the session, never written to disk.",
-                    isOn: restoresLayoutOnDisplayChange)
-                SettingsToggle(
-                    title: "Put assigned apps back on their desktop",
-                    subtitle: "Unplugging a display moves its windows onto whichever desktop is in "
-                        + "front, ignoring any app you have assigned to a desktop in the Dock "
-                        + "(right-click the icon, Options, Assign To). This puts those apps back "
-                        + "where you assigned them once the displays settle. Only apps carrying an "
-                        + "assignment are touched, and only the front window of each. For each "
-                        + "one it switches to the desktop the window landed on, opens Mission "
-                        + "Control and moves the pointer for a moment, then switches back, because "
-                        + "macOS allows no quieter way to move another app's window between "
-                        + "desktops.",
-                    isOn: restoresDesktopAssignments)
-            }
-
-            // Only when there is more than one display — see `displayTargets(count:)`.
-            if !Self.displayTargets(count: displayCount).isEmpty {
-                SettingsSection(
-                    title: "Send to a display", anchor: anchor(for: "Send to a display"),
-                    footer: "Names the destination instead of counting to it: on three displays "
-                        + "\"next display\" is two presses and a guess about which way round they "
-                        + "are, where these land on the same screen every time. The numbers are the "
-                        + "ones on the window tiles' own display badges. Unbound, and ungoverned by "
-                        + "the tiling switch for the same reason the two moves above are. Rows "
-                        + "appear for the displays you actually have."
-                ) {
-                    ForEach(Self.displayTargets(count: displayCount)) { arrangement in
-                        SettingsRow(
-                            title: arrangement.title,
-                            subtitle: subtitle(for: arrangement),
-                            controlWidth: 168
-                        ) {
-                            TilingShortcutRecorder(arrangement: arrangement, store: store)
-                        }
-                    }
-                }
-            }
-
             // Unbound out of the box, and the footer says why rather than leaving someone to hunt
             // for a chord that was never claimed.
             SettingsSection(
-                title: Self.focusGroup.0, anchor: anchor(for: Self.focusGroup.0),
+                title: Self.focusGroup.0, anchor: tilingAnchor(for: Self.focusGroup.0),
                 footer: "Moves the keyboard to the nearest window in that direction — the other "
                     + "half of tiling, which places windows but never let you walk between them. "
                     + "Live whether or not tiling is on, since focus resizes nothing. Unbound by "
@@ -365,7 +511,7 @@ struct WindowSettings: View {
                 ForEach(Self.focusGroup.1) { arrangement in
                     SettingsRow(
                         title: arrangement.title,
-                        subtitle: subtitle(for: arrangement),
+                        subtitle: store.arrangementSubtitle(for: arrangement),
                         controlWidth: 168
                     ) {
                         TilingShortcutRecorder(arrangement: arrangement, store: store)
@@ -373,116 +519,44 @@ struct WindowSettings: View {
                 }
             }
 
-            // The only move behind a switch, and the footer says why rather than leaving someone to
-            // discover the Mission Control flash by pressing the key.
-            SettingsSection(
-                title: Self.desktopGroup.0, anchor: anchor(for: Self.desktopGroup.0),
-                footer: "macOS has no way to move another app's window between desktops, so this "
-                    + "performs the gesture instead: it picks the window up, opens Mission Control "
-                    + "for a moment and drops it on the destination's thumbnail. That means it "
-                    + "takes over the pointer for about half a second, which is why it is off by "
-                    + "default. The relative pair stops at the first and last desktop rather than "
-                    + "wrapping around; the numbered rows name the destination outright, count the "
-                    + "way Mission Control's own bar reads, and appear for as many desktops as you "
-                    + "actually have."
-            ) {
-                SettingsToggle(
-                    title: "Move windows between desktops",
-                    subtitle: "Off by default — unlike the display moves, this one drives the "
-                        + "mouse and flashes Mission Control, so it is not claimed until you ask.",
-                    isOn: desktopMoves)
-                SettingsToggle(
-                    title: "Follow the window",
-                    subtitle: "Switch to the desktop the window landed on, so you arrive with it "
-                        + "instead of watching it go. Turn this off to throw a window somewhere and "
-                        + "stay where you are.",
-                    isOn: followsDesktopMove)
-                ForEach(Self.desktopGroup.1) { arrangement in
-                    SettingsRow(
-                        title: arrangement.title,
-                        subtitle: subtitle(for: arrangement),
-                        controlWidth: 168
-                    ) {
-                        TilingShortcutRecorder(arrangement: arrangement, store: store)
-                    }
-                }
-                // The named destinations, under the same switch as the relative pair — one
-                // gesture, however the Desktop is spelled. Rows appear for the Desktops you
-                // actually have, like the display rows above.
-                ForEach(Self.desktopTargets(count: desktopCount)) { arrangement in
-                    SettingsRow(
-                        title: arrangement.title,
-                        subtitle: subtitle(for: arrangement),
-                        controlWidth: 168
-                    ) {
-                        TilingShortcutRecorder(arrangement: arrangement, store: store)
-                    }
-                }
-            }
-
-            SettingsSection(
-                title: "All windows", anchor: SettingsAnchor.allWindows,
-                footer: "Unbound by default: these act system-wide and have no natural home key, so "
-                    + "the combination is yours to pick rather than ours to claim."
-            ) {
-                SettingsRow(
-                    title: "Hide all windows",
-                    subtitle: "Hide every app to clear the screen to the desktop.",
-                    controlWidth: 168
-                ) {
-                    GlobalShortcutRecorder(
-                        id: "allWindows.hide", hotkey: globals.allWindows.hideAll,
-                        assign: globals.setHideAll, store: globals)
-                }
-                SettingsRow(
-                    title: "Show all windows",
-                    subtitle: "Bring back exactly what Hide all hid — apps you hid yourself stay "
-                        + "hidden.",
-                    controlWidth: 168
-                ) {
-                    GlobalShortcutRecorder(
-                        id: "allWindows.show", hotkey: globals.allWindows.showAll,
-                        assign: globals.setShowAll, store: globals)
-                }
-            }
-
-            HStack(spacing: 8) {
-                Text("Click a shortcut and press a new combination. ⌫ clears it, ⎋ cancels.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Restore defaults", action: store.resetToDefaults)
-            }
-        }
-        // The desk changing under an open Settings window is the case the display rows exist for.
-        .onReceive(
-            NotificationCenter.default.publisher(
-                for: NSApplication.didChangeScreenParametersNotification)
-        ) { _ in
-            displayCount = NSScreen.screens.count
-            desktopCount = SpaceMover.maxUserSpaceCount()
-        }
-        // Adding or removing a Desktop posts no notification of its own, but doing either takes a
-        // trip through Mission Control that all but always ends in a Space switch — so this is the
-        // moment the numbered rows are most likely to be stale, and the read is one round trip.
-        .onReceive(
-            NSWorkspace.shared.notificationCenter.publisher(
-                for: NSWorkspace.activeSpaceDidChangeNotification)
-        ) { _ in
-            desktopCount = SpaceMover.maxUserSpaceCount()
+            Text("Click a shortcut and press a new combination. ⌫ clears it, ⎋ cancels.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
         }
     }
 
+    /// What each modifier row says under it — its job, or the reason it cannot do it.
+    private func chordSubtitle(for action: MouseDragAction) -> String? {
+        let chord = store.mouseChord(for: action)
+        if !chord.isUsable {
+            return "Needs ⌃, ⌥ or ⌘ — click and hold a combination."
+        }
+        // Both bound the same way is allowed rather than refused (swapping the two needs a
+        // colliding step), but only one of them can ever fire, and the row says which.
+        if action == .resize, store.mouseChord(for: .move) == chord {
+            return "Same modifiers as Move — only Move will fire."
+        }
+        return action == .move
+            ? "Drag anywhere in the window to move it."
+            : "Drag to resize from the corner of the quarter you press in."
+    }
+}
+
+// MARK: - Shared row subtitles
+
+extension WindowTilingStore {
     /// The row's explanation, or a warning when the binding cannot do what it looks like it does.
     ///
-    /// A trigger collision is checked on every render, not only at record time: changing the
-    /// switcher shortcut later can strand a tiling chord that was perfectly good when it was set.
-    private func subtitle(for arrangement: WindowArrangement) -> String? {
-        if let hotkey = store.hotkey(for: arrangement),
+    /// On the store rather than any one pane because all three window-management tabs draw
+    /// arrangement rows. A trigger collision is checked on every render, not only at record time:
+    /// changing the switcher shortcut later can strand a tiling chord that was perfectly good when
+    /// it was set.
+    fileprivate func arrangementSubtitle(for arrangement: WindowArrangement) -> String? {
+        if let hotkey = hotkey(for: arrangement),
             let claimer = WindowTilingBindings.triggerClaiming(hotkey, in: .shared) {
             return "\(hotkey.displayString) opens \(claimer) — this will never fire."
         }
-        let clashes = store.tiling.conflicts(with: arrangement)
+        let clashes = tiling.conflicts(with: arrangement)
         if !clashes.isEmpty {
             let names = clashes.map(\.title).joined(separator: ", ")
             // Which one actually wins is `WindowArrangement.allCases` order, and saying so is more
@@ -492,7 +566,7 @@ struct WindowSettings: View {
         }
         // Said on the row rather than only in the footer: a recorder showing a chord reads as bound,
         // and "bound but switched off" is exactly the state someone will press the key in.
-        if arrangement.isDesktopMove, !store.desktopMoves {
+        if arrangement.isDesktopMove, !desktopMoves {
             return "Switched off above — this will not fire."
         }
         switch arrangement {
@@ -520,28 +594,6 @@ struct WindowSettings: View {
             // twice or four times over in rows that mean the same thing in different directions.
             return nil
         }
-    }
-
-    /// What each modifier row says under it — its job, or the reason it cannot do it.
-    private func chordSubtitle(for action: MouseDragAction) -> String? {
-        let chord = store.mouseChord(for: action)
-        if !chord.isUsable {
-            return "Needs ⌃, ⌥ or ⌘ — click and hold a combination."
-        }
-        // Both bound the same way is allowed rather than refused (swapping the two needs a
-        // colliding step), but only one of them can ever fire, and the row says which.
-        if action == .resize, store.mouseChord(for: .move) == chord {
-            return "Same modifiers as Move — only Move will fire."
-        }
-        return action == .move
-            ? "Drag anywhere in the window to move it."
-            : "Drag to resize from the corner of the quarter you press in."
-    }
-
-    /// Groups share the tiling anchor's prefix, so a search hit on "tile left" lands on the tiling
-    /// card with the three groups scrolled into view underneath it.
-    private func anchor(for title: String) -> String {
-        "\(SettingsAnchor.tiling).\(title.lowercased())"
     }
 }
 

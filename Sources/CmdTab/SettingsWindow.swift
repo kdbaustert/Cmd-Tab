@@ -15,22 +15,40 @@ import SwiftUI
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case shortcuts
-    case windows
     case behavior
+    case search
+    case previews
     case appearance
     case apps
+    case tiling
+    case displaysDesktops
+    case mouseFocus
     case about
 
     var id: String { rawValue }
+
+    /// The sidebar, grouped the way System Settings groups its own: the switcher's tabs under one
+    /// heading, the system-wide window management under another, and the two bookends on their own.
+    /// The grouping is the sidebar's business only — everything else keys off the tab itself.
+    static let groups: [(header: String?, tabs: [SettingsTab])] = [
+        (nil, [.general]),
+        ("Switcher", [.shortcuts, .behavior, .search, .previews, .appearance, .apps]),
+        ("Windows", [.tiling, .displaysDesktops, .mouseFocus]),
+        (nil, [.about]),
+    ]
 
     var title: String {
         switch self {
         case .general: return "General"
         case .shortcuts: return "Shortcuts"
-        case .windows: return "Windows"
         case .behavior: return "Behavior"
+        case .search: return "Search"
+        case .previews: return "Previews"
         case .appearance: return "Appearance"
         case .apps: return "Apps"
+        case .tiling: return "Tiling"
+        case .displaysDesktops: return "Displays & Desktops"
+        case .mouseFocus: return "Mouse & Focus"
         case .about: return "About"
         }
     }
@@ -42,10 +60,14 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return (Color(hex: "#8E8E93")!, Color(hex: "#6C6C70")!)
         case .shortcuts: return (Color(hex: "#6E7BFF")!, Color(hex: "#3B45D6")!)
-        case .windows: return (Color(hex: "#3FC7C7")!, Color(hex: "#0E8F97")!)
         case .behavior: return (Color(hex: "#A96BFF")!, Color(hex: "#6B2FD6")!)
+        case .search: return (Color(hex: "#FF7BA9")!, Color(hex: "#D6437B")!)
+        case .previews: return (Color(hex: "#5BA8F5")!, Color(hex: "#2570CE")!)
         case .appearance: return (Color(hex: "#FF8A5B")!, Color(hex: "#E0532B")!)
         case .apps: return (Color(hex: "#5BC8A8")!, Color(hex: "#17916F")!)
+        case .tiling: return (Color(hex: "#3FC7C7")!, Color(hex: "#0E8F97")!)
+        case .displaysDesktops: return (Color(hex: "#3F8CFF")!, Color(hex: "#1B5FD9")!)
+        case .mouseFocus: return (Color(hex: "#E86BD9")!, Color(hex: "#B12FA3")!)
         case .about: return (Color(hex: "#B8B8BE")!, Color(hex: "#95959B")!)
         }
     }
@@ -57,11 +79,15 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         // seven badges in a column read as seven different icon sets rather than one.
         case .general: return "gearshape.2.fill"
         case .shortcuts: return "command.circle.fill"
-        // The tab is about tiling, so a divided square says more than a plain window outline.
-        case .windows: return "square.split.2x2.fill"
         case .behavior: return "square.stack.3d.up.fill"
+        case .search: return "magnifyingglass.circle.fill"
+        case .previews: return "eye.circle.fill"
         case .appearance: return "swatchpalette.fill"
         case .apps: return "square.grid.3x3.fill"
+        // The tab is about tiling, so a divided square says more than a plain window outline.
+        case .tiling: return "square.split.2x2.fill"
+        case .displaysDesktops: return "rectangle.stack.fill"
+        case .mouseFocus: return "computermouse.fill"
         case .about: return "info.circle.fill"
         }
     }
@@ -87,9 +113,13 @@ enum SettingsAnchor {
     static let allWindows = "windows.allWindows"
 
     static let session = "behavior.session"
-    static let fallback = "behavior.fallback"
     static let contents = "behavior.contents"
     static let placement = "behavior.placement"
+
+    static let search = "search.search"
+    static let fallback = "search.fallback"
+
+    static let previews = "previews.capture"
 
     static let layout = "appearance.layout"
     static let theme = "appearance.theme"
@@ -174,14 +204,14 @@ enum SettingsIndex {
              "In-switcher keys",
              ["keys", "panel", "filter", "search", "escape", "return", "digits", "navigate"]),
 
-        item("tiling", .windows, SettingsAnchor.tiling, "Window tiling", "Window tiling",
+        item("tiling", .tiling, SettingsAnchor.tiling, "Window tiling", "Window tiling",
              ["tile", "tiling", "snap", "halves", "half", "corner", "quarter", "maximize",
               "fullscreen", "center", "centre", "arrange", "window management", "restore",
               "left half", "right half", "cycle widths", "thirds", "two thirds", "top third",
               "bottom third", "larger", "smaller", "bigger", "grow", "shrink", "resize", "nudge",
               "move window", "increment", "swap", "exchange", "display", "monitor",
               "screen", "gap", "gaps", "padding", "margin", "spacing", "inset", "border"]),
-        item("focusDirection", .windows, anchorFocus, "Focus",
+        item("focusDirection", .mouseFocus, anchorFocus, "Focus",
              "Focus window by direction",
              ["focus", "focus left", "focus right", "directional", "navigate", "move focus",
               "keyboard", "between windows", "next window", "vim", "yabai", "amethyst"]),
@@ -189,32 +219,32 @@ enum SettingsIndex {
         // matched only `windowSpaceScope` over in Behavior — which decides which Desktops the
         // switcher *lists* — so a search for the feature that moves a window between Desktops
         // answered confidently with a different setting.
-        item("desktopMoves", .windows, anchorDesktops, "Desktops",
+        item("desktopMoves", .displaysDesktops, anchorDesktops, "Desktops",
              "Move windows between desktops",
              ["desktop", "desktops", "space", "spaces", "mission control", "move window",
               "move between desktops", "send to desktop", "next desktop", "previous desktop",
               "throw", "follow the window", "arrive with it"]),
-        item("sendToDisplay", .windows, anchorSendToDisplay, "Send to a display",
+        item("sendToDisplay", .displaysDesktops, anchorSendToDisplay, "Send to a display",
              "Send to a display",
              ["display", "displays", "monitor", "monitors", "screen", "screens",
               "send to display", "move to display", "second monitor", "external", "by number"]),
-        item("pointerFollows", .windows, anchorDisplays, "Displays",
+        item("pointerFollows", .displaysDesktops, anchorDisplays, "Displays",
              "Take the pointer along",
              ["pointer", "cursor", "warp", "mouse", "follow", "display", "monitor", "move"]),
-        item("restoreLayout", .windows, anchorDisplays, "Displays",
+        item("restoreLayout", .displaysDesktops, anchorDisplays, "Displays",
              "Restore the layout when displays change",
              ["restore", "layout", "dock", "undock", "unplug", "plug", "monitor", "display",
               "external", "arrangement", "remember", "positions", "scrambled", "moved"]),
-        item("focusFollowsMouse", .windows, SettingsAnchor.focusFollows,
+        item("focusFollowsMouse", .mouseFocus, SettingsAnchor.focusFollows,
              "Focus follows the pointer", "Focus the window under the pointer",
              ["focus follows mouse", "ffm", "hover", "pointer", "cursor", "autoraise", "x11",
               "sloppy focus", "rest", "delay"]),
-        item("mouseDrag", .windows, SettingsAnchor.mouseDrag, "Mouse",
+        item("mouseDrag", .mouseFocus, SettingsAnchor.mouseDrag, "Mouse",
              "Move and resize with the mouse",
              ["mouse", "drag", "modifier", "move window", "resize", "rectangle", "alt drag",
               "grab", "pointer", "trackpad", "point", "hold", "dot", "anchor", "highlight",
               "color", "colour", "dot color", "accent"]),
-        item("allWindows", .windows, SettingsAnchor.allWindows, "All windows",
+        item("allWindows", .displaysDesktops, SettingsAnchor.allWindows, "All windows",
              "Hide all windows",
              ["hide all", "show all", "desktop", "clear screen", "show desktop", "unhide"]),
         item("directActivation", .apps, SettingsAnchor.directActivation, "Direct activation",
@@ -229,21 +259,21 @@ enum SettingsIndex {
              "Window title rules",
              ["title", "window rule", "regex", "regular expression", "hide window", "expand",
               "never tile", "per window", "pattern"]),
-        item("launchFromSearch", .behavior, SettingsAnchor.session, "Session",
+        item("launchFromSearch", .search, SettingsAnchor.search, "Search",
              "Launch apps from search",
              ["launch", "launcher", "open app", "search", "not running", "no matches"]),
-        item("learnSearchShortcuts", .behavior, SettingsAnchor.session, "Session",
+        item("learnSearchShortcuts", .search, SettingsAnchor.search, "Search",
              "Learn search shortcuts",
              ["learn", "remember", "search shortcut", "binding", "habit", "ranking", "query"]),
-        item("forgetSearchShortcuts", .behavior, SettingsAnchor.session, "Session",
+        item("forgetSearchShortcuts", .search, SettingsAnchor.search, "Search",
              "Forget search shortcuts",
              ["forget", "clear", "reset", "learned", "search shortcut"]),
 
-        item("openAsURL", .behavior, SettingsAnchor.fallback, "Fallback", "Open as URL",
+        item("openAsURL", .search, SettingsAnchor.fallback, "Fallback", "Open as URL",
              ["url", "address", "website", "browser", "open", "fallback", "no matches"]),
-        item("searchTheWeb", .behavior, SettingsAnchor.fallback, "Fallback", "Search the web",
+        item("searchTheWeb", .search, SettingsAnchor.fallback, "Fallback", "Search the web",
              ["search", "web", "google", "duckduckgo", "template", "fallback", "no matches"]),
-        item("runAsShellCommand", .behavior, SettingsAnchor.fallback, "Fallback",
+        item("runAsShellCommand", .search, SettingsAnchor.fallback, "Fallback",
              "Run as shell command",
              ["shell", "command", "terminal", "run", "zsh", "fallback", "no matches", "dangerous"]),
 
@@ -269,14 +299,14 @@ enum SettingsIndex {
              ["position", "centre", "center", "cursor", "active screen"]),
         item("screens", .behavior, SettingsAnchor.placement, "Placement", "Show on",
              ["display", "monitor", "screen", "mirror", "multi monitor"]),
-        item("preview", .behavior, SettingsAnchor.placement, "Placement",
+        item("preview", .previews, SettingsAnchor.previews, "Live capture",
              "Preview windows",
              ["preview", "thumbnail", "hover", "keyboard", "screen recording"]),
-        item("thumbnailTiles", .behavior, SettingsAnchor.placement, "Placement",
+        item("thumbnailTiles", .previews, SettingsAnchor.previews, "Live capture",
              "Thumbnail tiles",
              ["thumbnail", "thumbnails", "preview", "screenshot", "window contents", "alttab",
               "alt-tab", "live", "capture", "screen recording", "tile artwork"]),
-        item("quickPreview", .behavior, SettingsAnchor.placement, "Placement",
+        item("quickPreview", .previews, SettingsAnchor.previews, "Live capture",
              "Full-size preview",
              ["preview", "quick look", "space", "spacebar", "zoom", "large", "full size",
               "capture", "screen recording"]),
@@ -359,10 +389,11 @@ enum SettingsIndex {
              ["source", "github", "repository", "code", "issues"]),
     ]
 
-    // The Windows-tab cards whose anchors are built from a group title rather than declared in
-    // `SettingsAnchor` — see `WindowSettings.anchor(for:)`, whose spelling these have to match
-    // exactly or the search result scrolls to nothing. That includes the spaces and the lower case
-    // in "send to a display", which is why it is not written the way a constant usually would be.
+    // The window-management cards whose anchors are built from a group title rather than declared
+    // in `SettingsAnchor` — see `tilingAnchor(for:)` in `SettingsWindows.swift`, whose spelling
+    // these have to match exactly or the search result scrolls to nothing. That includes the spaces
+    // and the lower case in "send to a display", which is why it is not written the way a constant
+    // usually would be.
     private static let anchorFocus = "\(SettingsAnchor.tiling).focus"
     private static let anchorDisplays = "\(SettingsAnchor.tiling).displays"
     private static let anchorDesktops = "\(SettingsAnchor.tiling).desktops"
@@ -409,7 +440,7 @@ struct SettingsRootView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-                .frame(width: 192)
+                .frame(width: 212)
                 .background(VisualEffectBackground(material: .sidebar, blurRadius: nil))
             Divider()
             detail
@@ -459,39 +490,56 @@ struct SettingsRootView: View {
     }
 
     private var tabList: some View {
-        VStack(spacing: 2) {
-            ForEach(SettingsTab.allCases) { candidate in
-                Button {
-                    tab = candidate
-                } label: {
-                    HStack(spacing: 9) {
-                        SettingsTabIcon(
-                            symbol: candidate.symbol,
-                            start: candidate.gradient.0,
-                            end: candidate.gradient.1)
-                        Text(candidate.title).font(.system(size: 13))
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(tab == candidate ? Color.primary.opacity(0.10) : .clear))
-                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(SettingsTab.groups.enumerated()), id: \.offset) { _, group in
+                if let header = group.header {
+                    Text(header)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 10)
+                        .padding(.bottom, 2)
+                        // The tabs are what VoiceOver should walk; the heading is announced as a
+                        // heading rather than met as one more stop between two buttons.
+                        .accessibilityAddTraits(.isHeader)
                 }
-                .buttonStyle(.plain)
-                // Which tab is showing is carried by a background tint and nothing else, so
-                // without `.isSelected` a VoiceOver user walking the sidebar has no way to tell
-                // where they already are. The gradient badge is decoration and is folded into the
-                // tab's name rather than announced as an image.
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(candidate.title)
-                .accessibilityAddTraits(
-                    tab == candidate ? [.isButton, .isSelected] : .isButton)
+                ForEach(group.tabs) { candidate in
+                    tabRow(candidate)
+                }
             }
         }
         .padding(.horizontal, 8)
         .accessibilityLabel("Settings sections")
+    }
+
+    private func tabRow(_ candidate: SettingsTab) -> some View {
+        Button {
+            tab = candidate
+        } label: {
+            HStack(spacing: 9) {
+                SettingsTabIcon(
+                    symbol: candidate.symbol,
+                    start: candidate.gradient.0,
+                    end: candidate.gradient.1)
+                Text(candidate.title).font(.system(size: 13)).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(tab == candidate ? Color.primary.opacity(0.10) : .clear))
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        // Which tab is showing is carried by a background tint and nothing else, so
+        // without `.isSelected` a VoiceOver user walking the sidebar has no way to tell
+        // where they already are. The gradient badge is decoration and is folded into the
+        // tab's name rather than announced as an image.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(candidate.title)
+        .accessibilityAddTraits(
+            tab == candidate ? [.isButton, .isSelected] : .isButton)
     }
 
     /// Search hits, each naming the tab and section it lives in — the same job the sidebar does the
@@ -566,14 +614,22 @@ struct SettingsRootView: View {
             GeneralSettings(loginItem: .shared, behavior: .shared)
         case .shortcuts:
             ShortcutSettings(behavior: .shared)
-        case .windows:
-            WindowSettings(store: .shared)
         case .behavior:
             BehaviorSettings(behavior: .shared)
+        case .search:
+            SearchSettings(behavior: .shared)
+        case .previews:
+            PreviewSettings(behavior: .shared)
         case .appearance:
             AppearanceSettings(appearance: .shared, behavior: .shared, apps: apps)
         case .apps:
             AppsSettings(store: .shared, favorites: .shared, apps: apps)
+        case .tiling:
+            TilingSettings(store: .shared)
+        case .displaysDesktops:
+            DisplaysDesktopsSettings(store: .shared)
+        case .mouseFocus:
+            MouseFocusSettings(store: .shared)
         case .about:
             AboutSettings()
         }
@@ -1020,7 +1076,6 @@ struct ShortcutSettings: View {
 
 struct BehaviorSettings: View {
     @ObservedObject var behavior: BehaviorStore
-    @ObservedObject private var searchShortcuts = SearchShortcutsStore.shared
 
     var body: some View {
         SettingsPage(title: "Behavior", subtitle: "How the switcher opens, what it lists, and where "
@@ -1039,52 +1094,6 @@ struct BehaviorSettings: View {
                     subtitle: "Releasing the trigger leaves the switcher up instead of switching. "
                         + "Tab, Return, a click or 1–9/0 then picks; Escape backs out.",
                     isOn: $behavior.stickyMode)
-                SettingsToggle(
-                    title: "Launch apps from search",
-                    subtitle: "Typing offers installed apps alongside whatever is running; "
-                        + "picking one launches it. Anything already open still outranks them.",
-                    isOn: $behavior.launchFromSearch)
-                SettingsToggle(
-                    title: "Learn search shortcuts",
-                    subtitle: "Committing a typed query remembers the app it chose, so the same "
-                        + "query lands on it first next time.",
-                    isOn: $behavior.learnSearchShortcuts)
-                SettingsRow(
-                    title: "Forget search shortcuts",
-                    subtitle: "Clears every learned pairing. One wrong pairing is fixed faster by "
-                        + "committing that query to the right app once."
-                ) {
-                    Button("Forget") { searchShortcuts.removeAll() }
-                        .disabled(searchShortcuts.bindings.entries.isEmpty)
-                }
-            }
-
-            SettingsSection(title: "Fallback", anchor: SettingsAnchor.fallback) {
-                SettingsToggle(
-                    title: "Open as URL",
-                    subtitle: "When a query matches nothing running or installed and looks like an "
-                        + "address, offer to open it in your browser.",
-                    isOn: $behavior.offerURLFallback)
-                SettingsToggle(
-                    title: "Search the web",
-                    subtitle: "Offer to search for the query, using the address below.",
-                    isOn: $behavior.offerSearchFallback)
-                SettingsRow(
-                    title: "Search template",
-                    subtitle: "%s is replaced with the query.",
-                    isSubtitleVerbatim: true, controlWidth: 220
-                ) {
-                    TextField("", text: $behavior.fallbackSearchTemplate)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                        .disabled(!behavior.offerSearchFallback)
-                }
-                SettingsToggle(
-                    title: "Run as shell command",
-                    subtitle: "Runs whatever you typed as a shell command, with no confirmation "
-                        + "and no visible output. Leave this off unless you understand what that "
-                        + "means.",
-                    isOn: $behavior.offerShellFallback)
             }
 
             SettingsSection(title: "Contents", anchor: SettingsAnchor.contents) {
@@ -1146,6 +1155,89 @@ struct BehaviorSettings: View {
                 ) {
                     ForEach(PanelScreens.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Search
+
+/// What typing into the switcher does beyond filtering: launching, learned shortcuts, and the
+/// fallbacks offered when a query matches nothing. Split out of the Behavior tab — these are one
+/// feature family, and they were spread across a "Session" card and a "Fallback" card that nothing
+/// connected.
+struct SearchSettings: View {
+    @ObservedObject var behavior: BehaviorStore
+    @ObservedObject private var searchShortcuts = SearchShortcutsStore.shared
+
+    var body: some View {
+        SettingsPage(title: "Search", subtitle: "What typing into the switcher offers, and what "
+            + "happens when a query matches nothing.") {
+            SettingsSection(title: "Search", anchor: SettingsAnchor.search) {
+                SettingsToggle(
+                    title: "Launch apps from search",
+                    subtitle: "Typing offers installed apps alongside whatever is running; "
+                        + "picking one launches it. Anything already open still outranks them.",
+                    isOn: $behavior.launchFromSearch)
+                SettingsToggle(
+                    title: "Learn search shortcuts",
+                    subtitle: "Committing a typed query remembers the app it chose, so the same "
+                        + "query lands on it first next time.",
+                    isOn: $behavior.learnSearchShortcuts)
+                SettingsRow(
+                    title: "Forget search shortcuts",
+                    subtitle: "Clears every learned pairing. One wrong pairing is fixed faster by "
+                        + "committing that query to the right app once."
+                ) {
+                    Button("Forget") { searchShortcuts.removeAll() }
+                        .disabled(searchShortcuts.bindings.entries.isEmpty)
+                }
+            }
+
+            SettingsSection(title: "Fallback", anchor: SettingsAnchor.fallback) {
+                SettingsToggle(
+                    title: "Open as URL",
+                    subtitle: "When a query matches nothing running or installed and looks like an "
+                        + "address, offer to open it in your browser.",
+                    isOn: $behavior.offerURLFallback)
+                SettingsToggle(
+                    title: "Search the web",
+                    subtitle: "Offer to search for the query, using the address below.",
+                    isOn: $behavior.offerSearchFallback)
+                SettingsRow(
+                    title: "Search template",
+                    subtitle: "%s is replaced with the query.",
+                    isSubtitleVerbatim: true, controlWidth: 220
+                ) {
+                    TextField("", text: $behavior.fallbackSearchTemplate)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                        .disabled(!behavior.offerSearchFallback)
+                }
+                SettingsToggle(
+                    title: "Run as shell command",
+                    subtitle: "Runs whatever you typed as a shell command, with no confirmation "
+                        + "and no visible output. Leave this off unless you understand what that "
+                        + "means.",
+                    isOn: $behavior.offerShellFallback)
+            }
+        }
+    }
+}
+
+// MARK: - Previews
+
+/// The three live-capture features, on one tab because they share everything that matters: each
+/// draws real window contents, each needs Screen Recording, and each fails the same silent way
+/// when the grant is missing. On the Behavior tab they sat under "Placement", which is where
+/// nobody looked for them.
+struct PreviewSettings: View {
+    @ObservedObject var behavior: BehaviorStore
+
+    var body: some View {
+        SettingsPage(title: "Previews", subtitle: "Live window captures in and around the "
+            + "switcher. Each needs Screen Recording permission.") {
+            SettingsSection(title: "Live capture", anchor: SettingsAnchor.previews) {
                 SettingsToggle(
                     title: "Thumbnail tiles",
                     subtitle: behavior.mode == .apps

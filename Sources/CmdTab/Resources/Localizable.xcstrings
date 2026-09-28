@@ -4540,23 +4540,6 @@
         }
       }
     },
-    "The two moves keep the window's size and its relative position on the new display, and are live whether or not tiling is on: a move changes no layout, so the switch above does not govern it, and a bound chord is claimed system-wide. The two switches below them are about what happens around a display change rather than about the chords.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The two moves keep the window's size and its relative position on the new display, and are live whether or not tiling is on: a move changes no layout, so the switch above does not govern it, and a bound chord is claimed system-wide. The two switches below them are about what happens around a display change rather than about the chords."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les deux déplacements conservent la taille de la fenêtre et sa position relative sur le nouvel écran, et sont actifs que le pavage soit activé ou non : un déplacement ne change aucune disposition, donc l'interrupteur ci-dessus ne le régit pas, et un raccourci associé est revendiqué pour tout le système. Les deux interrupteurs en dessous concernent ce qui se passe autour d'un changement d'écrans, pas les raccourcis."
-          }
-        }
-      }
-    },
     "The two windows change places, each taking the other's exact frame.": {
       "extractionState": "manual",
       "localizations": {
@@ -5254,23 +5237,6 @@
         }
       }
     },
-    "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch above, and of Snap by dragging.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch above, and of Snap by dragging."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tant que le modificateur est maintenu, le glissement appartient à Cmd-Tab et l'application en dessous ne le voit jamais — un déplacement au-dessus d'un document ne sélectionne donc pas de texte au passage. Indépendant de l'interrupteur de pavage ci-dessus et de l'aimantation par glissement."
-          }
-        }
-      }
-    },
     "Window": {
       "extractionState": "manual",
       "localizations": {
@@ -5471,6 +5437,210 @@
           "stringUnit": {
             "state": "translated",
             "value": "macOS met une fenêtre au premier plan en même temps qu'il l'active : celle que vous survolez passe donc devant. Rien ne se produit tant qu'un bouton de la souris ou un modificateur est maintenu, ni pendant que le sélecteur est ouvert — chacun de ces cas est un geste qui appartient à la fenêtre où il a commencé."
+          }
+        }
+      }
+    },
+    "Search": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recherche"
+          }
+        }
+      }
+    },
+    "What typing into the switcher offers, and what happens when a query matches nothing.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What typing into the switcher offers, and what happens when a query matches nothing."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce que la saisie propose dans le sélecteur, et ce qui se passe quand une requête ne correspond à rien."
+          }
+        }
+      }
+    },
+    "Previews": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previews"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçus"
+          }
+        }
+      }
+    },
+    "Live window captures in and around the switcher. Each needs Screen Recording permission.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live window captures in and around the switcher. Each needs Screen Recording permission."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Des captures de fenêtres en direct, dans le sélecteur et autour de lui. Chacune nécessite l'autorisation Enregistrement de l'écran."
+          }
+        }
+      }
+    },
+    "Live capture": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live capture"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture en direct"
+          }
+        }
+      }
+    },
+    "Tiling": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiling"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pavage"
+          }
+        }
+      }
+    },
+    "Displays & Desktops": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Displays & Desktops"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écrans et bureaux"
+          }
+        }
+      }
+    },
+    "Send a window to another display or Desktop, and put things back when displays come and go.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send a window to another display or Desktop, and put things back when displays come and go."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyez une fenêtre vers un autre écran ou bureau, et remettez tout en place quand les écrans vont et viennent."
+          }
+        }
+      }
+    },
+    "Mouse & Focus": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mouse & Focus"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Souris et focus"
+          }
+        }
+      }
+    },
+    "Move, resize and focus windows with the pointer — or move focus by keyboard.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move, resize and focus windows with the pointer — or move focus by keyboard."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacez, redimensionnez et activez les fenêtres au pointeur — ou déplacez le focus au clavier."
+          }
+        }
+      }
+    },
+    "The two moves keep the window's size and its relative position on the new display, and are live whether or not tiling is on: a move changes no layout, so the tiling switch does not govern it, and a bound chord is claimed system-wide. The two switches below them are about what happens around a display change rather than about the chords.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The two moves keep the window's size and its relative position on the new display, and are live whether or not tiling is on: a move changes no layout, so the tiling switch does not govern it, and a bound chord is claimed system-wide. The two switches below them are about what happens around a display change rather than about the chords."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les deux déplacements conservent la taille de la fenêtre et sa position relative sur le nouvel écran, et sont actifs que le pavage soit activé ou non : un déplacement ne change aucune disposition, donc l'interrupteur de pavage ne le régit pas, et un raccourci associé est revendiqué pour tout le système. Les deux interrupteurs en dessous concernent ce qui se passe autour d'un changement d'écrans, pas les raccourcis."
+          }
+        }
+      }
+    },
+    "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch, and of Snap by dragging.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "While the modifier is held, the drag is Cmd-Tab's and the app underneath never sees it — so a move across a document does not select text on the way. Independent of the tiling switch, and of Snap by dragging."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tant que le modificateur est maintenu, le glissement appartient à Cmd-Tab et l'application en dessous ne le voit jamais — un déplacement au-dessus d'un document ne sélectionne donc pas de texte au passage. Indépendant de l'interrupteur de pavage et de l'aimantation par glissement."
           }
         }
       }
