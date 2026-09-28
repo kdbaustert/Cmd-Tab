@@ -248,17 +248,48 @@ final class SwitcherModel: ObservableObject {
     /// last row is usually short, so wrapping the index shifts the column by however many tiles that
     /// row is missing. A target cell past the end of a short row takes the last tile in it — the way
     /// an icon grid does — rather than being skipped, so no key press is ever a silent no-op.
+    ///
+    /// In the Desktops overview the grid is one per Desktop, each starting on a fresh row, so "the
+    /// row below" is measured inside the Desktop and only the last row spills into the next one —
+    /// landing at the same column, or the last tile if that row is shorter. Stepping the whole list
+    /// as one grid skipped past whole Desktops, because a short last row in one section is not a
+    /// short row in the flat list.
     func stepRow(_ delta: Int, stride: Int) {
         guard !targets.isEmpty, delta != 0 else { return }
         let count = targets.count
         let columns = max(stride, 1)
-        let rows = Int((Double(count) / Double(columns)).rounded(.up))
+        let sections = groupsByDesktop ? Self.desktopSections(targets).map(\.range) : [0..<count]
         // Clamped rather than trusted: `selection` is assigned from several places and only
-        // `selected` guards it, so a stale one out of range would make the division below nonsense.
-        let current = min(max(selection, 0), count - 1)
-        let wrapped = ((current / columns + delta) % rows + rows) % rows
-        let target = min(wrapped * columns + current % columns, count - 1)
+        // `selected` guards it, so a stale one out of range would make the arithmetic nonsense.
+        var target = min(max(selection, 0), count - 1)
+        for _ in 0..<abs(delta) {
+            target = Self.rowStep(from: target, down: delta > 0, columns: columns, sections: sections)
+        }
         selection = nearestSelectable(from: target, direction: delta < 0 ? -1 : 1)
+    }
+
+    /// One row up or down over `sections` — contiguous index ranges that each draw as their own
+    /// grid of `columns` — wrapping past the last section's end back to the first. Column and
+    /// short-row clamping are as `stepRow` describes.
+    static func rowStep(
+        from index: Int, down: Bool, columns: Int, sections: [Range<Int>]
+    ) -> Int {
+        guard let at = sections.firstIndex(where: { $0.contains(index) }) else { return index }
+        let section = sections[at]
+        let local = index - section.lowerBound
+        let column = local % columns
+        let row = local / columns
+        let rows = Int((Double(section.count) / Double(columns)).rounded(.up))
+        var destination = section
+        var destinationRow = row + (down ? 1 : -1)
+        if destinationRow < 0 || destinationRow >= rows {
+            let next = (at + (down ? 1 : -1) + sections.count) % sections.count
+            destination = sections[next]
+            let destinationRows = Int((Double(destination.count) / Double(columns)).rounded(.up))
+            destinationRow = down ? 0 : destinationRows - 1
+        }
+        let offset = min(destinationRow * columns + column, destination.count - 1)
+        return destination.lowerBound + offset
     }
 
     /// `index` when the current filter allows it, else the next tile along `direction` that does.
@@ -332,6 +363,16 @@ final class SwitcherModel: ObservableObject {
         } else {
             selection = targets.isEmpty ? 0 : min(selection, targets.count - 1)
         }
+    }
+
+    /// Swaps in suggestion tiles that differ from the current ones only in artwork — a launch icon
+    /// that has just been resolved — without touching the query, the ranking or the highlight, all
+    /// of which `setQuery` would recompute (and would snap the highlight back to the best match).
+    /// A set with different ids or order is not that, and is ignored.
+    func refreshSuggestionIcons(_ fresh: [SwitchTarget]) {
+        guard fresh.map(\.id) == suggestions.map(\.id) else { return }
+        suggestions = fresh
+        targets = composed
     }
 
     /// Drops matching targets from the *full* list (not just the filtered view), so removing the

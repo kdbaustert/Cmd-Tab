@@ -74,6 +74,25 @@ struct ScopedTrigger: Equatable, Identifiable {
 struct ScopedTriggers: Equatable {
     var triggers: [ScopedTrigger] = []
 
+    init() {}
+
+    /// Rebuilds the triggers from the stored ordered array of `[id, keyCode, modifierRaw, scope]`,
+    /// row by row: one malformed row (hand-edited config, an unknown scope from a newer build) costs
+    /// that row alone, where casting the array as a unit would drop every trigger.
+    init(stored: [Any]?) {
+        for element in stored ?? [] {
+            guard let row = element as? [Any], row.count == 4, let id = row[0] as? String,
+                let keyCode = row[1] as? Int, let mods = row[2] as? Int,
+                let scopeRaw = row[3] as? String, let scope = SwitcherScope(rawValue: scopeRaw)
+            else { continue }
+            triggers.append(
+                ScopedTrigger(
+                    id: id,
+                    hotkey: Hotkey(keyCode: keyCode, modifierRaw: UInt64(bitPattern: Int64(mods))),
+                    scope: scope))
+        }
+    }
+
     /// The scope a keypress opens, if any. Unbound entries never match.
     func scope(code: Int, flags: CGEventFlags) -> (scope: SwitcherScope, held: CGEventFlags)? {
         guard
@@ -189,24 +208,8 @@ final class ScopedTriggersStore: ObservableObject {
         onChange?(scoped)
     }
 
-    /// Stored as an ordered array of `[id, keyCode, modifierRaw, scope]`.
     private func load() {
-        var loaded = ScopedTriggers()
-        if let raw = UserDefaults.standard.array(forKey: Key.triggers) as? [[Any]] {
-            for row in raw {
-                guard row.count == 4, let id = row[0] as? String, let keyCode = row[1] as? Int,
-                    let mods = row[2] as? Int, let scopeRaw = row[3] as? String,
-                    let scope = SwitcherScope(rawValue: scopeRaw)
-                else { continue }
-                loaded.triggers.append(
-                    ScopedTrigger(
-                        id: id,
-                        hotkey: Hotkey(
-                            keyCode: keyCode, modifierRaw: UInt64(bitPattern: Int64(mods))),
-                        scope: scope))
-            }
-        }
-        scoped = loaded
+        scoped = ScopedTriggers(stored: UserDefaults.standard.array(forKey: Key.triggers))
     }
 
     private func persist() {

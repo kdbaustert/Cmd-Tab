@@ -375,7 +375,11 @@ final class TargetProvider {
         let hideEmptyApps = self.hideEmptyApps
         let wantsBadges = self.notificationBadges
         let mode = self.mode
-        let apps = switchableApps()
+        // The app list is walked on `axQueue` below, not here: 85-odd `activationPolicy` reads and a
+        // first-time icon fault per app were 3-9ms of main thread on every refresh. These are the
+        // copies that walk needs.
+        let excluded = excludedBundleIDs
+        let icons = iconCache
         let order = mru.entries
         // Both read on the main thread, like everything else in this prelude: the window builder
         // needs them and they are only used when the mode asks for windows.
@@ -384,11 +388,11 @@ final class TargetProvider {
         let rules = self.appRules
         let titleRules = self.titleRules
         // Apps the user has asked to always see window-by-window, even in app mode.
-        let expandingByRule = mode == .apps
-            ? apps.filter { $0.bundleID.map { rules[$0]?.expandWindows == true } ?? false }
-            : []
+        let hasExpandRules = mode == .apps && rules.values.contains { $0.expandWindows }
         let hasExpandTitleRules = mode == .apps && titleRules.contains { $0.action == .expand }
-        let needsFrames = mode == .windows || !expandingByRule.isEmpty || hasExpandTitleRules
+        // Any rule that could expand an app, rather than whether one is running: the app list is
+        // not known yet on this thread, and a display list is only ever read with two displays.
+        let needsFrames = mode == .windows || hasExpandRules || hasExpandTitleRules
         let screenFrames = needsFrames && NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
         // Favourites that aren't running, resolved here on the main thread (NSWorkspace).
         let launchTargets = launchFavorites()
@@ -397,11 +401,6 @@ final class TargetProvider {
         // pid but not its bundle id — so the mapping is carried over from the app list.
         let pinning = pinsFavoritesFirst
         let favoriteOrder = pinning ? favoriteBundleIDs : []
-        let bundleIDsByPID = pinning
-            ? Dictionary(
-                apps.compactMap { app in app.bundleID.map { (app.pid, $0) } },
-                uniquingKeysWith: { first, _ in first })
-            : [:]
 
         axQueue.async { [weak self] in
             // The work the tap callback is kept away from. Paired with the `tap` signpost, this is
@@ -413,6 +412,16 @@ final class TargetProvider {
 
             // On the background queue: reading the Dock is Accessibility IPC to another process.
             let badges = wantsBadges ? DockBadges.current() : [:]
+            let (apps, prunedIcons) = Self.enumerateApps(
+                excluded: excluded, rules: rules, iconCache: icons)
+            let expandingByRule = mode == .apps
+                ? apps.filter { $0.bundleID.map { rules[$0]?.expandWindows == true } ?? false }
+                : []
+            let bundleIDsByPID = pinning
+                ? Dictionary(
+                    apps.compactMap { app in app.bundleID.map { (app.pid, $0) } },
+                    uniquingKeysWith: { first, _ in first })
+                : [:]
             var targets: [SwitchTarget]
             var freshTitles = titleCache
             // Widened here, off the main thread, by any app owning a window a title rule marks
@@ -535,6 +544,7 @@ final class TargetProvider {
                     guard let self else { return }
                     self.cache = targets
                     self.titleCache = freshTitles
+                    self.iconCache = prunedIcons
                     self.isRefreshing = false
                     handlers.forEach { $0(targets) }
                     if self.wantsAnotherRefresh {
@@ -809,8 +819,9 @@ final class TargetProvider {
 
     // MARK: - App list
 
-    /// Metadata snapshotted on the main thread; `NSRunningApplication` is not safe to poke at
-    /// from the Accessibility queue.
+    /// Metadata snapshotted from `NSRunningApplication`, which is documented thread-safe in its
+    /// header — so the walk that builds these can run on `axQueue`, and the snapshot is what the
+    /// rest of the pass reads rather than the live objects, which keep changing under it.
     struct AppInfo {
         let pid: pid_t
         let name: String
@@ -819,20 +830,29 @@ final class TargetProvider {
         let isHidden: Bool
     }
 
-    /// Marked for the main-loop monitor rather than at each of its three call sites: this is the
-    /// NSWorkspace walk plus an icon fault per app it has not seen before, it is the most expensive
-    /// thing this class does on the main thread, and marking it here means a stall names it
-    /// whichever entry point asked.
+    /// Marked for the main-loop monitor rather than at each of its call sites: this is the
+    /// NSWorkspace walk plus an icon fault per app it has not seen before, and marking it here
+    /// means a stall names it whichever entry point asked. The refresh path no longer comes
+    /// through here — it walks on `axQueue` — but the three scoped fetches still do, on the main
+    /// turn they hop to; each reads the list and acts on it in one pass, so moving them would
+    /// buy nothing but a second hop.
     private func switchableApps() -> [AppInfo] {
-        MainLoopMonitor.marking("app enumeration") { uncheckedSwitchableApps() }
+        MainLoopMonitor.marking("app enumeration") {
+            let result = Self.enumerateApps(
+                excluded: excludedBundleIDs, rules: appRules, iconCache: iconCache)
+            iconCache = result.iconCache
+            return result.apps
+        }
     }
 
-    private func uncheckedSwitchableApps() -> [AppInfo] {
+    /// Pure over its inputs so it can run on either thread. Returns the icon cache alongside the
+    /// list, built with it and swapped in by the caller rather than mutated in place: this is both
+    /// the pass's answers and the prune, and doing it in one place is what keeps the cache exactly
+    /// the set of apps this pass saw.
+    private nonisolated static func enumerateApps(
+        excluded: Set<String>, rules: [String: AppRule], iconCache: [String: NSImage]
+    ) -> (apps: [AppInfo], iconCache: [String: NSImage]) {
         let mine = ProcessInfo.processInfo.processIdentifier
-        let excluded = excludedBundleIDs
-        // Built alongside the list and swapped in at the end, rather than mutated in place: this is
-        // both the pass's answers and the prune, and doing it in one place is what keeps the cache
-        // exactly the set of apps this pass saw.
         var seen: [String: NSImage] = [:]
         let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AppInfo? in
             guard app.activationPolicy == .regular,
@@ -846,7 +866,7 @@ final class TargetProvider {
             // downstream — both tile builders, the caption, and the fuzzy match, which scores the
             // app name as well as the title — sees the name the user chose and nothing has to
             // remember to ask twice.
-            let renamed = app.bundleIdentifier.map { appRules[$0]?.label(or: name) ?? name } ?? name
+            let renamed = app.bundleIdentifier.map { rules[$0]?.label(or: name) ?? name } ?? name
             // An app with no bundle id has nothing to key the cache on and pays the fault every
             // pass. It is the same app that cannot be excluded or renamed either, and there is no
             // second thing to do about it.
@@ -865,8 +885,7 @@ final class TargetProvider {
                 icon: icon,
                 isHidden: app.isHidden)
         }
-        iconCache = seen
-        return apps
+        return (apps, seen)
     }
 
     /// Launchable tiles for favourites that aren't currently running (and aren't excluded), in the

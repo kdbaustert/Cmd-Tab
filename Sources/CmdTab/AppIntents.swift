@@ -24,6 +24,39 @@ import Foundation
 @MainActor
 enum IntentActions {
     static var perform: ((URLCommand) -> Void)?
+
+    /// Runs `command`, or throws when it cannot run. A Shortcuts step that returns success having
+    /// done nothing lets an automation carry on as if the window had moved — so a refusal is an
+    /// error the step reports, not a silent no-op.
+    ///
+    /// The Desktop-moves switch is checked here as well as in `perform`, because `perform` returns
+    /// nothing to say it declined. Both read the same setting, so they cannot disagree.
+    static func run(_ command: URLCommand) throws {
+        if case .arrangement(let arrangement) = command, arrangement.isDesktopMove,
+            !WindowTilingStore.shared.desktopMoves
+        {
+            throw IntentError.desktopMovesOff
+        }
+        guard let perform else { throw IntentError.unavailable }
+        perform(command)
+    }
+}
+
+/// Why a step did nothing, in words Shortcuts shows the user.
+enum IntentError: Error, CustomLocalizedStringResourceConvertible {
+    case unavailable
+    case desktopMovesOff
+    case emptyBundleIdentifier
+
+    var localizedStringResource: LocalizedStringResource {
+        switch self {
+        case .unavailable: "Cmd-Tab is not ready to run this action. Open it and try again."
+        case .desktopMovesOff:
+            "Moving windows between desktops is switched off. Turn it on in Cmd-Tab's Settings."
+        case .emptyBundleIdentifier:
+            "Enter the bundle identifier of an app, such as com.apple.Safari."
+        }
+    }
 }
 
 /// `WindowArrangement` as Shortcuts sees it. The conformance lives here rather than on the enum's
@@ -118,7 +151,7 @@ struct TileWindowIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        IntentActions.perform?(.arrangement(arrangement))
+        try IntentActions.run(.arrangement(arrangement))
         return .result()
     }
 }
@@ -137,9 +170,9 @@ struct ActivateAppIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        let trimmed = bundleIdentifier.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return .result() }
-        IntentActions.perform?(.activate(bundleID: trimmed))
+        let trimmed = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw IntentError.emptyBundleIdentifier }
+        try IntentActions.run(.activate(bundleID: trimmed))
         return .result()
     }
 }
@@ -155,7 +188,7 @@ struct AllWindowsIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        IntentActions.perform?(.allWindows(action == .hide ? .hide : .show))
+        try IntentActions.run(.allWindows(action == .hide ? .hide : .show))
         return .result()
     }
 }

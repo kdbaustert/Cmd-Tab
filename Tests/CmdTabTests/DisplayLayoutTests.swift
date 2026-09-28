@@ -152,4 +152,34 @@ final class DisplayLayoutTests: XCTestCase {
         XCTAssertEqual(metrics.iconSize, Metrics.iconSizeRange.lowerBound)
         XCTAssertFalse(fits(metrics, 5000, .windows, .grid))
     }
+
+    /// Three Desktops of 23 windows: 69 tiles fit the laptop as one grid, but each Desktop wraps
+    /// onto its own third row and carries a header, so drawn as an overview it ran off the bottom.
+    func testAnOverviewThatFitsByTileCountButNotByRowsAndHeadersIsShrunk() {
+        let sizes = [23, 23, 23]
+        func fits(_ metrics: Metrics, sections: [Int]?) -> Bool {
+            DisplayLayout.fits(
+                metrics, targetCount: 69, mode: .windows, layout: .grid, showsTitle: true,
+                visibleSize: laptop, cap: 0, sectionSizes: sections)
+        }
+        XCTAssertTrue(fits(.default, sections: nil), "precondition: fits as one grid")
+        XCTAssertFalse(fits(.default, sections: sizes), "precondition: overflows sectioned")
+
+        let shrunk = DisplayLayout.fitted(
+            .default, targetCount: 69, mode: .windows, layout: .grid, showsTitle: true,
+            visibleSize: laptop, cap: 0, sectionSizes: sizes)
+        XCTAssertLessThan(shrunk.iconSize, Metrics.default.iconSize)
+        XCTAssertTrue(fits(shrunk, sections: sizes))
+    }
+
+    /// One section draws no headers, so it is the plain grid — the answer must not change.
+    func testASingleSectionIsTheFlatGrid() {
+        XCTAssertEqual(
+            DisplayLayout.fits(
+                .default, targetCount: 69, mode: .windows, layout: .grid, showsTitle: true,
+                visibleSize: laptop, cap: 0, sectionSizes: [69]),
+            DisplayLayout.fits(
+                .default, targetCount: 69, mode: .windows, layout: .grid, showsTitle: true,
+                visibleSize: laptop, cap: 0))
+    }
 }

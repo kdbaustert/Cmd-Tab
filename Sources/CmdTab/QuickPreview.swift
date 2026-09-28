@@ -124,9 +124,14 @@ final class QuickPreview {
     private var updateWork: DispatchWorkItem?
     private let updateDelay: TimeInterval = 0.28
 
-    /// Whether the preview is up — what Space toggles against, and what lets Escape take the
-    /// preview down before it takes the session.
+    /// Whether preview mode is on — what Space toggles against. It can be on with nothing drawn:
+    /// while a capture is in flight, or while the highlight sits on a tile with nothing to capture.
     private(set) var isShowing = false
+
+    /// Whether a preview is actually on screen — what lets Escape take the preview down before it
+    /// takes the session. Not `isShowing`: an Escape that dismissed an invisible preview would read
+    /// as the key doing nothing.
+    var isOnScreen: Bool { isShowing && panel.isVisible }
 
     init(switcher: PanelGroup, isActive: @escaping () -> Bool) {
         self.switcher = switcher
@@ -137,9 +142,11 @@ final class QuickPreview {
     func toggle(for target: SwitchTarget?) {
         if isShowing {
             dismiss()
-        } else if let target {
+        } else if let target, !target.isLaunchable {
+            // Only a tile that can be captured turns the preview on. A launch tile has nothing to
+            // draw, and a flag set with nothing on screen swallows the next Escape.
             isShowing = true
-            capture(target)
+            capture(target, following: false)
         }
     }
 
@@ -152,7 +159,7 @@ final class QuickPreview {
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.isShowing else { return }
-                self.capture(target)
+                self.capture(target, following: true)
             }
         }
         updateWork = work
@@ -167,15 +174,21 @@ final class QuickPreview {
         captureTask?.cancel()
         captureTask = nil
         panel.orderOut(nil)
+        // The last capture is a full-size bitmap, several MB; the panel is reused, so without this
+        // it would stay resident for the life of the process.
+        panel.model.image = nil
+        panel.model.title = ""
     }
 
     /// The thumbnail to draw for a tile: its own window when the tile names one the capture found,
     /// else the frontmost — which is the right reading for an app tile, and the fallback for a
-    /// window whose id could not be resolved (Electron and Catalyst hosts). Pure, so the rule is
-    /// testable without ScreenCaptureKit.
+    /// window whose id could not be resolved (Electron and Catalyst hosts). A real id the capture
+    /// did not find gets nothing rather than another window: showing a neighbour's title while
+    /// this one is highlighted is worse than showing no preview. Pure, so the rule is testable
+    /// without ScreenCaptureKit.
     nonisolated static func pick(_ thumbs: [WindowThumb], windowID: CGWindowID?) -> WindowThumb? {
         guard let windowID, windowID != 0 else { return thumbs.first }
-        return thumbs.first { $0.windowID == windowID } ?? thumbs.first
+        return thumbs.first { $0.windowID == windowID }
     }
 
     /// Where the panel sits: centred in the band between the switcher and the top of the screen
@@ -186,9 +199,11 @@ final class QuickPreview {
         for size: CGSize, above panelFrame: NSRect, in visibleFrame: NSRect
     ) -> NSPoint {
         let gap: CGFloat = 12
-        let x = min(
-            max(visibleFrame.midX - size.width / 2, visibleFrame.minX),
-            visibleFrame.maxX - size.width)
+        // The left edge wins when the content is wider than the screen, like the bottom does below:
+        // the start of a picture is the part worth seeing.
+        let x = max(
+            min(visibleFrame.midX - size.width / 2, visibleFrame.maxX - size.width),
+            visibleFrame.minX)
         let band = visibleFrame.maxY - panelFrame.maxY - gap * 2
         if size.height <= band {
             return NSPoint(
@@ -201,7 +216,9 @@ final class QuickPreview {
                 visibleFrame.midY - size.height / 2))
     }
 
-    private func capture(_ target: SwitchTarget) {
+    /// `following` is the highlight moving under an open preview rather than the Space that opened
+    /// it, which decides what an empty capture means — see the `pick` guard below.
+    private func capture(_ target: SwitchTarget, following: Bool) {
         // Nothing running, nothing to capture — a launch or fallback tile keeps whatever was up
         // rather than flashing an empty panel.
         guard !target.isLaunchable else { return }
@@ -222,8 +239,16 @@ final class QuickPreview {
             guard !Task.isCancelled, let self, self.isActive(), self.isShowing else { return }
             guard let thumb = Self.pick(thumbs, windowID: windowID) else {
                 // An app with nothing capturable — Screen Recording withheld, or every window
-                // gone. Leave nothing on screen claiming otherwise.
-                self.panel.orderOut(nil)
+                // gone. Leave nothing on screen claiming otherwise. The Space that opened the
+                // preview found nothing, so it ends; the highlight merely passing over such a tile
+                // only hides the picture, and the next capturable tile brings it back — ending the
+                // mode there would make one uncapturable window cost the user another Space.
+                // Escape stays honest either way: it reads `isOnScreen`, not `isShowing`.
+                if following {
+                    self.panel.orderOut(nil)
+                } else {
+                    self.dismiss()
+                }
                 return
             }
             guard let placement = self.switcher.selectedTilePlacement()?.placement else { return }

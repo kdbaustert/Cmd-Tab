@@ -307,7 +307,11 @@ final class SwitcherPanel: NSPanel {
         let metrics = DisplayLayout.fitted(
             DisplayLayout.metrics(base: model.metrics, backingScale: screen.backingScaleFactor),
             targetCount: model.targets.count, mode: model.mode, layout: model.layout,
-            showsTitle: model.showsTitle, visibleSize: screen.visibleFrame.size, cap: maxColumns)
+            showsTitle: model.showsTitle, visibleSize: screen.visibleFrame.size, cap: maxColumns,
+            // The overview's per-Desktop grids and headers take more height than the tile count
+            // alone says — see `DisplayLayout.fits`.
+            sectionSizes: model.groupsByDesktop
+                ? SwitcherModel.desktopSections(model.targets).map(\.range.count) : nil)
         let columns = Self.columns(for: model, metrics: metrics, on: screen, cap: maxColumns)
         // Recorded from the value the view is about to be built with, so the arrows and the grid can
         // never disagree about where a row ends. See `rowStride` for why the list's answer is 1.

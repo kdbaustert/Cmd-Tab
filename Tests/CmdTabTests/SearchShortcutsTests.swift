@@ -23,7 +23,7 @@ final class SearchShortcutsTests: XCTestCase {
         XCTAssertNil(bindings.bundleID(for: "  "))
     }
 
-    // MARK: - MRU behaviour
+    // MARK: - Insertion order
 
     /// A re-learned query replaces its old answer rather than joining it — one query, one binding.
     func testRelearningAQueryReplacesItsBinding() {
@@ -34,19 +34,51 @@ final class SearchShortcutsTests: XCTestCase {
         XCTAssertEqual(bindings.entries.count, 1)
     }
 
-    /// The cap evicts the binding least recently learned or confirmed, not an arbitrary one — the
-    /// same reasoning as `RecencyList`, so the queries typed daily are the ones that stay.
-    func testTheCapEvictsTheLeastRecentlyConfirmedBinding() {
+    /// Confirming a binding that already holds must change nothing — not even its place in the
+    /// order — because any change is a write to the synced settings file on nearly every switch.
+    func testConfirmingAnExistingBindingIsANoOp() {
+        var bindings = SearchBindings()
+        bindings.learn(query: "ma", bundleID: "com.apple.mail")
+        bindings.learn(query: "sa", bundleID: "com.apple.Safari")
+        let before = bindings
+        bindings.learn(query: "MA", bundleID: "com.apple.mail")
+        XCTAssertEqual(bindings, before)
+    }
+
+    /// The cap evicts by insertion order: the oldest new-or-changed binding goes, and confirming
+    /// one does not save it.
+    func testTheCapEvictsTheOldestInsertedBinding() {
         var bindings = SearchBindings()
         for index in 0..<SearchBindings.capacity {
             bindings.learn(query: "query\(index)", bundleID: "app\(index)")
         }
-        // Confirm the oldest so it becomes the freshest.
         bindings.learn(query: "query0", bundleID: "app0")
         bindings.learn(query: "one more", bundleID: "app-more")
         XCTAssertEqual(bindings.entries.count, SearchBindings.capacity)
-        XCTAssertEqual(bindings.bundleID(for: "query0"), "app0", "refreshed, so it survives")
-        XCTAssertNil(bindings.bundleID(for: "query1"), "now the oldest, so it is the one evicted")
+        XCTAssertNil(bindings.bundleID(for: "query0"), "confirming does not refresh the order")
+        XCTAssertEqual(bindings.bundleID(for: "query1"), "app1")
+    }
+
+    /// One malformed row costs that row alone.
+    func testOneBadStoredRowDoesNotDropTheOthers() {
+        let stored: [Any] = [
+            ["ma", "com.apple.mail"], "junk", ["only-one"], [1, 2], ["sa", "com.apple.Safari"],
+        ]
+        let bindings = SearchBindings(stored: stored)
+        XCTAssertEqual(bindings.entries.count, 2)
+        XCTAssertEqual(bindings.bundleID(for: "ma"), "com.apple.mail")
+        XCTAssertEqual(bindings.bundleID(for: "sa"), "com.apple.Safari")
+        XCTAssertEqual(bindings.entries.first?.query, "ma", "stored order is preserved")
+    }
+
+    func testOneBadScopedTriggerRowDoesNotDropTheOthers() throws {
+        let scope = try XCTUnwrap(SwitcherScope.allCases.first)
+        let good: [Any] = ["id1", 12, 0, scope.rawValue]
+        let stored: [Any] = [
+            good, ["id2", 12, 0, "no-such-scope"], "junk", ["id3", "x", 0, scope.rawValue],
+        ]
+        let triggers = ScopedTriggers(stored: stored)
+        XCTAssertEqual(triggers.triggers.map(\.id), ["id1"])
     }
 
     // MARK: - Ranking

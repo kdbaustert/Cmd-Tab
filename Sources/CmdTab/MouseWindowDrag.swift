@@ -293,7 +293,9 @@ private final class TapThread: Thread, @unchecked Sendable {
         // A run loop with no sources returns immediately, and the source is added by the caller a
         // moment after this signals — so the loop is run in slices rather than left to exit.
         while !isCancelled {
-            CFRunLoopRunInMode(.defaultMode, Self.slice, false)
+            // `.finished` means the loop has no sources left and returns at once, so looping on it
+            // would spin a core; only reached if the source is removed without `cancel()`.
+            if CFRunLoopRunInMode(.defaultMode, Self.slice, false) == .finished { break }
         }
     }
 
@@ -486,9 +488,15 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// `AppDelegate` waits for exactly that and brings the keyboard tap up on it. This is the same
     /// call for the mouse one.
     ///
-    /// A no-op when a tap already stands, so the launch-already-trusted path pays nothing for it.
+    /// Rebuilds a tap that already stands rather than skipping it. `SwitcherController.stop()` —
+    /// what a revoke runs — tears down only the keyboard tap, so the mouse tap and its thread
+    /// outlived the grant, `install`'s "a tap exists" guard made this a no-op, and a re-grant kept
+    /// a tap made under the old trust that the system may have left inert. Torn down and rebuilt
+    /// for the same reason `ModifierTargetHighlight.retryInstallIfNeeded` is; the cost is one
+    /// rebuild on a launch that was trusted from the start.
     func retryInstallIfNeeded() {
         guard settings.isEnabled else { return }
+        uninstall()
         install()
     }
 
@@ -673,14 +681,14 @@ final class MouseWindowDrag: @unchecked Sendable {
                 // Only when something was held: an unmodified click is every click on the machine,
                 // and logging those would be a line per click forever.
                 //
-                // At the trace level rather than `.notice`, which is the lowest level the persistent
-                // store keeps: ⌘-click is not a rare gesture — open-in-new-tab, Finder
-                // multi-select — so a notice here wrote a line into the store for a great many
-                // perfectly ordinary clicks. It is diagnostic output for "my chord does nothing",
-                // which is exactly what verbose logging is for.
+                // Always `.debug`, never `Log.traceLevel`: that is persisted when verbose logging is
+                // on, and this names which modifiers were held on a click. Not `.notice`, which is
+                // the lowest level the persistent store keeps: ⌘-click is not a rare gesture —
+                // open-in-new-tab, Finder multi-select — so a notice here wrote a line into the
+                // store for a great many perfectly ordinary clicks.
                 if !held.isEmpty {
                     Log.general.log(
-                        level: Log.traceLevel,
+                        level: .debug,
                         "mouse drag: no action for \(ModifierChord(held).displayString, privacy: .public)")
                 }
                 return false
@@ -1159,6 +1167,12 @@ final class ModifierTargetHighlight {
     /// The modifiers the last `flagsChanged` reported, so arming can tell a press onto the chord
     /// from a release back down to it. Kept across gestures: it describes the keyboard, not them.
     private var lastHeld: CGEventFlags = []
+    /// How long the chord must stay down before the gesture shows itself. Longer than the gap
+    /// between the chord and the key of a keyboard shortcut, shorter than anyone waits to see
+    /// whether pointing is going to do anything.
+    private static let armDelay: Duration = .milliseconds(150)
+    /// The pending activation, nil once it has run or been cancelled.
+    private var armTask: Task<Void, Never>?
 
     /// Rebuilds the monitors after an install made without the Accessibility grant.
     ///
@@ -1226,12 +1240,31 @@ final class ModifierTargetHighlight {
             break
         }
 
-        let point = NSEvent.mouseLocation
-        // A window-server round trip on the main thread, taken on every press of the chord — which
-        // for the ⌃⌥/⌃⌘ defaults is not a rare combination. Marked so a stall inside it says so.
+        // Only noted here: the window lookup and the overlays wait out `armDelay`. ⌃⌘ and ⌃⌥ are
+        // also the keyboard tiling chords, so every half-tile and every ⌃⌘Space came through here,
+        // paid a main-thread window-list lookup and two panel orders-in, and flashed the outline
+        // before the arrow key-down stood the gesture down. Nothing is lost by waiting: a key-down
+        // or release inside the delay cancels this, and the cursor is where it was, so the lookup
+        // at `anchor` answers as it would have at the press.
+        anchor = NSEvent.mouseLocation
+        chord = held
+        armTask?.cancel()
+        armTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.armDelay)
+            guard !Task.isCancelled else { return }
+            self?.activate()
+        }
+    }
+
+    /// Finds the window under the anchor and shows the gesture, once the chord has been held long
+    /// enough to be one rather than the front of a keyboard shortcut.
+    private func activate() {
+        armTask = nil
+        guard let point = anchor else { return }
+        // A window-server round trip on the main thread. Marked so a stall inside it says so.
         guard let target = MainLoopMonitor.marking("point-gesture window lookup", {
             Self.windowUnderCursor(at: point)
-        }) else { return }
+        }) else { return cancel() }
         // An app the user has told us never to tile is not offered a destination at all — no
         // outline, no dot, no landing block. Refusing at the *drop* instead would draw the whole
         // affordance and then silently do nothing, which reads as the gesture being broken rather
@@ -1241,10 +1274,8 @@ final class ModifierTargetHighlight {
             || Self.titleProtects(target, bundleID: id, rules: titleRules) {
             Log.general.notice(
                 "point gesture: \(id ?? "window", privacy: .public) is set to never tile; not arming")
-            return
+            return cancel()
         }
-        anchor = point
-        chord = held
         self.target = target
         outline.show(target.bounds)
         // The anchor stays put while the cursor leaves it: the gesture is a direction, and a
@@ -1367,6 +1398,8 @@ final class ModifierTargetHighlight {
     }
 
     private func cancel() {
+        armTask?.cancel()
+        armTask = nil
         moveMonitors.forEach(NSEvent.removeMonitor)
         moveMonitors = []
         anchor = nil

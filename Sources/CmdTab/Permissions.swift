@@ -87,7 +87,7 @@ enum Permissions {
         guard !isTrusted else { return handler() }
         trustHandlers.append(handler)
         guard trustPoll == nil else { return }
-        trustPoll = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
             MainActor.assumeIsolated {
                 guard isTrusted else { return }
                 trustPoll?.invalidate()
@@ -99,5 +99,9 @@ enum Permissions {
                 handlers.forEach { $0() }
             }
         }
+        // The user is answering a system prompt, not racing the poll; letting the run loop batch
+        // the wakeup costs at most a fraction of a second of latency.
+        timer.tolerance = interval / 5
+        trustPoll = timer
     }
 }

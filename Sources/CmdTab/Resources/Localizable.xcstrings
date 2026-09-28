@@ -1,6 +1,23 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%s is replaced with the query.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%s is replaced with the query."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%s est remplacé par la recherche."
+          }
+        }
+      }
+    },
     "A second shortcut that shows only the frontmost app's windows. Off by default — the usual ⌘` is a shortcut apps use themselves.": {
       "extractionState": "manual",
       "localizations": {
@@ -52,6 +69,23 @@
         }
       }
     },
+    "A ⌘-Tab replacement for macOS. Switches between applications or individual windows, driven entirely from the menu bar.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A ⌘-Tab replacement for macOS. Switches between applications or individual windows, driven entirely from the menu bar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un remplaçant du ⌘-Tab pour macOS. Passe d'une application à l'autre, ou d'une fenêtre à l'autre, et se pilote entièrement depuis la barre des menus."
+          }
+        }
+      }
+    },
     "About": {
       "extractionState": "manual",
       "localizations": {
@@ -82,6 +116,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Accessibilité"
+          }
+        }
+      }
+    },
+    "Accessibility access": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accessibility access"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accès à l'accessibilité"
           }
         }
       }
@@ -154,6 +205,108 @@
         }
       }
     },
+    "Active screen": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active screen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écran actif"
+          }
+        }
+      }
+    },
+    "Add App…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add App…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter une application…"
+          }
+        }
+      }
+    },
+    "Add Rule": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Rule"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter une règle"
+          }
+        }
+      }
+    },
+    "Add Shortcut…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Shortcut…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un raccourci…"
+          }
+        }
+      }
+    },
+    "All bindings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All bindings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les raccourcis"
+          }
+        }
+      }
+    },
+    "All displays": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All displays"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les écrans"
+          }
+        }
+      }
+    },
     "All Windows Action": {
       "extractionState": "manual",
       "localizations": {
@@ -222,6 +375,23 @@
         }
       }
     },
+    "Alphabetical": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alphabetical"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alphabétique"
+          }
+        }
+      }
+    },
     "Alphabetical order always groups: sorted by name, an ungrouped list would scatter one app's windows wherever the alphabet put them.": {
       "extractionState": "manual",
       "localizations": {
@@ -256,6 +426,40 @@
         }
       }
     },
+    "Always list this app's windows individually, even in application mode.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always list this app's windows individually, even in application mode."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toujours lister les fenêtres de cette application séparément, même en mode application."
+          }
+        }
+      }
+    },
+    "An app whose windows are all minimized counts as empty.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An app whose windows are all minimized counts as empty."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une application dont toutes les fenêtres sont minimisées compte comme vide."
+          }
+        }
+      }
+    },
     "An exported file carries every preference, including favourites and exclusions.": {
       "extractionState": "manual",
       "localizations": {
@@ -286,6 +490,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Point d'ancrage"
+          }
+        }
+      }
+    },
+    "Any app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Any app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "N'importe quelle application"
+          }
+        }
+      }
+    },
+    "Any display": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Any display"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "N'importe quel écran"
           }
         }
       }
@@ -337,6 +575,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mode application uniquement — une liste de fenêtres contient autant de vignettes par application que celle-ci a de fenêtres, donc aucune application ne peut y garder une place."
+          }
+        }
+      }
+    },
+    "Applications only — a window list has no empty apps in it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applications only — a window list has no empty apps in it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applications uniquement — une liste de fenêtres ne contient aucune application vide."
+          }
+        }
+      }
+    },
+    "Applications only — in window mode the tiles are already windows.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applications only — in window mode the tiles are already windows."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applications uniquement — en mode fenêtre, les vignettes sont déjà des fenêtres."
           }
         }
       }
@@ -405,6 +677,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Demander confirmation pour Quitter et Forcer à quitter. Une seule touche sépare ⌥W (fermer une fenêtre) de ⌥Q (quitter l'application), et une seule des deux est réversible."
+          }
+        }
+      }
+    },
+    "Back to %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retour à %@"
           }
         }
       }
@@ -579,6 +868,23 @@
         }
       }
     },
+    "Brings in shortcuts already set up in Rectangle, Rectangle Pro or AltTab. Always asks before changing anything.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brings in shortcuts already set up in Rectangle, Rectangle Pro or AltTab. Always asks before changing anything."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reprend les raccourcis déjà configurés dans Rectangle, Rectangle Pro ou AltTab. Demande toujours confirmation avant de modifier quoi que ce soit."
+          }
+        }
+      }
+    },
     "Browser and terminal tabs": {
       "extractionState": "manual",
       "localizations": {
@@ -626,6 +932,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Identifiant de bundle"
+          }
+        }
+      }
+    },
+    "By desktop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "By desktop"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Par bureau"
           }
         }
       }
@@ -715,6 +1038,57 @@
         }
       }
     },
+    "Check Now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check Now"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérifier maintenant"
+          }
+        }
+      }
+    },
+    "Clear All": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear All"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tout effacer"
+          }
+        }
+      }
+    },
+    "Clear this shortcut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear this shortcut"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effacer ce raccourci"
+          }
+        }
+      }
+    },
     "Clears every Cmd-Tab preference, including excluded apps.": {
       "extractionState": "manual",
       "localizations": {
@@ -749,6 +1123,23 @@
         }
       }
     },
+    "Click a shortcut and press a new combination. ⌫ clears it, ⎋ cancels.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click a shortcut and press a new combination. ⌫ clears it, ⎋ cancels."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquez sur un raccourci et appuyez sur une nouvelle combinaison. ⌫ l'efface, ⎋ annule."
+          }
+        }
+      }
+    },
     "Close window": {
       "extractionState": "manual",
       "localizations": {
@@ -766,6 +1157,23 @@
         }
       }
     },
+    "Close without switching": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close without switching"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer sans changer"
+          }
+        }
+      }
+    },
     "Closes the highlighted window, or the frontmost window of the highlighted app.": {
       "extractionState": "manual",
       "localizations": {
@@ -779,6 +1187,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ferme la fenêtre sélectionnée, ou la fenêtre au premier plan de l'application sélectionnée."
+          }
+        }
+      }
+    },
+    "Cmd-Tab has the system switcher disabled. Hand ⌘-Tab back to macOS without quitting.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cmd-Tab has the system switcher disabled. Hand ⌘-Tab back to macOS without quitting."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cmd-Tab a désactivé le sélecteur du système. Rend le ⌘-Tab à macOS sans quitter l'application."
           }
         }
       }
@@ -868,6 +1293,40 @@
         }
       }
     },
+    "Copied": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copied"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copié"
+          }
+        }
+      }
+    },
+    "Copy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copier"
+          }
+        }
+      }
+    },
     "Corner radius": {
       "extractionState": "manual",
       "localizations": {
@@ -881,6 +1340,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rayon des coins"
+          }
+        }
+      }
+    },
+    "Corners": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Corners"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coins"
           }
         }
       }
@@ -936,6 +1412,40 @@
         }
       }
     },
+    "Delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer"
+          }
+        }
+      }
+    },
+    "Delete a filter character": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete a filter character"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effacer un caractère du filtre"
+          }
+        }
+      }
+    },
     "Desktop %lld": {
       "extractionState": "manual",
       "localizations": {
@@ -987,6 +1497,23 @@
         }
       }
     },
+    "Developed by Kenny Baustert": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Developed by Kenny Baustert"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Développé par Kenny Baustert"
+          }
+        }
+      }
+    },
     "Diagnostics": {
       "extractionState": "manual",
       "localizations": {
@@ -1021,6 +1548,23 @@
         }
       }
     },
+    "Display %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Display %lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écran %lld"
+          }
+        }
+      }
+    },
     "Display badges": {
       "extractionState": "manual",
       "localizations": {
@@ -1034,6 +1578,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pastilles d'écran"
+          }
+        }
+      }
+    },
+    "Displays": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Displays"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écrans"
           }
         }
       }
@@ -1085,6 +1646,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "Faites glisser la barre de titre d'une fenêtre vers un bord ou un coin de l'écran pour l'y paver. Indépendant des raccourcis ci-dessous — vous pouvez avoir l'un, l'autre, ou les deux."
+          }
+        }
+      }
+    },
+    "Drag anywhere in the window to move it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag anywhere in the window to move it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Faites glisser n'importe où dans la fenêtre pour la déplacer."
+          }
+        }
+      }
+    },
+    "Drag to reorder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag to reorder"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser pour réorganiser"
+          }
+        }
+      }
+    },
+    "Drag to resize from the corner of the quarter you press in.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag to resize from the corner of the quarter you press in."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Faites glisser pour redimensionner depuis le coin du quart où vous appuyez."
+          }
+        }
+      }
+    },
+    "Draw a live capture of each window as its tile instead of the app icon, with the app's icon inset in the corner. Five identical Chrome icons become five recognisable windows. Needs Screen Recording permission; tiles show icons until each capture lands, so the panel never waits.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Draw a live capture of each window as its tile instead of the app icon, with the app's icon inset in the corner. Five identical Chrome icons become five recognisable windows. Needs Screen Recording permission; tiles show icons until each capture lands, so the panel never waits."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dessiner une capture en direct de chaque fenêtre en guise de vignette plutôt que l'icône de l'application, avec l'icône de l'application incrustée dans le coin. Cinq icônes Chrome identiques deviennent cinq fenêtres reconnaissables. Nécessite l'autorisation d'enregistrement de l'écran ; les vignettes affichent des icônes jusqu'à l'arrivée de chaque capture, si bien que le panneau n'attend jamais."
           }
         }
       }
@@ -1174,6 +1803,23 @@
         }
       }
     },
+    "Every Mac signed into this iCloud account reads and writes the same file, so a change on one turns up on the others. Changed on two Macs at once, iCloud keeps both and leaves a conflicted copy beside it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every Mac signed into this iCloud account reads and writes the same file, so a change on one turns up on the others. Changed on two Macs at once, iCloud keeps both and leaves a conflicted copy beside it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tous les Mac connectés à ce compte iCloud lisent et écrivent le même fichier : une modification sur l'un apparaît sur les autres. Si deux Mac le modifient en même temps, iCloud conserve les deux et laisse une copie en conflit à côté."
+          }
+        }
+      }
+    },
     "Every window of every app, grouped under a header per Desktop — a searchable map of the whole desk. Type to filter it exactly like the main switcher.": {
       "extractionState": "manual",
       "localizations": {
@@ -1187,6 +1833,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "Toutes les fenêtres de toutes les apps, regroupées sous un en-tête par bureau — une carte du bureau entier, avec recherche. La saisie filtre exactement comme dans le sélecteur principal."
+          }
+        }
+      }
+    },
+    "Every window of every app, whatever the switcher is normally set to list.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every window of every app, whatever the switcher is normally set to list."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toutes les fenêtres de toutes les applications, quel que soit ce que le sélecteur liste normalement."
+          }
+        }
+      }
+    },
+    "Exclude": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exclude"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exclure"
+          }
+        }
+      }
+    },
+    "Export settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporter les réglages"
+          }
+        }
+      }
+    },
+    "Export…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporter…"
           }
         }
       }
@@ -1208,6 +1922,40 @@
         }
       }
     },
+    "Fallback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fallback"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repli"
+          }
+        }
+      }
+    },
+    "Favorite": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favorite"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favori"
+          }
+        }
+      }
+    },
     "Favorite order": {
       "extractionState": "manual",
       "localizations": {
@@ -1221,6 +1969,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ordre des favoris"
+          }
+        }
+      }
+    },
+    "Favorites and exclusions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favorites and exclusions"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favoris et exclusions"
+          }
+        }
+      }
+    },
+    "Filter the list": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filter the list"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filtrer la liste"
+          }
+        }
+      }
+    },
+    "Focus": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus"
           }
         }
       }
@@ -1293,6 +2092,23 @@
         }
       }
     },
+    "Focus window by direction": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus window by direction"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus de fenêtre par direction"
+          }
+        }
+      }
+    },
     "Focus window to the left": {
       "extractionState": "manual",
       "localizations": {
@@ -1323,6 +2139,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Activer la fenêtre à droite"
+          }
+        }
+      }
+    },
+    "Follow position": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow position"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suivre la position"
           }
         }
       }
@@ -1599,6 +2432,23 @@
         }
       }
     },
+    "Halves": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Halves"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moitiés"
+          }
+        }
+      }
+    },
     "Hex colour": {
       "extractionState": "manual",
       "localizations": {
@@ -1697,6 +2547,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Masque toutes les applications pour dégager l'écran jusqu'au bureau."
+          }
+        }
+      }
+    },
+    "Hide if front": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide if front"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer si au premier plan"
           }
         }
       }
@@ -1871,6 +2738,40 @@
         }
       }
     },
+    "How many columns of rows a long list may wrap into.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How many columns of rows a long list may wrap into."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombre de colonnes de lignes sur lesquelles une longue liste peut se répartir."
+          }
+        }
+      }
+    },
+    "How many tiles a row may hold before the grid wraps.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How many tiles a row may hold before the grid wraps."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombre de vignettes qu'une rangée peut contenir avant que la grille ne passe à la ligne."
+          }
+        }
+      }
+    },
     "How the switcher opens, what it lists, and where it appears.": {
       "extractionState": "manual",
       "localizations": {
@@ -1939,6 +2840,91 @@
         }
       }
     },
+    "Icons in a wrapping grid, with the selected name below.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Icons in a wrapping grid, with the selected name below."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Des icônes dans une grille qui passe à la ligne, avec le nom sélectionné en dessous."
+          }
+        }
+      }
+    },
+    "Import from another switcher": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import from another switcher"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer depuis un autre sélecteur"
+          }
+        }
+      }
+    },
+    "Import settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer les réglages"
+          }
+        }
+      }
+    },
+    "Import shortcuts…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import shortcuts…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer les raccourcis…"
+          }
+        }
+      }
+    },
+    "Import…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer…"
+          }
+        }
+      }
+    },
     "In-switcher keys": {
       "extractionState": "manual",
       "localizations": {
@@ -1973,6 +2959,57 @@
         }
       }
     },
+    "Invalid pattern — matches nothing until fixed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid pattern — matches nothing until fixed."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motif invalide — ne correspond à rien tant qu'il n'est pas corrigé."
+          }
+        }
+      }
+    },
+    "Jump straight to a tile": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jump straight to a tile"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aller directement à une vignette"
+          }
+        }
+      }
+    },
+    "Jump straight to an app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jump straight to an app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aller directement à une application"
+          }
+        }
+      }
+    },
     "Keep settings in a config file": {
       "extractionState": "manual",
       "localizations": {
@@ -2003,6 +3040,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Conserve le suivi touche par touche dans le journal du système, pour qu'un problème puisse être relu après coup au lieu de devoir se reproduire sous vos yeux."
+          }
+        }
+      }
+    },
+    "Keeps the settings file in iCloud Drive instead, where your other Macs see it. Works on its own — the config-file switch above is not needed, and turning this on while it is set moves the file rather than keeping two that would drift apart.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keeps the settings file in iCloud Drive instead, where your other Macs see it. Works on its own — the config-file switch above is not needed, and turning this on while it is set moves the file rather than keeping two that would drift apart."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserve plutôt le fichier de réglages dans iCloud Drive, où vos autres Mac le voient. Fonctionne seul — l'option de fichier de configuration ci-dessus n'est pas nécessaire, et l'activer alors qu'elle l'est déplace le fichier au lieu d'en garder deux qui divergeraient."
+          }
+        }
+      }
+    },
+    "Keeps the window's size and centres it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keeps the window's size and centres it."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserve la taille de la fenêtre et la centre."
           }
         }
       }
@@ -2177,6 +3248,40 @@
         }
       }
     },
+    "macOS has no way to move another app's window between desktops, so this performs the gesture instead: it picks the window up, opens Mission Control for a moment and drops it on the destination's thumbnail. That means it takes over the pointer for about half a second, which is why it is off by default. The relative pair stops at the first and last desktop rather than wrapping around; the numbered rows name the destination outright, count the way Mission Control's own bar reads, and appear for as many desktops as you actually have.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS has no way to move another app's window between desktops, so this performs the gesture instead: it picks the window up, opens Mission Control for a moment and drops it on the destination's thumbnail. That means it takes over the pointer for about half a second, which is why it is off by default. The relative pair stops at the first and last desktop rather than wrapping around; the numbered rows name the destination outright, count the way Mission Control's own bar reads, and appear for as many desktops as you actually have."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS n'offre aucun moyen de déplacer la fenêtre d'une autre application entre les bureaux : cette option exécute donc le geste à la main — elle saisit la fenêtre, ouvre Mission Control un instant et la dépose sur la vignette du bureau de destination. Le pointeur est ainsi mobilisé pendant environ une demi-seconde, d'où sa désactivation par défaut. La paire relative s'arrête au premier et au dernier bureau au lieu de boucler ; les lignes numérotées désignent directement le bureau de destination, comptent comme la barre de Mission Control elle-même, et apparaissent pour autant de bureaux que vous en avez réellement."
+          }
+        }
+      }
+    },
+    "Main display": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Main display"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écran principal"
+          }
+        }
+      }
+    },
     "Make larger": {
       "extractionState": "manual",
       "localizations": {
@@ -2241,6 +3346,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Repères"
+          }
+        }
+      }
+    },
+    "Matched case-insensitively against the window's title. Anchoring is up to you — “Zoom” matches a title containing it anywhere, “^Zoom” only one that starts with it. A rule and a per-app override above are never in conflict: either one is enough to hide a window, expand it, or protect it from tiling.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matched case-insensitively against the window's title. Anchoring is up to you — “Zoom” matches a title containing it anywhere, “^Zoom” only one that starts with it. A rule and a per-app override above are never in conflict: either one is enough to hide a window, expand it, or protect it from tiling."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comparé au titre de la fenêtre sans tenir compte de la casse. L'ancrage vous appartient — « Zoom » correspond à un titre qui contient ce mot n'importe où, « ^Zoom » seulement à un titre qui commence par lui. Une règle et un réglage par application ci-dessus ne sont jamais en conflit : l'un ou l'autre suffit à masquer une fenêtre, à la lister séparément ou à la protéger du pavage."
           }
         }
       }
@@ -2432,6 +3554,23 @@
         }
       }
     },
+    "Move a whole row": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move a whole row"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacer d'une rangée entière"
+          }
+        }
+      }
+    },
     "Move and resize with the mouse": {
       "extractionState": "manual",
       "localizations": {
@@ -2445,6 +3584,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Déplacer et redimensionner à la souris"
+          }
+        }
+      }
+    },
+    "Move the selection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move the selection"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacer la sélection"
+          }
+        }
+      }
+    },
+    "Move this app's first window to this display before the arrangement below is applied.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move this app's first window to this display before the arrangement below is applied."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacer la première fenêtre de cette application vers cet écran avant d'appliquer la disposition ci-dessous."
           }
         }
       }
@@ -2806,6 +3979,23 @@
         }
       }
     },
+    "Name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nom"
+          }
+        }
+      }
+    },
     "Names the destination instead of counting to it: on three displays \"next display\" is two presses and a guess about which way round they are, where these land on the same screen every time. The numbers are the ones on the window tiles' own display badges. Unbound, and ungoverned by the tiling switch for the same reason the two moves above are. Rows appear for the displays you actually have.": {
       "extractionState": "manual",
       "localizations": {
@@ -2819,6 +4009,125 @@
           "stringUnit": {
             "state": "translated",
             "value": "Nomme la destination au lieu de la compter : sur trois écrans, « écran suivant » demande deux pressions et une supposition sur leur ordre, alors que ceux-ci arrivent sur le même écran à chaque fois. Les numéros sont ceux des pastilles d'écran portées par les vignettes de fenêtre. Non associés, et non régis par l'interrupteur de pavage pour la même raison que les deux déplacements ci-dessus. Les lignes n'apparaissent que pour les écrans dont vous disposez réellement."
+          }
+        }
+      }
+    },
+    "Near cursor": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Near cursor"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Près du curseur"
+          }
+        }
+      }
+    },
+    "Needs ⌃, ⌥ or ⌘ — click and hold a combination.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs ⌃, ⌥ or ⌘ — click and hold a combination."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nécessite ⌃, ⌥ ou ⌘ — cliquez et maintenez une combinaison."
+          }
+        }
+      }
+    },
+    "Never checked.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never checked."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jamais vérifié."
+          }
+        }
+      }
+    },
+    "Never let a tiling shortcut move or resize its windows.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never let a tiling shortcut move or resize its windows."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ne jamais laisser un raccourci de pavage déplacer ou redimensionner ses fenêtres."
+          }
+        }
+      }
+    },
+    "Never show this app in the switcher.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never show this app in the switcher."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ne jamais afficher cette application dans le sélecteur."
+          }
+        }
+      }
+    },
+    "No apps assigned.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No apps assigned."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune application attribuée."
+          }
+        }
+      }
+    },
+    "No apps running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No apps running"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune application ouverte"
           }
         }
       }
@@ -2840,6 +4149,159 @@
         }
       }
     },
+    "No favorites yet — star an app below.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No favorites yet — star an app below."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun favori pour l'instant — marquez une application d'une étoile ci-dessous."
+          }
+        }
+      }
+    },
+    "No matches": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No matches"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun résultat"
+          }
+        }
+      }
+    },
+    "No overrides.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No overrides."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun réglage spécifique."
+          }
+        }
+      }
+    },
+    "No shortcut yet — click Not set and press a combination.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No shortcut yet — click Not set and press a combination."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas encore de raccourci — cliquez sur Non défini et appuyez sur une combinaison."
+          }
+        }
+      }
+    },
+    "No tiling": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No tiling"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas de pavage"
+          }
+        }
+      }
+    },
+    "No title rules.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No title rules."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune règle de titre."
+          }
+        }
+      }
+    },
+    "None yet.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None yet."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun pour l'instant."
+          }
+        }
+      }
+    },
+    "not running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not running"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fermée"
+          }
+        }
+      }
+    },
+    "Nothing to reveal — neither switch above is on, so no file has been written yet.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing to reveal — neither switch above is on, so no file has been written yet."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rien à afficher — aucune des deux options ci-dessus n'est activée, donc aucun fichier n'a encore été écrit."
+          }
+        }
+      }
+    },
     "Notification badges": {
       "extractionState": "manual",
       "localizations": {
@@ -2853,6 +4315,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pastilles de notification"
+          }
+        }
+      }
+    },
+    "Nudge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nudge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décaler"
           }
         }
       }
@@ -3010,6 +4489,23 @@
         }
       }
     },
+    "Off while the order is By desktop: a pinned block would put the favorites ahead of the Desktop order that setting exists to show.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off while the order is By desktop: a pinned block would put the favorites ahead of the Desktop order that setting exists to show."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivé tant que l'ordre est Par bureau : un bloc épinglé placerait les favoris avant l'ordre des bureaux que ce réglage sert à montrer."
+          }
+        }
+      }
+    },
     "Off, the switcher records what it did — sessions opening, picks, tiling, anything that failed. On, it also records every key it saw getting there. Leave it off unless you are chasing something; it is a line per keystroke.": {
       "extractionState": "manual",
       "localizations": {
@@ -3027,6 +4523,23 @@
         }
       }
     },
+    "Offer to search for the query, using the address below.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offer to search for the query, using the address below."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Proposer de lancer la recherche, avec l'adresse ci-dessous."
+          }
+        }
+      }
+    },
     "On keeps each app's windows in a run. Off ranks every window against every other by when you last used it, so one tap of the trigger goes to the window you were in before this one whichever app it belongs to.": {
       "extractionState": "manual",
       "localizations": {
@@ -3040,6 +4553,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Activé, les fenêtres de chaque application restent groupées. Désactivé, chaque fenêtre est classée par rapport à toutes les autres selon sa dernière utilisation : une seule pression du déclencheur mène à la fenêtre précédant celle-ci, quelle que soit son application."
+          }
+        }
+      }
+    },
+    "One target per row, name beside the icon.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One target per row, name beside the icon."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une cible par ligne, le nom à côté de l'icône."
+          }
+        }
+      }
+    },
+    "One tile per tab of the frontmost window of every running app that exposes tabs — browsers and terminals, mostly. Gathered fresh each time this opens, since keeping the list warm would mean walking every app's tabs on every refresh.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One tile per tab of the frontmost window of every running app that exposes tabs — browsers and terminals, mostly. Gathered fresh each time this opens, since keeping the list warm would mean walking every app's tabs on every refresh."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une vignette par onglet de la fenêtre au premier plan de chaque application ouverte qui expose des onglets — surtout les navigateurs et les terminaux. Rassemblés à neuf à chaque ouverture, car garder la liste à jour reviendrait à parcourir les onglets de chaque application à chaque rafraîchissement."
           }
         }
       }
@@ -3078,6 +4625,23 @@
         }
       }
     },
+    "Only windows currently in the Dock.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only windows currently in the Dock."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uniquement les fenêtres actuellement dans le Dock."
+          }
+        }
+      }
+    },
     "Only windows on the Desktop (Space) in front. With more than one display, each has its own front Desktop and both count as here.": {
       "extractionState": "manual",
       "localizations": {
@@ -3091,6 +4655,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Uniquement les fenêtres du bureau (Space) au premier plan. Avec plusieurs écrans, chacun a son propre bureau au premier plan et les deux comptent comme « ici »."
+          }
+        }
+      }
+    },
+    "Only windows on the display you are working on.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only windows on the display you are working on."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uniquement les fenêtres de l'écran sur lequel vous travaillez."
+          }
+        }
+      }
+    },
+    "Open as URL": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open as URL"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir comme URL"
+          }
+        }
+      }
+    },
+    "Open Settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir les réglages"
           }
         }
       }
@@ -3112,6 +4727,40 @@
         }
       }
     },
+    "Opens anywhere": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens anywhere"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S'ouvre n'importe où"
+          }
+        }
+      }
+    },
+    "Open…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir…"
+          }
+        }
+      }
+    },
     "Order": {
       "extractionState": "manual",
       "localizations": {
@@ -3125,6 +4774,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ordre"
+          }
+        }
+      }
+    },
+    "Order of the favorites": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Order of the favorites"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordre des favoris"
           }
         }
       }
@@ -3193,6 +4859,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "À coller dans le Terminal pour relire ce qui a été consigné."
+          }
+        }
+      }
+    },
+    "Pause on a tile — with the pointer or with the keyboard — to float live thumbnails of that app's windows, and click one to go straight to it. Needs Screen Recording permission.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pause on a tile — with the pointer or with the keyboard — to float live thumbnails of that app's windows, and click one to go straight to it. Needs Screen Recording permission."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Marquez une pause sur une vignette — au pointeur ou au clavier — pour faire flotter des miniatures en direct des fenêtres de cette application, et cliquez sur l'une d'elles pour y aller directement. Nécessite l'autorisation d'enregistrement de l'écran."
           }
         }
       }
@@ -3367,6 +5050,23 @@
         }
       }
     },
+    "Put assigned apps back on their desktop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Put assigned apps back on their desktop"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remettre les applications attribuées sur leur bureau"
+          }
+        }
+      }
+    },
     "Quit app": {
       "extractionState": "manual",
       "localizations": {
@@ -3397,6 +5097,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Quitte l'application sélectionnée et la retire de la liste."
+          }
+        }
+      }
+    },
+    "Recently used": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recently used"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Récemment utilisées"
           }
         }
       }
@@ -3452,6 +5169,91 @@
         }
       }
     },
+    "Remove this app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer cette application"
+          }
+        }
+      }
+    },
+    "Remove this app from favorites": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this app from favorites"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer cette application des favoris"
+          }
+        }
+      }
+    },
+    "Remove this rule": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this rule"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer cette règle"
+          }
+        }
+      }
+    },
+    "Remove this trigger": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this trigger"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer ce déclencheur"
+          }
+        }
+      }
+    },
+    "Rename": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renommer"
+          }
+        }
+      }
+    },
     "Required. Without it the event tap cannot see ⌘-Tab, and windows cannot be raised.": {
       "extractionState": "manual",
       "localizations": {
@@ -3465,6 +5267,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Obligatoire. Sans elle, la capture d'événements ne peut pas voir ⌘-Tab et les fenêtres ne peuvent pas être mises au premier plan."
+          }
+        }
+      }
+    },
+    "Reset": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser"
+          }
+        }
+      }
+    },
+    "Reset sliders": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset sliders"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser les curseurs"
           }
         }
       }
@@ -3486,6 +5322,40 @@
         }
       }
     },
+    "Reset to Defaults": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset to Defaults"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser"
+          }
+        }
+      }
+    },
+    "Reset…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser…"
+          }
+        }
+      }
+    },
     "Resize": {
       "extractionState": "manual",
       "localizations": {
@@ -3499,6 +5369,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Redimensionner"
+          }
+        }
+      }
+    },
+    "Resize an edge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resize an edge"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redimensionner un bord"
           }
         }
       }
@@ -3533,6 +5420,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Laissez le curseur au repos sur une fenêtre et le clavier lui revient, sans clic. Désactivé par défaut : cela change la destination de chaque frappe de la machine, ce qui ne s'active pas à la place de quelqu'un."
+          }
+        }
+      }
+    },
+    "Restore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir"
+          }
+        }
+      }
+    },
+    "Restore defaults": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore defaults"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir les valeurs par défaut"
           }
         }
       }
@@ -3584,6 +5505,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rétablir la disposition au changement d'écrans"
+          }
+        }
+      }
+    },
+    "Reveal in Finder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reveal in Finder"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher dans le Finder"
           }
         }
       }
@@ -3656,6 +5594,74 @@
         }
       }
     },
+    "Run as shell command": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run as shell command"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exécuter comme commande shell"
+          }
+        }
+      }
+    },
+    "Runs whatever you typed as a shell command, with no confirmation and no visible output. Leave this off unless you understand what that means.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs whatever you typed as a shell command, with no confirmation and no visible output. Leave this off unless you understand what that means."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exécute ce que vous avez saisi comme une commande shell, sans confirmation et sans sortie visible. Laissez cette option désactivée si vous ne savez pas ce que cela implique."
+          }
+        }
+      }
+    },
+    "Same modifiers as Move — only Move will fire.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Same modifiers as Move — only Move will fire."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mêmes modificateurs que Déplacer — seul Déplacer se déclenchera."
+          }
+        }
+      }
+    },
+    "Save as…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save as…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrer sous…"
+          }
+        }
+      }
+    },
     "Scales the whole panel. Window tiles and list rows use a smaller icon, and follow in step.": {
       "extractionState": "manual",
       "localizations": {
@@ -3690,6 +5696,23 @@
         }
       }
     },
+    "Screen centre": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Screen centre"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Centre de l'écran"
+          }
+        }
+      }
+    },
     "Screen Recording": {
       "extractionState": "manual",
       "localizations": {
@@ -3707,6 +5730,23 @@
         }
       }
     },
+    "Screen Recording access": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Screen Recording access"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accès à l'enregistrement de l'écran"
+          }
+        }
+      }
+    },
     "Screen Recording is not granted": {
       "extractionState": "manual",
       "localizations": {
@@ -3720,6 +5760,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "L'enregistrement de l'écran n'est pas autorisé"
+          }
+        }
+      }
+    },
+    "Search template": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search template"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modèle de recherche"
+          }
+        }
+      }
+    },
+    "Search the web": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search the web"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher sur le Web"
           }
         }
       }
@@ -3809,6 +5883,23 @@
         }
       }
     },
+    "Shortcut overview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shortcut overview"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vue d'ensemble des raccourcis"
+          }
+        }
+      }
+    },
     "Shortcuts": {
       "extractionState": "manual",
       "localizations": {
@@ -3877,6 +5968,23 @@
         }
       }
     },
+    "Show in the switcher even when not running; picking it launches the app.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show in the switcher even when not running; picking it launches the app."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher dans le sélecteur même lorsqu'elle n'est pas ouverte ; la choisir lance l'application."
+          }
+        }
+      }
+    },
     "Show menu-bar icon": {
       "extractionState": "manual",
       "localizations": {
@@ -3924,6 +6032,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Afficher le fichier"
+          }
+        }
+      }
+    },
+    "Shown on this app's tiles in place of its own name. Empty uses the app's.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shown on this app's tiles in place of its own name. Empty uses the app's."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Affiché sur les vignettes de cette application à la place de son nom. Vide, le nom de l'application est utilisé."
           }
         }
       }
@@ -3996,6 +6121,23 @@
         }
       }
     },
+    "Size": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Size"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taille"
+          }
+        }
+      }
+    },
     "Sizes and positions only — the Displays moves and the Focus chords do not wait on this. Defaults sit on ⌃⌘, which macOS leaves almost entirely free.": {
       "extractionState": "manual",
       "localizations": {
@@ -4060,6 +6202,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aimantez la fenêtre active sans attraper ses bords. Ces raccourcis fonctionnent pour tout le système, que le sélecteur soit ouvert ou non."
+          }
+        }
+      }
+    },
+    "Snap this app's first window here as it opens.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snap this app's first window here as it opens."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Placer ici la première fenêtre de cette application à son ouverture."
           }
         }
       }
@@ -4217,6 +6376,23 @@
         }
       }
     },
+    "Swap": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Swap"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Échanger"
+          }
+        }
+      }
+    },
     "Swap with window above": {
       "extractionState": "manual",
       "localizations": {
@@ -4319,6 +6495,57 @@
         }
       }
     },
+    "Switch to the selection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to the selection"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passer à la sélection"
+          }
+        }
+      }
+    },
+    "Switched off above — this will not fire.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switched off above — this will not fire."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivé ci-dessus — ceci ne se déclenchera pas."
+          }
+        }
+      }
+    },
+    "Switcher": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switcher"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sélecteur"
+          }
+        }
+      }
+    },
     "Switcher shortcut": {
       "extractionState": "manual",
       "localizations": {
@@ -4336,6 +6563,23 @@
         }
       }
     },
+    "Switching to this app while it is already frontmost hides it instead, so one chord toggles it away and back.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching to this app while it is already frontmost hides it instead, so one chord toggles it away and back."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passer à cette application alors qu'elle est déjà au premier plan la masque à la place : un seul raccourci la fait disparaître puis revenir."
+          }
+        }
+      }
+    },
     "Sync settings over iCloud": {
       "extractionState": "manual",
       "localizations": {
@@ -4349,6 +6593,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Synchroniser les réglages via iCloud"
+          }
+        }
+      }
+    },
+    "System": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Système"
           }
         }
       }
@@ -4455,6 +6716,23 @@
         }
       }
     },
+    "The frontmost app's windows — the same list the app-window cycle shows.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The frontmost app's windows — the same list the app-window cycle shows."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les fenêtres de l'application au premier plan — la même liste que celle du cycle des fenêtres de l'application."
+          }
+        }
+      }
+    },
     "The frosted glass behind the tiles.": {
       "extractionState": "manual",
       "localizations": {
@@ -4519,6 +6797,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "La forme que prend le sélecteur."
+          }
+        }
+      }
+    },
+    "The system switcher is already enabled.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The system switcher is already enabled."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le sélecteur du système est déjà activé."
           }
         }
       }
@@ -4591,6 +6886,23 @@
         }
       }
     },
+    "Thirds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thirds"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiers"
+          }
+        }
+      }
+    },
     "This app's windows": {
       "extractionState": "manual",
       "localizations": {
@@ -4604,6 +6916,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Les fenêtres de cette application"
+          }
+        }
+      }
+    },
+    "This build has no update feed — it was produced by build.sh rather than a release, and updating itself out from under you is not something a local build should do.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This build has no update feed — it was produced by build.sh rather than a release, and updating itself out from under you is not something a local build should do."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cette version n'a pas de flux de mises à jour — elle a été produite par build.sh et non par une publication, et se remplacer en cours d'utilisation n'est pas le rôle d'une version locale."
           }
         }
       }
@@ -4846,6 +7175,23 @@
         }
       }
     },
+    "Title pattern": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Title pattern"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motif du titre"
+          }
+        }
+      }
+    },
     "Title size": {
       "extractionState": "manual",
       "localizations": {
@@ -5016,6 +7362,23 @@
         }
       }
     },
+    "Unplugging a display moves its windows onto whichever desktop is in front, ignoring any app you have assigned to a desktop in the Dock (right-click the icon, Options, Assign To). This puts those apps back where you assigned them once the displays settle. Only apps carrying an assignment are touched, and only the front window of each. For each one it switches to the desktop the window landed on, opens Mission Control and moves the pointer for a moment, then switches back, because macOS allows no quieter way to move another app's window between desktops.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unplugging a display moves its windows onto whichever desktop is in front, ignoring any app you have assigned to a desktop in the Dock (right-click the icon, Options, Assign To). This puts those apps back where you assigned them once the displays settle. Only apps carrying an assignment are touched, and only the front window of each. For each one it switches to the desktop the window landed on, opens Mission Control and moves the pointer for a moment, then switches back, because macOS allows no quieter way to move another app's window between desktops."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Débrancher un écran déplace ses fenêtres vers le bureau au premier plan, sans tenir compte des applications que vous avez attribuées à un bureau dans le Dock (clic droit sur l'icône, Options, Attribuer à). Cette option remet ces applications là où vous les avez attribuées une fois les écrans stabilisés. Seules les applications qui ont une attribution sont concernées, et seulement leur fenêtre au premier plan. Pour chacune, elle passe au bureau où la fenêtre a atterri, ouvre Mission Control et déplace le pointeur un instant, puis revient, car macOS n'offre aucun moyen plus discret de déplacer la fenêtre d'une autre application entre les bureaux."
+          }
+        }
+      }
+    },
     "Unread counts from each app's Dock icon. Read from the Dock over Accessibility, so it is best-effort.": {
       "extractionState": "manual",
       "localizations": {
@@ -5050,6 +7413,23 @@
         }
       }
     },
+    "Updates are downloaded over HTTPS and checked against this app's signing key before anything is installed, so a replaced download cannot install a different app.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates are downloaded over HTTPS and checked against this app's signing key before anything is installed, so a replaced download cannot install a different app."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les mises à jour sont téléchargées en HTTPS et vérifiées avec la clé de signature de cette application avant toute installation : un téléchargement remplacé ne peut donc pas installer une autre application."
+          }
+        }
+      }
+    },
     "Verbose logging": {
       "extractionState": "manual",
       "localizations": {
@@ -5080,6 +7460,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Version"
+          }
+        }
+      }
+    },
+    "Version %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version %@"
+          }
+        }
+      }
+    },
+    "View on GitHub": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View on GitHub"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voir sur GitHub"
           }
         }
       }
@@ -5148,6 +7562,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ce qui ouvre le sélecteur, et ce que font les touches pendant qu'il est ouvert."
+          }
+        }
+      }
+    },
+    "When a query matches nothing running or installed and looks like an address, offer to open it in your browser.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When a query matches nothing running or installed and looks like an address, offer to open it in your browser."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quand une recherche ne correspond à rien d'ouvert ni d'installé et ressemble à une adresse, proposer de l'ouvrir dans votre navigateur."
           }
         }
       }
@@ -5237,6 +7668,23 @@
         }
       }
     },
+    "Whole window": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Whole window"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtre entière"
+          }
+        }
+      }
+    },
     "Window": {
       "extractionState": "manual",
       "localizations": {
@@ -5305,6 +7753,23 @@
         }
       }
     },
+    "Window mode only — an application tile has no single window to show.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window mode only — an application tile has no single window to show."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mode fenêtre uniquement — une vignette d'application n'a pas de fenêtre unique à montrer."
+          }
+        }
+      }
+    },
     "Window tiling": {
       "extractionState": "manual",
       "localizations": {
@@ -5318,6 +7783,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pavage des fenêtres"
+          }
+        }
+      }
+    },
+    "Window title rules": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window title rules"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Règles de titre de fenêtre"
           }
         }
       }
@@ -5403,23 +7885,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Zoomer la fenêtre"
-          }
-        }
-      }
-    },
-    "macOS has no way to move another app's window between desktops, so this performs the gesture instead: it picks the window up, opens Mission Control for a moment and drops it on the next desktop along. That means it takes over the pointer for about half a second, which is why it is off by default. Stops at the first and last desktop rather than wrapping around.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "macOS has no way to move another app's window between desktops, so this performs the gesture instead: it picks the window up, opens Mission Control for a moment and drops it on the next desktop along. That means it takes over the pointer for about half a second, which is why it is off by default. Stops at the first and last desktop rather than wrapping around."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "macOS n'offre aucun moyen de déplacer la fenêtre d'une autre application entre les bureaux : ceci exécute donc le geste à la main — la fenêtre est saisie, Mission Control s'ouvre un instant, et elle est déposée sur le bureau suivant. Cela mobilise le pointeur pendant environ une demi-seconde, d'où sa désactivation par défaut. S'arrête au premier et au dernier bureau au lieu de boucler."
           }
         }
       }

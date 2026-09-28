@@ -35,10 +35,6 @@ final class TileThumbnails: ObservableObject {
         }
     }
 
-    /// Thumbnails are drawn at the tile's size, which the metrics cap. Captured a little larger than
-    /// drawn so a Retina tile is not upscaled.
-    private nonisolated static let maxHeight: CGFloat = 256
-
     /// How many captures run at once.
     ///
     /// Each is a `SCScreenshotManager` round trip, and a machine with thirty windows open would
@@ -80,7 +76,11 @@ final class TileThumbnails: ObservableObject {
     /// Called on every list mutation, including the fresh list that folds in a moment after the
     /// panel opens — hence the diffing: without it, every refresh would recapture the whole list
     /// while the user is still looking at the previous set.
-    func begin(for targets: [SwitchTarget]) {
+    ///
+    /// `maxHeight` is the tallest a thumbnail is ever drawn, in pixels — the caller knows the tile
+    /// size and the display's scale, this object does not. It used to be a fixed 256, about twice
+    /// what a default tile shows on a Retina display.
+    func begin(for targets: [SwitchTarget], maxHeight: CGFloat) {
         guard isEnabled else { return }
         let wanted = targets.compactMap { target -> CGWindowID? in
             // App tiles and launch tiles have no window to capture. A minimized one is captured
@@ -111,7 +111,7 @@ final class TileThumbnails: ObservableObject {
             // Serialised behind whatever was already running rather than cancelling it: the earlier
             // pass is capturing tiles the user is looking at right now.
             await previous?.value
-            await self?.capture(missing, generation: generation)
+            await self?.capture(missing, maxHeight: maxHeight, generation: generation)
         }
     }
 
@@ -129,7 +129,7 @@ final class TileThumbnails: ObservableObject {
         images.removeAll()
     }
 
-    private func capture(_ ids: [CGWindowID], generation: Int) async {
+    private func capture(_ ids: [CGWindowID], maxHeight: CGFloat, generation: Int) async {
         guard generation == self.generation else { return }
         guard
             let content = try? await SCShareableContent.excludingDesktopWindows(
@@ -155,7 +155,7 @@ final class TileThumbnails: ObservableObject {
                     // capture, which is the one thing this API exists to be used for off the main
                     // thread. Same reasoning as `WindowPreview.Entry`.
                     nonisolated(unsafe) let window = found
-                    group.addTask { (id, await Self.image(of: window)) }
+                    group.addTask { (id, await Self.image(of: window, maxHeight: maxHeight)) }
                 }
                 var out: [(CGWindowID, CGImage)] = []
                 for await (id, image) in group {
@@ -186,7 +186,9 @@ final class TileThumbnails: ObservableObject {
         inFlight.subtract(ids)
     }
 
-    private nonisolated static func image(of window: SCWindow) async -> CGImage? {
+    private nonisolated static func image(
+        of window: SCWindow, maxHeight: CGFloat
+    ) async -> CGImage? {
         // The hover preview's capture, which renders straight to thumbnail size rather than
         // capturing full-res and scaling after. Shared so the downscale policy has one home.
         guard let image = try? await WindowCapture.capture(window, maxHeight: maxHeight)

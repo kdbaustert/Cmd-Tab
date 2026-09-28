@@ -12,6 +12,29 @@ final class FilteringAndMetricsTests: XCTestCase {
             icon: nil, isMinimized: false, isHidden: false)
     }
 
+    /// A resolved launch icon lands mid-session: the tile is replaced in place, and neither the
+    /// highlight nor the query moves — `setQuery` would snap it back to the best match.
+    func testRefreshingSuggestionIconsKeepsTheHighlight() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("s", suggestions: [launchable("Slack"), launchable("Skype")])
+        model.selection = 4
+        let icon = NSImage(size: NSSize(width: 1, height: 1))
+        model.refreshSuggestionIcons(
+            [launchable("Slack"), launchable("Skype")].map {
+                SwitchTarget(
+                    id: $0.id, kind: $0.kind, title: $0.title, appName: $0.appName, icon: icon,
+                    isMinimized: false, isHidden: false)
+            })
+        XCTAssertEqual(model.selection, 4)
+        XCTAssertEqual(model.query, "s")
+        XCTAssertNotNil(model.targets[4].icon)
+        // A different set is not an artwork refresh.
+        model.refreshSuggestionIcons([launchable("Other")])
+        XCTAssertEqual(model.targets.count, 5)
+        XCTAssertEqual(model.targets[4].id, "launch:Skype")
+    }
+
     private var sample: [SwitchTarget] {
         [
             target("Safari", app: "Safari"),

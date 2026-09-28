@@ -32,6 +32,15 @@ struct Metrics: Equatable {
     /// The frosted border around the tiles, on every side — this is padding *inside* the glass.
     static let panelPadding: CGFloat = 10
 
+    /// Point size of the Desktop headers in the overview, shared by the view that draws them and by
+    /// `DisplayLayout.fits`, which has to reserve their height before anything is drawn.
+    static let sectionHeaderFontSize: CGFloat = 11
+    /// One header's line height — the font's own, which is what a one-line `Text` measures.
+    static var sectionHeaderHeight: CGFloat {
+        let font = NSFont.systemFont(ofSize: sectionHeaderFontSize, weight: .semibold)
+        return ceil(font.ascender - font.descender + font.leading)
+    }
+
     /// Room for two wrapped lines of 10pt title in window mode.
     private static let titleHeight: CGFloat = 26
     /// Extra width a window tile needs so titles are not shredded into three-character lines.
@@ -317,7 +326,7 @@ struct SwitcherView: View {
                 Text("Elsewhere")
             }
         }
-        .font(.system(size: 11, weight: .semibold))
+        .font(.system(size: Metrics.sectionHeaderFontSize, weight: .semibold))
         .foregroundStyle(.secondary)
         .frame(width: contentWidth, alignment: .leading)
     }

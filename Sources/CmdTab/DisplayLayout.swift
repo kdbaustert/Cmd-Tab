@@ -78,12 +78,14 @@ enum DisplayLayout {
     /// about 25 apps. Shrinking keeps the no-scroll design; the caption and search bar are paid for
     /// by the margin `Metrics.maxScreenFraction` already leaves, exactly as they are in `columns`.
     ///
+    /// `sectionSizes` is the overview's per-Desktop window counts, in order — see `fits`.
+    ///
     /// Stepwise rather than solved: the column count moves as tiles narrow, and the list's row
     /// width and icon are clamped independently of the icon size, so no one formula covers every
     /// case. A couple of dozen steps of arithmetic is nothing beside the layout pass that follows.
     static func fitted(
         _ base: Metrics, targetCount: Int, mode: SwitcherMode, layout: SwitcherLayout,
-        showsTitle: Bool, visibleSize: CGSize, cap: Int
+        showsTitle: Bool, visibleSize: CGSize, cap: Int, sectionSizes: [Int]? = nil
     ) -> Metrics {
         var metrics = base
         // Bounded as well as floored, so no input can spin here: 0.92 per step takes the largest
@@ -91,7 +93,8 @@ enum DisplayLayout {
         for _ in 0..<32 {
             if fits(
                 metrics, targetCount: targetCount, mode: mode, layout: layout,
-                showsTitle: showsTitle, visibleSize: visibleSize, cap: cap)
+                showsTitle: showsTitle, visibleSize: visibleSize, cap: cap,
+                sectionSizes: sectionSizes)
             {
                 return metrics
             }
@@ -109,23 +112,43 @@ enum DisplayLayout {
     /// Whether `targetCount` targets laid out with `metrics` fit this display's visible frame, in
     /// both axes — the same rows and columns `SwitcherView` draws: a row-major grid, or a list
     /// split into `columns` runs of `ceil(count / columns)` rows.
+    ///
+    /// `sectionSizes` is for the Desktops overview, whose grid is one per Desktop: each starts on a
+    /// fresh row, so a partly empty last row is paid for in full, and each carries a header. Counting
+    /// tiles alone under-reads that height — a screen-filling list can fit by tile count and still
+    /// run off the bottom. With one section, or nil, the overview draws no headers and is a plain
+    /// grid; the list layout has no sections at all.
     static func fits(
         _ metrics: Metrics, targetCount: Int, mode: SwitcherMode, layout: SwitcherLayout,
-        showsTitle: Bool, visibleSize: CGSize, cap: Int
+        showsTitle: Bool, visibleSize: CGSize, cap: Int, sectionSizes: [Int]? = nil
     ) -> Bool {
         guard targetCount > 0 else { return true }
         let columns = Self.columns(
             targetCount: targetCount, mode: mode, layout: layout, showsTitle: showsTitle,
             metrics: metrics, visibleSize: visibleSize, cap: cap)
-        let rows = Int((Double(targetCount) / Double(columns)).rounded(.up))
         let isList = layout == .list
         let cell = isList
             ? metrics.listRow(for: mode) : metrics.tile(for: mode, showsTitle: showsTitle)
         let rowGap = isList ? Metrics.rowGap : Metrics.tileGap
         let width = CGFloat(columns) * (cell.width + Metrics.tileGap) - Metrics.tileGap
-        let height = CGFloat(rows) * (cell.height + rowGap) - rowGap
+        let height: CGFloat
+        if !isList, let sectionSizes, sectionSizes.count > 1 {
+            // Per section: its header, then its rows; a `tileGap` between sections. The gap after
+            // the header and after each row folds into `cell.height + rowGap` and the header's own.
+            let rows = sectionSizes.reduce(0) { $0 + Self.rows(for: $1, columns: columns) }
+            height = CGFloat(rows) * (cell.height + rowGap)
+                + CGFloat(sectionSizes.count) * Metrics.sectionHeaderHeight
+                + CGFloat(sectionSizes.count - 1) * Metrics.tileGap
+        } else {
+            height = CGFloat(Self.rows(for: targetCount, columns: columns)) * (cell.height + rowGap)
+                - rowGap
+        }
         let available = Self.available(in: visibleSize)
         return width <= available.width && height <= available.height
+    }
+
+    private static func rows(for count: Int, columns: Int) -> Int {
+        Int((Double(count) / Double(columns)).rounded(.up))
     }
 
     /// The share of the visible frame the tiles may cover, inside the glass's own padding.

@@ -415,8 +415,10 @@ actor WindowCapture {
                 key: { SurfaceKey(title: $0.title ?? "", frame: $0.frame) })
         }
 
+        // Narrowed by `only` like `live` is: otherwise a window missing from the capture leaves a
+        // different minimized one as the only candidate, and the caller shows that instead.
         let minimized = Self.supplementalMinimized(
-            ax.minimized, liveIDs: Set(live.map(\.windowID)), titleRules: titleRules,
+            ax.minimized.filter { only == nil || $0.id == only }, liveIDs: Set(live.map(\.windowID)), titleRules: titleRules,
             bundleID: bundleID)
         guard !live.isEmpty || !minimized.isEmpty, !Task.isCancelled else { return [] }
 
@@ -531,8 +533,11 @@ actor WindowCapture {
         // it exists to bridge is far longer than one — an app that answers nothing for half a minute
         // answers nothing for the whole of the session too, so a remembered answer dropped here
         // would never once be there when it was wanted. It is also the cheap one: a set of window
-        // ids per app hovered, against an `SCWindow` for every window on the system, and it ages out
-        // on its own in `axWindows`.
+        // ids per app hovered, against an `SCWindow` for every window on the system. Only the
+        // expired entries go here — `axWindows` prunes the same way, but only for apps still being
+        // read, so an app that quit would otherwise keep its entry for the life of the process.
+        let now = Date()
+        lastUsableAX = lastUsableAX.filter { now.timeIntervalSince($0.value.at) < usableAXLifetime }
     }
 
     /// One window's capture: live pixels when there are any to be had, the icon when there aren't.

@@ -130,6 +130,8 @@ final class SwitcherController {
     /// Bounded by the number of installed apps, and an icon changing mid-session is not worth an
     /// invalidation path.
     private var launchIcons: [String: NSImage] = [:]
+    /// Bundle ids whose icon is being fetched off the main thread — see `fetchLaunchIcon`.
+    private var fetchingLaunchIcons: Set<String> = []
 
     /// The default browser's icon, resolved once and reused for every fallback tile — a URL/search
     /// fallback opens through the browser, so its icon is the honest answer to "what will this
@@ -777,7 +779,10 @@ final class SwitcherController {
         // Modifier events are never swallowed — other apps need to track modifier state, and this
         // is also the escape hatch that guarantees the panel can always be dismissed.
         if type == .flagsChanged {
-            Log.tap.log(level: Log.traceLevel, "flagsChanged: flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) stillHeld=\(self.stillHeld(flags, self.activeHeld), privacy: .public)")
+            // Per-key lines are always `.debug`, never `Log.traceLevel`: verbose mode promotes that
+            // to `.default`, which is persisted, and these three record what was typed and which
+            // chords were pressed. Visible in `log stream --level debug`, gone afterwards.
+            Log.tap.log(level: .debug, "flagsChanged: flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) stillHeld=\(self.stillHeld(flags, self.activeHeld), privacy: .public)")
             // A sticky session is defined by *not* ending here — releasing the modifier is how the
             // user gets their hands back, not how they commit.
             if !staysOpenOnRelease, (isVisible || armed || pendingSameApp), !stillHeld(flags, activeHeld) {
@@ -845,7 +850,7 @@ final class SwitcherController {
 
         // While the panel is up it owns the keyboard, like the system switcher.
         if isVisible {
-            Log.tap.log(level: Log.traceLevel, "visible: code=\(code, privacy: .public) flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) commit=\(self.release.shouldCommit(flags: flags), privacy: .public)")
+            Log.tap.log(level: .debug, "visible: code=\(code, privacy: .public) flags=\(flags.rawValue, privacy: .public) held=\(self.activeHeld.rawValue, privacy: .public) commit=\(self.release.shouldCommit(flags: flags), privacy: .public)")
             if release.shouldCommit(flags: flags) {
                 commit()
                 return false
@@ -895,7 +900,7 @@ final class SwitcherController {
             if !isAppActive, tiling.isEnabled,
                 !flags.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty {
                 Log.tap.log(
-                    level: Log.traceLevel,
+                    level: .debug,
                     """
                     tiling: no binding for key \(code, privacy: .public) \
                     flags \(flags.rawValue, privacy: .public)
@@ -1075,8 +1080,8 @@ final class SwitcherController {
     /// Moves the highlight.
     private func advance(_ delta: Int) {
         model.step(delta)
-        // Off the tap callback — see `scheduleLayout`.
-        scheduleLayout()
+        // Off the tap callback — see `scheduleLayout`. Selection only: a step changes no size.
+        scheduleLayout(selectionOnly: true)
     }
 
     /// Moves the highlight one row up or down.
@@ -1087,7 +1092,7 @@ final class SwitcherController {
     private func advanceRow(_ delta: Int) {
         model.stepRow(delta, stride: panels.rowStride)
         // Off the tap callback, exactly as `advance` is.
-        scheduleLayout()
+        scheduleLayout(selectionOnly: true)
     }
 
     private func handleVisibleKey(
@@ -1147,7 +1152,7 @@ final class SwitcherController {
         case Key.escape:
             // The preview first, the session second — the same layering Quick Look gives Finder,
             // and the panel is still one further Escape away.
-            if quickPreview.isShowing {
+            if quickPreview.isOnScreen {
                 quickPreview.dismiss()
                 return true
             }
@@ -1174,9 +1179,11 @@ final class SwitcherController {
         }
         // Space toggles the full-size preview of the highlighted tile — but only with no query,
         // the same rule the digits follow just above: once a query has started, Space is its word
-        // separator. An auto-repeat is one press held, not a flurry of toggles.
-        if code == Key.space, quickPreview.isEnabled, model.query.isEmpty, !isAutorepeat {
-            quickPreview.toggle(for: model.selected)
+        // separator. An auto-repeat is one press held, not a flurry of toggles — and not a run of
+        // spaces typed into the query either, which is where it fell to: the query became "   ",
+        // the empty-query rules stopped applying, and digits and Space stopped working as keys.
+        if code == Key.space, quickPreview.isEnabled, model.query.isEmpty {
+            if !isAutorepeat { quickPreview.toggle(for: model.selected) }
             return true
         }
         // Anything else that resolves to a visible character extends the filter query. ⌥/⌃ are action
@@ -1266,15 +1273,17 @@ final class SwitcherController {
         //
         // Picking such a suggestion is correct rather than a fudge: `openApplication` on an already
         // running app is a reopen event, which is what makes it produce a window.
+        //
+        // Read off the tiles rather than by walking `NSWorkspace.runningApplications`: that walk
+        // reads two properties per process, and `NSRunningApplication` drops its caches every
+        // run-loop turn, so it cost 3–9 ms per keystroke with ~85 processes — on the tap callback.
+        // Every tile already carries its app's `bundleID`. Launch tiles are skipped, both because
+        // they are not running (a favourite that isn't is covered by `alreadyTiled` below) and
+        // because the model still holds the previous keystroke's suggestions, which must not
+        // exclude themselves.
         var excluded = provider.excludedBundleIDs
-        let tiled = Set(model.targets.map(\.pid))
-        for app in NSWorkspace.shared.runningApplications {
-            // The pid first: it is a field read, where `bundleIdentifier` is a LaunchServices
-            // query, and most running processes are daemons with no tile to be excluded for.
-            guard tiled.contains(app.processIdentifier), let id = app.bundleIdentifier else {
-                continue
-            }
-            excluded.insert(id)
+        for target in model.targets where !target.isLaunchable {
+            if let id = target.bundleID { excluded.insert(id) }
         }
         // A favourite that isn't running already carries a `launch:<bundleID>` tile, and a
         // suggestion for the same app builds the identical id — `ForEach(id:)` then has duplicate
@@ -1290,14 +1299,8 @@ final class SwitcherController {
             ? InstalledApps.matches(query, excluding: excluded)
                 .filter { !alreadyTiled.contains("launch:\($0.bundleID)") }
                 .map { entry -> SwitchTarget in
-                    let icon: NSImage?
-                    if let cached = launchIcons[entry.bundleID] {
-                        icon = cached
-                    } else {
-                        let resolved = NSWorkspace.shared.icon(forFile: entry.url.path)
-                        launchIcons[entry.bundleID] = resolved
-                        icon = resolved
-                    }
+                    let icon = launchIcons[entry.bundleID]
+                    if icon == nil { fetchLaunchIcon(entry.bundleID, path: entry.url.path) }
                     return SwitchTarget(
                         id: "launch:\(entry.bundleID)", kind: .launch(entry.url), title: entry.name,
                         appName: entry.name, icon: icon, isMinimized: false, isHidden: false,
@@ -1317,6 +1320,43 @@ final class SwitcherController {
             query: query, settings: fallbackSettings, hasHandler: hasHandler)
         return fallbackTargets(fallbacks)
     }
+
+    /// Resolves a launch suggestion's icon off the main thread, then swaps it into the tile.
+    ///
+    /// The first sight of each app used to run `icon(forFile:)` inline — about 3 ms per suggestion
+    /// on the tap callback. Now that tile is drawn with the placeholder for a beat and the real icon
+    /// arrives from a background queue (`icon(forFile:)` is thread-safe). The swap waits for the
+    /// last outstanding fetch so a batch of five costs one redraw, keeps the highlight and query
+    /// where they are (no size change, so no layout), and only happens if the panel is still
+    /// showing this query's suggestion — a session that ended meanwhile keeps the icon in
+    /// `launchIcons` for next time and nothing else.
+    private func fetchLaunchIcon(_ bundleID: String, path: String) {
+        guard fetchingLaunchIcons.insert(bundleID).inserted else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let resolved = SendableIcon(image: NSWorkspace.shared.icon(forFile: path))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.fetchingLaunchIcons.remove(bundleID)
+                    self.launchIcons[bundleID] = resolved.image
+                    // Any launch tile, not only this fetch's: the last fetch to land can be for a
+                    // tile the query has since dropped, while the ones still shown were built with
+                    // the placeholder and have their icons cached only now. A mismatched list is
+                    // ignored by `refreshSuggestionIcons` itself.
+                    guard self.fetchingLaunchIcons.isEmpty, self.isVisible,
+                        !self.model.query.isEmpty,
+                        self.model.targets.contains(where: { $0.id.hasPrefix("launch:") })
+                    else { return }
+                    self.model.refreshSuggestionIcons(
+                        self.launchSuggestions(for: self.model.query))
+                }
+            }
+        }
+    }
+
+    /// `NSImage` is not `Sendable`, and this one is handed across exactly once: created on the
+    /// background queue, never touched there again, read only after the hop back to main.
+    private struct SendableIcon: @unchecked Sendable { let image: NSImage }
 
     /// Turns already-decided fallback actions into tiles, in the order they were given.
     /// `browserIcon` fits `.openURL` and `.search` — both open through the browser — but says
@@ -1361,15 +1401,28 @@ final class SwitcherController {
     /// the load: a burst of key events (auto-repeat on the trigger, a fast typist filtering) posted
     /// one full layout each onto the very run loop the tap is serviced from. Collapsing the burst
     /// into one layout is what actually caps it.
-    private func scheduleLayout() {
+    ///
+    /// `selectionOnly` is for a change that moves the highlight and nothing else — Tab, the arrows.
+    /// It cannot change the panel's size, and the `@Published` selection already redraws the tiles,
+    /// so the layout is skipped and everything that *follows* the highlight still runs. That also
+    /// means the panel is no longer re-centred on the pointer at every step under the `.cursor`
+    /// position: it is placed when it opens and when the list changes, which is what "near cursor"
+    /// meant. A full request in the same turn wins, so a burst that mixes the two still lays out.
+    private func scheduleLayout(selectionOnly: Bool = false) {
+        if !selectionOnly { fullLayoutQueued = true }
         guard !layoutQueued else { return }
         layoutQueued = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.layoutQueued = false
+            let full = self.fullLayoutQueued
+            self.fullLayoutQueued = false
             guard self.isVisible else { return }
             MainLoopMonitor.marking("panel layout") {
-                self.panels.layout()
+                if full {
+                    self.panels.layout()
+                    self.laidOutList = self.listShape()
+                }
                 // The list under a stationary cursor may have changed — a tile quit, closed or
                 // hidden, or a background refresh folded in a new one — so the strip has to follow
                 // whatever is under the pointer now. Deduped downstream, so an unchanged target
@@ -1390,6 +1443,27 @@ final class SwitcherController {
             }
         }
     }
+
+    /// Set by any request for a full layout, cleared when the queued turn runs — see `scheduleLayout`.
+    private var fullLayoutQueued = false
+
+    /// Everything about the list that can change the panel's size, per tile: its identity, its
+    /// caption text, and the Desktop it is sectioned under in the overview (which decides the
+    /// headers). The count is the array's own.
+    private struct ListShape: Equatable {
+        let id: String
+        let title: String
+        let spaceIndex: Int?
+    }
+
+    private func listShape() -> [ListShape] {
+        model.targets.map { ListShape(id: $0.id, title: $0.title, spaceIndex: $0.spaceIndex) }
+    }
+
+    /// The list the panel was last sized for, so a refresh that hands back the same list — the
+    /// usual case, since the cache is only a moment stale — does not lay out again. Nil between
+    /// sessions, so the first refresh of a session is never mistaken for a repeat.
+    private var laidOutList: [ListShape]?
 
     /// The tile last spoken to VoiceOver, so a relayout that moved nothing says nothing.
     ///
@@ -1645,12 +1719,18 @@ final class SwitcherController {
             case .show:
                 self.showWith(
                     targets: filtered, backwards: backwards, mode: .windows,
-                    groupsByDesktop: scope == .desktopsOverview)
+                    groupsByDesktop: scope == .desktopsOverview,
+                    mruOrder: scope == .desktopsOverview ? targets : nil)
             case .focus(let index):
                 // Tapped and released before the list landed: switch without ever drawing.
                 self.pendingSameAppReleased = false
                 self.stopWatchdog()
-                let target = filtered[index]
+                // `index` counts `filtered`. Only the overview re-sorted it — every other scope is a
+                // subset of `targets`, not a reordering, so mapping through `targets` would name a
+                // tile the filter removed.
+                let target = scope == .desktopsOverview
+                    ? filtered[Self.indexInGrouped(index, mruOrder: targets, grouped: filtered)]
+                    : filtered[index]
                 DispatchQueue.main.async { self.switchTo(target) }
             }
             }
@@ -1728,6 +1808,22 @@ final class SwitcherController {
         }.map(\.element)
     }
 
+    /// Where the tile at `index` of the provider's own (MRU) order sits once the overview has
+    /// sorted the list by Desktop. A tap answers "the window used before this one", which is an
+    /// MRU idea — asked of the Desktop-sorted list it names whatever happens to be second there.
+    /// An index that is not in the list (an empty one) is passed through, and so is a list the sort
+    /// did not touch, since both orders are then the same. So is a `grouped` list that is not a
+    /// reordering of `mruOrder` — a filtered subset — where the index already counts `grouped`.
+    nonisolated static func indexInGrouped(
+        _ index: Int, mruOrder: [SwitchTarget], grouped: [SwitchTarget]
+    ) -> Int {
+        guard grouped.count == mruOrder.count, mruOrder.indices.contains(index) else {
+            return index
+        }
+        let id = mruOrder[index].id
+        return grouped.firstIndex { $0.id == id } ?? index
+    }
+
     /// The filter itself, over a Space set already read. Pure so it can be tested: an empty set is
     /// a reading that failed and keeps everything, and a target with no Space is kept — see above.
     nonisolated static func narrowed(
@@ -1798,7 +1894,7 @@ final class SwitcherController {
     /// app's windows whatever the setting says, which is the whole point of it.
     private func showWith(
         targets: [SwitchTarget], backwards: Bool, mode: SwitcherMode? = nil,
-        groupsByDesktop: Bool = false
+        groupsByDesktop: Bool = false, mruOrder: [SwitchTarget]? = nil
     ) {
         // An explicit `mode` is exactly what distinguishes a narrowed session from the global one:
         // only `openSameApp` and `openScoped` pass it, and both hand in a list already filtered to
@@ -1815,9 +1911,11 @@ final class SwitcherController {
         model.begin(targets)
         // The frontmost app/window is index 0, so a plain tap lands on the previous one — unless
         // pinned favourites hold the front of the list, which is what `tapIndex` answers for.
-        model.selection = backwards
-            ? targets.count - 1
-            : provider.tapIndex(in: targets, mode: mode)
+        // `mruOrder` is the list before the overview sorted it by Desktop: the tap and the "last"
+        // tile are both MRU answers, so they are picked there and then located in the sorted list.
+        let order = mruOrder ?? targets
+        let opening = backwards ? order.count - 1 : provider.tapIndex(in: order, mode: mode)
+        model.selection = Self.indexInGrouped(opening, mruOrder: order, grouped: targets)
 
         // The state flip stays synchronous — the very next key event has to see `isVisible` — but
         // everything that *costs* anything is deferred. `panels.show()` runs a full SwiftUI layout,
@@ -1842,6 +1940,7 @@ final class SwitcherController {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
             MainLoopMonitor.marking("panel show") { self.panels.show() }
+            self.laidOutList = self.listShape()
             // The session's first tile. Every *later* move goes through `scheduleLayout`, which a
             // freshly shown panel has not been through — so without this the opening selection was
             // the one the preview never offered and VoiceOver never named.
@@ -1912,6 +2011,7 @@ final class SwitcherController {
         // looked like is worse than showing it an icon.
         thumbnails.cancel()
         model.thumbnails = [:]
+        laidOutList = nil
     }
 
     /// Brings a target forward, recording a window pick on the way.
@@ -2221,7 +2321,9 @@ final class SwitcherController {
             cancel()
         } else {
             beginThumbnails()
-            scheduleLayout()
+            // An identical list has the size it already has; only the follow-ups are owed, for a
+            // highlight the merge may have moved.
+            scheduleLayout(selectionOnly: laidOutList == listShape())
         }
     }
 
@@ -2236,7 +2338,11 @@ final class SwitcherController {
             thumbnailSubscription = thumbnails.$images
                 .sink { [weak self] images in self?.model.thumbnails = images }
         }
-        thumbnails.begin(for: model.targets)
+        // The tile's icon square in pixels, at the sharpest display's scale so a panel on the
+        // Retina screen is never upscaled. A thumbnail is drawn no taller than that square.
+        let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+        thumbnails.begin(
+            for: model.targets, maxHeight: (model.metrics.windowIconSize * scale).rounded(.up))
     }
 
     // MARK: - In-switcher window actions

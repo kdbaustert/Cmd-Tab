@@ -26,7 +26,8 @@ struct SearchBindings: Equatable {
         let bundleID: String
     }
 
-    /// Most recently learned or confirmed first — the order eviction reads from the back of.
+    /// Newest binding first — the order eviction reads from the back of. The order carries no
+    /// lookup priority (a query has exactly one binding); it exists only to pick what to evict.
     private(set) var entries: [Entry] = []
 
     /// Bounded like `RecencyList`, and for the same reason: an unbounded store of every query ever
@@ -43,15 +44,38 @@ struct SearchBindings: Equatable {
             .folding(options: .diacriticInsensitive, locale: nil)
     }
 
-    /// Records `query` → `bundleID`, replacing what the query previously learned and refreshing its
-    /// place in the eviction order. An empty query records nothing — there is nothing to bind.
+    /// Records `query` → `bundleID`, replacing what the query previously learned. An empty query
+    /// records nothing — there is nothing to bind.
+    ///
+    /// Confirming a binding that already holds changes nothing, deliberately: refreshing its place
+    /// in the order would rewrite the defaults — and the iCloud-synced config file — on nearly
+    /// every switch, and two Macs would keep overwriting each other's lists. So eviction is by
+    /// insertion order, not recency: the oldest *new or changed* binding goes first, which costs a
+    /// long-unchanged habit one re-commit if it is ever evicted.
     mutating func learn(query: String, bundleID: String) {
         let key = Self.normalized(query)
         guard !key.isEmpty else { return }
+        if entries.contains(where: { $0.query == key && $0.bundleID == bundleID }) { return }
         entries.removeAll { $0.query == key }
         entries.insert(Entry(query: key, bundleID: bundleID), at: 0)
         if entries.count > Self.capacity { entries.removeLast(entries.count - Self.capacity) }
     }
+
+    /// Rebuilds the bindings from the stored array of `[query, bundleID]` pairs, newest first — the
+    /// same row-of-strings shape `scopedTriggers` uses, read row by row for the same reason: a
+    /// hand-edited config can put anything here, and one bad row must cost that row alone, not the
+    /// whole list (casting the array as a unit would fail on the first malformed element).
+    init(stored: [Any]?) {
+        // Learned oldest-first so the insertion order rebuilds the stored order.
+        for element in (stored ?? []).reversed() {
+            guard let row = element as? [Any], row.count == 2, let query = row[0] as? String,
+                let bundleID = row[1] as? String
+            else { continue }
+            learn(query: query, bundleID: bundleID)
+        }
+    }
+
+    init() {}
 
     /// The app `query` has learned, or nil for a query never committed. Exact on the normalized
     /// query rather than fuzzy — the binding is "this exact habit", and a prefix of it is a
@@ -97,21 +121,8 @@ final class SearchShortcutsStore: ObservableObject {
     /// Re-reads the set after an import or reset.
     func reload() { load() }
 
-    /// Stored as an ordered array of `[query, bundleID]` pairs, most recent first — the same
-    /// row-of-strings shape `scopedTriggers` uses, read defensively for the same reason: a
-    /// hand-edited config can put anything here, and one bad row must cost that row alone.
     private func load() {
-        var loaded = SearchBindings()
-        if let raw = UserDefaults.standard.array(forKey: Self.defaultsKey) as? [[Any]] {
-            // Learned oldest-first so the insertion order rebuilds the stored order.
-            for row in raw.reversed() {
-                guard row.count == 2, let query = row[0] as? String,
-                    let bundleID = row[1] as? String
-                else { continue }
-                loaded.learn(query: query, bundleID: bundleID)
-            }
-        }
-        bindings = loaded
+        bindings = SearchBindings(stored: UserDefaults.standard.array(forKey: Self.defaultsKey))
     }
 
     private func persist() {

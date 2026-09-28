@@ -110,12 +110,20 @@ final class DragSnap {
         }
         let dragged = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) {
             [weak self] event in
-            guard !SyntheticEvent.isOurs(event.cgEvent) else { return }
-            MainActor.assumeIsolated { self?.mouseDragged(to: NSEvent.mouseLocation) }
+            // The cheap test first: `cgEvent` builds an object, this fires on every drag event on
+            // the machine, and nearly all of them belong to a press that never armed anything.
+            MainActor.assumeIsolated {
+                guard let self, self.pressOrigin != nil, !SyntheticEvent.isOurs(event.cgEvent)
+                else { return }
+                self.mouseDragged(to: NSEvent.mouseLocation)
+            }
         }
         let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
-            guard !SyntheticEvent.isOurs(event.cgEvent) else { return }
-            MainActor.assumeIsolated { self?.mouseUp() }
+            MainActor.assumeIsolated {
+                guard let self, self.pressOrigin != nil, !SyntheticEvent.isOurs(event.cgEvent)
+                else { return }
+                self.mouseUp()
+            }
         }
         monitors = [down, dragged, up].compactMap { $0 }
     }
@@ -542,8 +550,11 @@ final class SnapPreview {
         panel.orderFrontRegardless()
     }
 
+    /// Only when it is up: `DragSnap.reset` runs on every press and release on the machine, and an
+    /// `orderOut` of a panel that is already off screen is still a window-server call.
     func hide() {
-        panel?.orderOut(nil)
+        guard let panel, panel.isVisible else { return }
+        panel.orderOut(nil)
     }
 
     /// Painted on every show and nowhere else. The panel is made blank: styling it at creation too

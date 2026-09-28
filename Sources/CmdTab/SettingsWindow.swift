@@ -499,7 +499,7 @@ struct SettingsRootView: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(SettingsTab.groups.enumerated()), id: \.offset) { _, group in
                 if let header = group.header {
-                    Text(header)
+                    SettingsChrome.text(header)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
@@ -527,7 +527,7 @@ struct SettingsRootView: View {
                     symbol: candidate.symbol,
                     start: candidate.gradient.0,
                     end: candidate.gradient.1)
-                Text(candidate.title).font(.system(size: 13)).lineLimit(1)
+                SettingsChrome.text(candidate.title).font(.system(size: 13)).lineLimit(1)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8)
@@ -543,7 +543,7 @@ struct SettingsRootView: View {
         // where they already are. The gradient badge is decoration and is folded into the
         // tab's name rather than announced as an image.
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(candidate.title)
+        .accessibilityLabel(SettingsChrome.text(candidate.title))
         .accessibilityAddTraits(
             tab == candidate ? [.isButton, .isSelected] : .isButton)
     }
@@ -569,8 +569,9 @@ struct SettingsRootView: View {
                             jump = hit.anchor
                         } label: {
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(hit.title).font(.system(size: 12))
-                                Text("\(hit.tab.title) › \(hit.section)")
+                                SettingsChrome.text(hit.title).font(.system(size: 12))
+                                (SettingsChrome.text(hit.tab.title) + Text(" › ")
+                                    + SettingsChrome.text(hit.section))
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                             }
@@ -1115,7 +1116,9 @@ struct BehaviorSettings: View {
                     title: "Order", subtitle: "How tiles are sorted.",
                     selection: $behavior.sortOrder, width: 160
                 ) {
-                    ForEach(SortOrder.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(SortOrder.allCases, id: \.self) {
+                        SettingsChrome.text($0.title).tag($0)
+                    }
                 }
                 SettingsToggle(
                     title: "Group windows by app",
@@ -1137,7 +1140,9 @@ struct BehaviorSettings: View {
                         + "switcher opens, so it follows you the moment you switch.",
                     selection: $behavior.windowSpaceScope, width: 160
                 ) {
-                    ForEach(WindowSpaceScope.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(WindowSpaceScope.allCases, id: \.self) {
+                        SettingsChrome.text($0.title).tag($0)
+                    }
                 }
                 SettingsToggle(
                     title: "Hide apps with no windows",
@@ -1153,13 +1158,17 @@ struct BehaviorSettings: View {
                     title: "Position", subtitle: "Where on a display the panel opens.",
                     selection: $behavior.panelPosition, width: 160
                 ) {
-                    ForEach(PanelPosition.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(PanelPosition.allCases, id: \.self) {
+                        SettingsChrome.text($0.title).tag($0)
+                    }
                 }
                 SettingsPicker(
                     title: "Show on", subtitle: "Which displays get a panel.",
                     selection: $behavior.panelScreens, width: 160
                 ) {
-                    ForEach(PanelScreens.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(PanelScreens.allCases, id: \.self) {
+                        SettingsChrome.text($0.title).tag($0)
+                    }
                 }
             }
         }
@@ -1391,6 +1400,11 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
     /// `makeWindow` already accepts for the first one; the tab lives on `navigator` and the frame
     /// under the autosave name, so neither is lost.
     func windowWillClose(_ notification: Notification) {
+        // Before the window is freed: a recorder disarms from `.onDisappear`, which does not fire
+        // when the window closes, so an armed one would outlive the view that armed it — its key
+        // monitor swallowing plain keys, and a ⌘ chord recorded through a stale binding, while the
+        // rebuilt Settings shows nothing armed. Every recorder kind registers via `KeyRecorder`.
+        KeyRecorder.stopCurrent()
         // Next turn of the run loop: at `willClose` the window is still on screen, and pulling the
         // Dock tile out from under a window that is still closing can leave the tile behind. The
         // release waits for the same turn, so the window is not freed partway through its close.

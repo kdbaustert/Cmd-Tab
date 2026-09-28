@@ -25,9 +25,9 @@ final class QuickPreviewTests: XCTestCase {
         let thumbs = [thumb(10, title: "front"), thumb(20, title: "behind")]
         XCTAssertEqual(QuickPreview.pick(thumbs, windowID: nil)?.title, "front")
         XCTAssertEqual(QuickPreview.pick(thumbs, windowID: 0)?.title, "front")
-        XCTAssertEqual(
-            QuickPreview.pick(thumbs, windowID: 99)?.title, "front",
-            "an id the capture did not find falls back rather than showing nothing")
+        XCTAssertNil(
+            QuickPreview.pick(thumbs, windowID: 99),
+            "a real id the capture did not find shows nothing, not another window")
         XCTAssertNil(QuickPreview.pick([], windowID: nil))
     }
 
@@ -64,6 +64,6 @@ final class QuickPreviewTests: XCTestCase {
     func testTheOriginIsClampedToTheScreenSides() {
         let wide = CGSize(width: 2000, height: 300)
         let origin = QuickPreview.origin(for: wide, above: panel, in: screen)
-        XCTAssertEqual(origin.x, screen.maxX - wide.width, "pinned to the right edge, not beyond")
+        XCTAssertEqual(origin.x, screen.minX, "the left edge stays on the screen")
     }
 }

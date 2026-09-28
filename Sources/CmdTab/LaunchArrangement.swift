@@ -56,11 +56,13 @@ final class LaunchArrangementWatcher {
     deinit { NSWorkspace.shared.notificationCenter.removeObserver(self) }
 
     @objc private func appLaunched(_ note: Notification) {
+        // The rule lookup before the policy read: `activationPolicy` is a LaunchServices round trip,
+        // and this runs on the main thread for every app that launches while most have no rule.
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-            app.activationPolicy == .regular,
             let bundleID = app.bundleIdentifier,
             let rule = appRules[bundleID],
-            let arrangement = rule.launchArrangement
+            let arrangement = rule.launchArrangement,
+            app.activationPolicy == .regular
         else { return }
         // `neverTile` is the stronger statement of the two, and a rule holding both is contradictory
         // rather than impossible — an imported or hand-edited config can say it. Refusing to tile is

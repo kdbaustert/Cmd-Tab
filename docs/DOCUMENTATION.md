@@ -90,8 +90,10 @@ however many hundred times you have answered that question the same way. The bin
 answer. It sits **on top of** the ranking rather than replacing it: something running still
 outranks something launchable whatever is learned, within the learned app the best-scoring window
 still wins, and a query that has learned nothing behaves exactly as before. One binding per query,
-capped at the 64 most recently confirmed; a wrong one is corrected by committing that query to the
-right app once, since the newer commit replaces the older binding. **Learn search shortcuts**
+capped at the 64 most recently added or changed (confirming an existing binding writes nothing, so
+the synced settings file is not rewritten on every switch); a wrong one is corrected by committing
+that query to the right app once, since the newer commit replaces the older binding. **Learn search
+shortcuts**
 (Settings → Search, on by default) turns the learning off — stored bindings then stop applying but
 are kept — and **Forget search shortcuts** clears the slate.
 
@@ -1112,6 +1114,8 @@ hand-typed `open cmdtab://…` required. Each step calls the very function the U
 (`IntentActions.perform` is pointed at `SwitcherController.perform` at launch), so a step, a URL
 and a chord cannot drift apart in what they do — and both deliberate boundaries hold: nothing that
 ends a process or closes a window is offered, and the Desktop moves still obey their own switch.
+A step that cannot run — Desktop moves switched off, the app not ready, a blank bundle identifier —
+fails with a message instead of reporting success.
 
 Two build facts are worth knowing, because `swift build` alone produces neither. The system only
 sees intents through `Contents/Resources/Metadata.appintents`, which Xcode builds emit and SwiftPM
