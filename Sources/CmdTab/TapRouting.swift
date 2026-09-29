@@ -54,7 +54,7 @@ enum TapRouting {
     struct Bindings {
         var openerMatches: (Int, CGEventFlags) -> Bool
         var sameAppMatches: (Int, CGEventFlags) -> Bool
-        var scopedMatch: (Int, CGEventFlags) -> (scope: SwitcherScope, held: CGEventFlags)?
+        var scopedMatch: (Int, CGEventFlags) -> ScopedTrigger?
         var activationMatch: (Int, CGEventFlags) -> String?
         var allWindowsMatch: (Int, CGEventFlags) -> AllWindowsAction?
         var tilingMatch: (Int, CGEventFlags) -> WindowArrangement?
@@ -62,7 +62,7 @@ enum TapRouting {
         init(
             openerMatches: @escaping (Int, CGEventFlags) -> Bool = { _, _ in false },
             sameAppMatches: @escaping (Int, CGEventFlags) -> Bool = { _, _ in false },
-            scopedMatch: @escaping (Int, CGEventFlags) -> (scope: SwitcherScope, held: CGEventFlags)? = { _, _ in nil },
+            scopedMatch: @escaping (Int, CGEventFlags) -> ScopedTrigger? = { _, _ in nil },
             activationMatch: @escaping (Int, CGEventFlags) -> String? = { _, _ in nil },
             allWindowsMatch: @escaping (Int, CGEventFlags) -> AllWindowsAction? = { _, _ in nil },
             tilingMatch: @escaping (Int, CGEventFlags) -> WindowArrangement? = { _, _ in nil }
@@ -88,7 +88,10 @@ enum TapRouting {
         case consume
         case open(backwards: Bool)
         case openSameApp(backwards: Bool)
-        case openScoped(scope: SwitcherScope, held: CGEventFlags, backwards: Bool)
+        /// The whole trigger rather than its scope and modifiers picked off: the session it opens
+        /// reads its per-trigger presets too, and a second field per preset here is exactly the
+        /// drift `swallows` was moved onto the case to prevent.
+        case openScoped(trigger: ScopedTrigger, backwards: Bool)
         case activate(bundleID: String)
         case allWindows(AllWindowsAction)
         case tile(WindowArrangement)
@@ -134,8 +137,8 @@ enum TapRouting {
         // Scoped triggers are inert whenever we are frontmost, unlike the two built-ins: they are
         // recorded in the settings window, so matching one here would swallow it before its own
         // recorder could see it.
-        if !isAppActive, let match = bindings.scopedMatch(event.keyCode, event.flags) {
-            return .openScoped(scope: match.scope, held: match.held, backwards: event.backwards)
+        if !isAppActive, let trigger = bindings.scopedMatch(event.keyCode, event.flags) {
+            return .openScoped(trigger: trigger, backwards: event.backwards)
         }
 
         guard !isAppActive else {

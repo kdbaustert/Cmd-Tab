@@ -562,16 +562,22 @@ final class TargetProvider {
     /// Deliberately not cached like `snapshot()`. The cache exists so the trigger can draw the panel
     /// without waiting; this trigger is rarer, and keeping a second list warm would mean running the
     /// per-window Accessibility walk on every refresh for a feature most sessions never use.
-    func frontAppWindowTargets(then handler: @escaping @Sendable ([SwitchTarget]) -> Void) {
-        // Hops off the caller's turn before touching anything. The only caller is the same-app
-        // hotkey, which is handled inside the CGEventTap callback, and the prelude below is not
+    /// `sortOrder` overrides the store-fed value for this one fetch — a scoped trigger's preset.
+    /// A parameter rather than a temporary write to the stored property, so the global list's
+    /// next rebuild never sees a session's borrowed value.
+    func frontAppWindowTargets(
+        sortOrder: SortOrder? = nil, then handler: @escaping @Sendable ([SwitchTarget]) -> Void
+    ) {
+        // Hops off the caller's turn before touching anything. The callers are the same-app
+        // hotkey and the front-app scoped trigger, both handled inside the CGEventTap callback,
+        // and the prelude below is not
         // cheap: `switchableApps()` enumerates every running application and faults in each one's
         // icon. Run inline that is the same overrun hazard `showWith` moves `provider.refresh` off
         // the callback to avoid — and an overrun costs the user every keystroke on the machine.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return handler([]) }
-                self.collectFrontAppWindowTargets(then: handler)
+                self.collectFrontAppWindowTargets(sortOrder: sortOrder, then: handler)
             }
         }
     }
@@ -581,15 +587,21 @@ final class TargetProvider {
     /// Uncached for the same reason `frontAppWindowTargets` is: this is the per-window Accessibility
     /// walk, and keeping a second list warm would mean paying it on every refresh for a feature most
     /// sessions never use. Hops off the caller's turn first — the caller is the event-tap callback.
-    func allWindowTargets(then handler: @escaping @Sendable ([SwitchTarget]) -> Void) {
+    /// `sortOrder` and `groupWindowsByApp` override the store-fed values for this one fetch — a
+    /// scoped trigger's presets. Parameters rather than temporary writes to the stored
+    /// properties, so the global list's next rebuild never sees a session's borrowed values.
+    func allWindowTargets(
+        sortOrder sortOverride: SortOrder? = nil, groupWindowsByApp groupOverride: Bool? = nil,
+        then handler: @escaping @Sendable ([SwitchTarget]) -> Void
+    ) {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return handler([]) }
                 let apps = self.switchableApps()
-                let sortOrder = self.sortOrder
+                let sortOrder = sortOverride ?? self.sortOrder
                 let order = self.mru.entries
                 let windowMRU = self.windowMRU.entries
-                let grouped = self.groupWindowsByApp
+                let grouped = groupOverride ?? self.groupWindowsByApp
                 // Guarded on the screen count like the other two builders: `displayIndex` is only
                 // meant to be set with more than one display, and that nil is what suppresses the
                 // badge. Unguarded, one display returned a one-element array and every window
@@ -665,12 +677,15 @@ final class TargetProvider {
         }
     }
 
-    private func collectFrontAppWindowTargets(then handler: @escaping @Sendable ([SwitchTarget]) -> Void) {
+    private func collectFrontAppWindowTargets(
+        sortOrder sortOverride: SortOrder?,
+        then handler: @escaping @Sendable ([SwitchTarget]) -> Void
+    ) {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
             let app = switchableApps().first(where: { $0.pid == pid })
         else { return handler([]) }
 
-        let sortOrder = self.sortOrder
+        let sortOrder = sortOverride ?? self.sortOrder
         let windowMRU = self.windowMRU.entries
         let screenFrames = NSScreen.screens.count > 1 ? Self.screenCGFrames() : []
         let titleCache = self.titleCache

@@ -74,6 +74,22 @@ struct ShortcutEntry: Identifiable {
             }
         }
 
+        /// `location` as a section jump — the anchor the Overview's collision popover navigates
+        /// to, through the same scroll-and-outline machinery a search hit uses. Nil for what
+        /// macOS owns: its bindings are edited in System Settings, which no anchor reaches.
+        var anchor: String? {
+            switch self {
+            case .systemOwned: return nil
+            case .switcherTrigger, .appWindowCycle: return SettingsAnchor.trigger
+            case .scopedTrigger: return SettingsAnchor.scoped
+            case .inSwitcherAction: return SettingsAnchor.windowActions
+            case .directActivation: return SettingsAnchor.directActivation
+            case .allWindows: return SettingsAnchor.allWindows
+            case .tiling: return SettingsAnchor.tiling
+            case .mouseGesture: return SettingsAnchor.mouseDrag
+            }
+        }
+
         /// Whether these are matched globally. In-switcher actions are not — they only exist while
         /// the panel is up.
         ///

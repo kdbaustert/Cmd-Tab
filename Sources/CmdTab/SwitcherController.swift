@@ -449,8 +449,64 @@ final class SwitcherController {
         // Last, and a plain assignment so its `didSet` re-syncs the system ⌘-Tab when it changed.
         hotkey = settings.hotkey
 
+        // Remembered whole, so a scoped session's presets know what to put back — see
+        // `beginSessionOverrides`.
+        appliedSettings = settings
+
         if needsRefresh { provider.refresh() }
         if needsLayout, isVisible { panels.layout() }
+    }
+
+    /// The last block `apply` was handed: the global settings a scoped session's presets borrow
+    /// the panel from, and the values `hide()` restores.
+    private var appliedSettings = SwitcherSettings()
+
+    /// Whether the live panel state currently differs from `appliedSettings` because a scoped
+    /// trigger's presets were applied — the flag `hide()` keys the restore on.
+    private var sessionOverridesActive = false
+
+    /// Points the panel at a trigger's presets for the length of one session.
+    ///
+    /// Applied here, before the fetch, so the panel's first layout is already in the trigger's
+    /// shape — `showWith` defers `panels.show()` to the next turn, so nothing has drawn yet. Only
+    /// the panel-side values are touched: the list-side presets (sort order, grouping) ride the
+    /// fetch call instead, because setting them on `TargetProvider` would put the *global* cache
+    /// through a rebuild coming and going. `hide()` puts these back from `appliedSettings`.
+    ///
+    /// A settings change landing mid-session still writes the globals straight through `apply` —
+    /// the stores win, the session's borrow ends a moment early, and `hide()`'s guarded restore
+    /// then matches every value it checks.
+    private func beginSessionOverrides(_ overrides: ScopedTrigger.Overrides) {
+        var touched = false
+        if let layout = overrides.layout, model.layout != layout {
+            model.layout = layout
+            touched = true
+        }
+        if let position = overrides.panelPosition, panels.positionMode != position {
+            panels.positionMode = position
+            touched = true
+        }
+        if let thumbnails = overrides.windowThumbnailTiles,
+            self.thumbnails.isEnabled != thumbnails {
+            self.thumbnails.isEnabled = thumbnails
+            touched = true
+        }
+        sessionOverridesActive = touched
+    }
+
+    /// The restore half of `beginSessionOverrides`. Guarded per value: a preset equal to the
+    /// global it replaced was never applied, and one `apply` already overwrote costs nothing to
+    /// re-assign.
+    private func endSessionOverrides() {
+        guard sessionOverridesActive else { return }
+        sessionOverridesActive = false
+        if model.layout != appliedSettings.layout { model.layout = appliedSettings.layout }
+        if panels.positionMode != appliedSettings.panelPosition {
+            panels.positionMode = appliedSettings.panelPosition
+        }
+        if thumbnails.isEnabled != appliedSettings.windowThumbnailTiles {
+            thumbnails.isEnabled = appliedSettings.windowThumbnailTiles
+        }
     }
 
     /// A tap that opens the switcher waits this long before drawing; released sooner, it switches
@@ -912,8 +968,8 @@ final class SwitcherController {
             return open(backwards: backwards)
         case .openSameApp(let backwards):
             return openSameApp(backwards: backwards)
-        case .openScoped(let scope, let held, let backwards):
-            return openScoped(scope, code: code, held: held, backwards: backwards)
+        case .openScoped(let trigger, let backwards):
+            return openScoped(trigger, code: code, backwards: backwards)
         case .activate(let bundleID):
             GlobalActions.activate(bundleID: bundleID)
         case .allWindows(let action):
@@ -954,7 +1010,7 @@ final class SwitcherController {
                     && self.modifiersMatch(flags, sameApp.heldModifiers)
             },
             scopedMatch: { [unowned self] code, flags in
-                self.scopedTriggers.scope(code: code, flags: flags)
+                self.scopedTriggers.trigger(code: code, flags: flags)
             },
             activationMatch: { [unowned self] code, flags in
                 self.activations.bundleID(code: code, flags: flags)
@@ -1670,19 +1726,26 @@ final class SwitcherController {
     /// touches one app instead of every running one, which is the difference between a few
     /// Accessibility round-trips and a few hundred.
     private func openScoped(
-        _ scope: SwitcherScope, code: Int, held: CGEventFlags, backwards: Bool
+        _ trigger: ScopedTrigger, code: Int, backwards: Bool
     ) -> Bool {
         guard AsyncSession.canOpen(pendingSameApp: pendingSameApp, isVisible: isVisible, armed: armed)
         else { return true }
+        let scope = trigger.scope
         let token = beginSession()
-        activeHeld = held
+        activeHeld = trigger.hotkey.heldModifiers
         activeKeyCode = code
-        // Not inherited from the main trigger's setting: this chord is not the one the user asked to
-        // stay open, the same reasoning `openSameApp` uses.
-        isSticky = false
+        // Never inherited from the main trigger's setting — this chord is not the one the user
+        // asked to stay open, the same reasoning `openSameApp` uses — but the trigger's own
+        // preset may opt in. Set before the fetch: a release arriving mid-fetch consults
+        // `staysOpenOnRelease`, and `watchdogTick`'s first guard is what keeps the poll harmless
+        // for the sticky case.
+        isSticky = trigger.overrides.staysOpen
+        beginSessionOverrides(trigger.overrides)
         pendingSameApp = true
         pendingSameAppReleased = false
-        startWatchdog()
+        // A sticky session has no release to poll for; `showWith`'s sticky branch is written to
+        // stop a stray one, but not starting it is the invariant `open` already keeps.
+        if !isSticky { startWatchdog() }
 
         let deadline = DispatchWorkItem { [weak self] in
             guard let self, self.pendingSameApp, token == self.sessionToken else { return }
@@ -1737,11 +1800,16 @@ final class SwitcherController {
         }
 
         if scope == .frontApp {
-            provider.frontAppWindowTargets(then: receive)
+            provider.frontAppWindowTargets(sortOrder: trigger.overrides.sortOrder, then: receive)
         } else if scope == .tabs {
+            // No order or grouping to override: tabs come back in the enumeration's own order,
+            // active tab first per app — see `tabTargets`.
             provider.tabTargets(then: receive)
         } else {
-            provider.allWindowTargets(then: receive)
+            provider.allWindowTargets(
+                sortOrder: trigger.overrides.sortOrder,
+                groupWindowsByApp: trigger.overrides.groupWindowsByApp,
+                then: receive)
         }
         return true
     }
@@ -1874,6 +1942,11 @@ final class SwitcherController {
         pendingSameAppReleased = false
         sameAppDeadline?.cancel()
         sameAppDeadline = nil
+        // Here rather than only in `hide()`: a scoped fetch that abandons, times out, or
+        // quick-switches without ever drawing never reaches `hide()`, and every one of those
+        // paths — like every path that opens the next session — comes through here before the
+        // panel next shows. `openScoped` re-applies its own presets *after* this call.
+        endSessionOverrides()
         return sessionToken
     }
 

@@ -63,11 +63,72 @@ struct ScopedTrigger: Equatable, Identifiable {
     let id: String
     var hotkey: Hotkey
     var scope: SwitcherScope
+    var overrides = Overrides()
 
     /// `keyCode == -1` marks a trigger that has been added but not yet bound. 0 is a real key (A),
     /// so there is no in-band sentinel available. `Hotkey.isUsableGlobally` folds this in with the
     /// modifier requirement, which is what the matcher checks.
     var isBound: Bool { hotkey.keyCode >= 0 }
+
+    /// How this trigger's sessions differ from the main switcher, field by field. `nil` inherits
+    /// the global setting at the moment the session opens — the scoped-trigger idea ("a chord plus
+    /// a scope, not a setting per idea") extended to presentation: one chord can be the icon grid
+    /// while another is a dense list of this Desktop's windows.
+    ///
+    /// Resolved once when the session opens and put back when it ends, never read live by the
+    /// panel: the stores stay the single source of the *global* settings, and a scoped session
+    /// only borrows the panel from them. See `SwitcherController.beginSessionOverrides`.
+    struct Overrides: Equatable {
+        var layout: SwitcherLayout?
+        var panelPosition: PanelPosition?
+        var sortOrder: SortOrder?
+        var groupWindowsByApp: Bool?
+        var windowThumbnailTiles: Bool?
+        /// A plain Bool where everything else inherits: a scoped chord is never sticky unless
+        /// *this trigger* asks. The global Stay open belongs to the chord the user set it for —
+        /// the reasoning `openScoped` has always carried — so there is no "Default" to inherit.
+        var staysOpen = false
+
+        var isDefault: Bool { self == Overrides() }
+
+        private enum Key {
+            static let layout = "layout"
+            static let position = "position"
+            static let sortOrder = "sortOrder"
+            static let groupByApp = "groupByApp"
+            static let thumbnails = "thumbnails"
+            static let staysOpen = "staysOpen"
+        }
+
+        init() {}
+
+        /// Value-tolerant the way the row parser is row-tolerant: one malformed or unknown value
+        /// (a hand-edited config, an enum case from a newer build) costs that value alone and
+        /// falls back to inheriting, never the trigger.
+        init(stored: [String: Any]?) {
+            guard let stored else { return }
+            layout = (stored[Key.layout] as? String).flatMap(SwitcherLayout.init(rawValue:))
+            panelPosition = (stored[Key.position] as? String).flatMap(PanelPosition.init(rawValue:))
+            sortOrder = (stored[Key.sortOrder] as? String).flatMap(SortOrder.init(rawValue:))
+            groupWindowsByApp = stored[Key.groupByApp] as? Bool
+            windowThumbnailTiles = stored[Key.thumbnails] as? Bool
+            staysOpen = stored[Key.staysOpen] as? Bool ?? false
+        }
+
+        /// Only the fields that differ from "inherit everything" are written, so an untouched
+        /// trigger round-trips to an empty dictionary — which `persist()` then leaves off the row
+        /// entirely, keeping the stored shape one an older build still reads.
+        var stored: [String: Any] {
+            var dict: [String: Any] = [:]
+            if let layout { dict[Key.layout] = layout.rawValue }
+            if let panelPosition { dict[Key.position] = panelPosition.rawValue }
+            if let sortOrder { dict[Key.sortOrder] = sortOrder.rawValue }
+            if let groupWindowsByApp { dict[Key.groupByApp] = groupWindowsByApp }
+            if let windowThumbnailTiles { dict[Key.thumbnails] = windowThumbnailTiles }
+            if staysOpen { dict[Key.staysOpen] = true }
+            return dict
+        }
+    }
 }
 
 /// The scoped triggers, matched against a keypress by the controller.
@@ -76,12 +137,15 @@ struct ScopedTriggers: Equatable {
 
     init() {}
 
-    /// Rebuilds the triggers from the stored ordered array of `[id, keyCode, modifierRaw, scope]`,
-    /// row by row: one malformed row (hand-edited config, an unknown scope from a newer build) costs
-    /// that row alone, where casting the array as a unit would drop every trigger.
+    /// Rebuilds the triggers from the stored ordered array of `[id, keyCode, modifierRaw, scope]`
+    /// or `[id, keyCode, modifierRaw, scope, overrides]`, row by row: one malformed row
+    /// (hand-edited config, an unknown scope from a newer build) costs that row alone, where
+    /// casting the array as a unit would drop every trigger. The overrides element is optional —
+    /// a trigger with none is written without it, so its row keeps the four-element shape older
+    /// builds require exactly (`row.count == 4` there, so a fifth element drops the whole row).
     init(stored: [Any]?) {
         for element in stored ?? [] {
-            guard let row = element as? [Any], row.count == 4, let id = row[0] as? String,
+            guard let row = element as? [Any], row.count >= 4, let id = row[0] as? String,
                 let keyCode = row[1] as? Int, let mods = row[2] as? Int,
                 let scopeRaw = row[3] as? String, let scope = SwitcherScope(rawValue: scopeRaw)
             else { continue }
@@ -89,19 +153,19 @@ struct ScopedTriggers: Equatable {
                 ScopedTrigger(
                     id: id,
                     hotkey: Hotkey(keyCode: keyCode, modifierRaw: UInt64(bitPattern: Int64(mods))),
-                    scope: scope))
+                    scope: scope,
+                    overrides: ScopedTrigger.Overrides(
+                        stored: row.count >= 5 ? row[4] as? [String: Any] : nil)))
         }
     }
 
-    /// The scope a keypress opens, if any. Unbound entries never match.
-    func scope(code: Int, flags: CGEventFlags) -> (scope: SwitcherScope, held: CGEventFlags)? {
-        guard
-            let match = triggers.first(where: {
-                $0.hotkey.isUsableGlobally && $0.hotkey.keyCode == code
-                    && TriggerModifiers.opens(flags, held: $0.hotkey.heldModifiers)
-            })
-        else { return nil }
-        return (match.scope, match.hotkey.heldModifiers)
+    /// The trigger a keypress opens, if any — the whole trigger, because the session it starts
+    /// needs its overrides along with its scope. Unbound entries never match.
+    func trigger(code: Int, flags: CGEventFlags) -> ScopedTrigger? {
+        triggers.first(where: {
+            $0.hotkey.isUsableGlobally && $0.hotkey.keyCode == code
+                && TriggerModifiers.opens(flags, held: $0.hotkey.heldModifiers)
+        })
     }
 }
 
@@ -152,6 +216,14 @@ final class ScopedTriggersStore: ObservableObject {
             return nil
         }
         return trigger.hotkey
+    }
+
+    func setOverrides(_ overrides: ScopedTrigger.Overrides, for id: String) {
+        guard let index = scoped.triggers.firstIndex(where: { $0.id == id }),
+            scoped.triggers[index].overrides != overrides
+        else { return }
+        scoped.triggers[index].overrides = overrides
+        persist()
     }
 
     // MARK: Recording
@@ -214,9 +286,16 @@ final class ScopedTriggersStore: ObservableObject {
 
     private func persist() {
         UserDefaults.standard.set(
-            scoped.triggers.map {
-                [$0.id, $0.hotkey.keyCode, Int(bitPattern: UInt($0.hotkey.modifierRaw)),
-                 $0.scope.rawValue] as [Any]
+            scoped.triggers.map { trigger -> [Any] in
+                var row: [Any] = [
+                    trigger.id, trigger.hotkey.keyCode,
+                    Int(bitPattern: UInt(trigger.hotkey.modifierRaw)), trigger.scope.rawValue,
+                ]
+                // Appended only when set — see `ScopedTriggers.init(stored:)` for why the
+                // four-element shape is kept where it can be.
+                let overrides = trigger.overrides.stored
+                if !overrides.isEmpty { row.append(overrides) }
+                return row
             }, forKey: Key.triggers)
         onChange?(scoped)
     }
@@ -304,6 +383,104 @@ struct ScopedShortcutRecorder: View {
             alert.addButton(withTitle: "OK")
             alert.runModal()
             return false
+        }
+    }
+}
+
+// MARK: - Presets
+
+/// The per-trigger presets popover: how this chord's sessions look and behave where they differ
+/// from the main switcher. Every "Default" names the global value it would inherit, so the menu
+/// answers "what happens if I leave this alone" without a trip to the other panes.
+struct ScopedTriggerOptions: View {
+    let trigger: ScopedTrigger
+    @ObservedObject var store: ScopedTriggersStore
+    @ObservedObject var behavior: BehaviorStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            optionPicker("Layout", \.layout, cases: SwitcherLayout.allCases,
+                         titles: { $0.title }, inherited: behavior.layout.title)
+            optionPicker("Position", \.panelPosition, cases: PanelPosition.allCases,
+                         titles: { $0.title }, inherited: behavior.panelPosition.title)
+            optionPicker("Sort order", \.sortOrder, cases: SortOrder.allCases,
+                         titles: { $0.title }, inherited: behavior.sortOrder.title)
+            togglePicker("Group by app", \.groupWindowsByApp,
+                         inherited: behavior.groupWindowsByApp)
+            togglePicker("Thumbnails", \.windowThumbnailTiles,
+                         inherited: behavior.windowThumbnailTiles)
+            Divider()
+            Toggle(isOn: binding(\.staysOpen)) { SettingsChrome.text("Stay open") }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            SettingsChrome.text(
+                "Keeps the panel up after the keys are released, whatever the main "
+                    + "switcher's Stay open says."
+            )
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(width: 240)
+    }
+
+    private func binding<V>(
+        _ keyPath: WritableKeyPath<ScopedTrigger.Overrides, V>
+    ) -> Binding<V> {
+        Binding(
+            get: {
+                // Through the store, not the captured `trigger`: the popover outlives edits made
+                // from inside itself, and a stale copy would revert every earlier change on the
+                // next write.
+                (store.scoped.triggers.first { $0.id == trigger.id } ?? trigger)
+                    .overrides[keyPath: keyPath]
+            },
+            set: { value in
+                var overrides =
+                    (store.scoped.triggers.first { $0.id == trigger.id } ?? trigger).overrides
+                overrides[keyPath: keyPath] = value
+                store.setOverrides(overrides, for: trigger.id)
+            })
+    }
+
+    private func optionPicker<V: Hashable>(
+        _ title: String, _ keyPath: WritableKeyPath<ScopedTrigger.Overrides, V?>,
+        cases: [V], titles: @escaping (V) -> String, inherited: String
+    ) -> some View {
+        labeled(title) {
+            Picker("", selection: binding(keyPath)) {
+                Text("Default (\(inherited))").tag(V?.none)
+                Divider()
+                ForEach(cases, id: \.self) { value in
+                    Text(titles(value)).tag(Optional(value))
+                }
+            }
+            .labelsHidden()
+        }
+    }
+
+    private func togglePicker(
+        _ title: String, _ keyPath: WritableKeyPath<ScopedTrigger.Overrides, Bool?>,
+        inherited: Bool
+    ) -> some View {
+        labeled(title) {
+            Picker("", selection: binding(keyPath)) {
+                Text("Default (\(inherited ? String(localized: "On") : String(localized: "Off")))")
+                    .tag(Bool?.none)
+                Divider()
+                Text("On").tag(Optional(true))
+                Text("Off").tag(Optional(false))
+            }
+            .labelsHidden()
+        }
+    }
+
+    private func labeled(_ title: String, @ViewBuilder control: () -> some View) -> some View {
+        HStack {
+            SettingsChrome.text(title).font(.system(size: 12))
+            Spacer()
+            control().frame(width: 140)
         }
     }
 }

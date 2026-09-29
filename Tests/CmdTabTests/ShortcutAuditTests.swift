@@ -134,6 +134,30 @@ final class ShortcutAuditTests: XCTestCase {
 
     // MARK: - The rest of the contract
 
+    /// Every binding family the app owns must jump somewhere real. The collision popover
+    /// navigates through `consumePendingAnchor`, whose lookup guard means an anchor missing from
+    /// `SettingsIndex` fails *silently* — the click just does nothing — so the wiring is asserted
+    /// here instead of discovered by clicking. macOS-owned bindings are the one deliberate nil:
+    /// they are edited in System Settings, which no anchor reaches.
+    @MainActor
+    func testEveryAppOwnedKindAnchorsToAnIndexedSection() {
+        let indexed = Set(SettingsIndex.items.map(\.anchor))
+        for kind in ShortcutEntry.Kind.allCases {
+            guard kind != .systemOwned else {
+                XCTAssertNil(kind.anchor)
+                continue
+            }
+            guard let anchor = kind.anchor else {
+                XCTFail("\(kind) has no anchor, so its collision rows cannot jump")
+                continue
+            }
+            XCTAssertTrue(
+                indexed.contains(anchor),
+                "\(kind) anchors to \(anchor), which SettingsIndex does not list — the jump "
+                    + "would silently do nothing")
+        }
+    }
+
     /// The two namespaces never meet: an action is matched with the trigger held, in a state where
     /// no global binding is consulted at all.
     func testAGlobalChordAndAnActionChordAreNotInCompetition() {

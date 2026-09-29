@@ -1718,23 +1718,6 @@
         }
       }
     },
-    "Each opens the switcher on part of the window list instead of all of it. Held and released like the main trigger, and never sticky — a scoped cycle is a quick jump, not a panel to browse.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Each opens the switcher on part of the window list instead of all of it. Held and released like the main trigger, and never sticky — a scoped cycle is a quick jump, not a panel to browse."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chacun ouvre le sélecteur sur une partie de la liste des fenêtres plutôt que sur sa totalité. Maintenus et relâchés comme le déclencheur principal, et jamais persistants — un cycle ciblé est un saut rapide, pas un panneau à parcourir."
-          }
-        }
-      }
-    },
     "Edit": {
       "extractionState": "manual",
       "localizations": {
@@ -8106,6 +8089,227 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tant que le modificateur est maintenu, le glissement appartient à Cmd-Tab et l'application en dessous ne le voit jamais — un déplacement au-dessus d'un document ne sélectionne donc pas de texte au passage. Indépendant de l'interrupteur de pavage et de l'aimantation par glissement."
+          }
+        }
+      }
+    },
+    "Each opens the switcher on part of the window list instead of all of it, held and released like the main trigger. The sliders button gives a shortcut its own presets — layout, position, order, thumbnails, or a panel that stays open — where it should differ from the main switcher.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Each opens the switcher on part of the window list instead of all of it, held and released like the main trigger. The sliders button gives a shortcut its own presets — layout, position, order, thumbnails, or a panel that stays open — where it should differ from the main switcher."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chacun ouvre le sélecteur sur une partie de la liste des fenêtres plutôt que sur sa totalité, maintenu et relâché comme le déclencheur principal. Le bouton à curseurs donne à un raccourci ses propres préréglages — disposition, position, ordre, miniatures, ou un panneau qui reste ouvert — là où il doit différer du sélecteur principal."
+          }
+        }
+      }
+    },
+    "Presets for this shortcut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Presets for this shortcut"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Préréglages de ce raccourci"
+          }
+        }
+      }
+    },
+    "Sort order": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sort order"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordre de tri"
+          }
+        }
+      }
+    },
+    "Group by app": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Group by app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grouper par application"
+          }
+        }
+      }
+    },
+    "Thumbnails": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thumbnails"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Miniatures"
+          }
+        }
+      }
+    },
+    "On": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activé"
+          }
+        }
+      }
+    },
+    "Off": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactivé"
+          }
+        }
+      }
+    },
+    "Default (%@)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default (%@)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Par défaut (%@)"
+          }
+        }
+      }
+    },
+    "Keeps the panel up after the keys are released, whatever the main switcher's Stay open says.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keeps the panel up after the keys are released, whatever the main switcher's Stay open says."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Garde le panneau ouvert après le relâchement des touches, quel que soit le réglage Rester ouvert du sélecteur principal."
+          }
+        }
+      }
+    },
+    "Show what claims this combination": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show what claims this combination"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher ce qui revendique cette combinaison"
+          }
+        }
+      }
+    },
+    "Click a binding to go to where it is set.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click a binding to go to where it is set."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquez sur un raccourci pour aller là où il est défini."
+          }
+        }
+      }
+    },
+    "Fires": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fires"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se déclenche"
+          }
+        }
+      }
+    },
+    "Never fires": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never fires"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ne se déclenche jamais"
           }
         }
       }

@@ -27,7 +27,13 @@ final class TapRoutingTests: XCTestCase {
         TapRouting.Bindings(
             openerMatches: { c, _ in c == code },
             sameAppMatches: { c, _ in c == code },
-            scopedMatch: { c, f in c == code ? (scope: .allWindows, held: f) : nil },
+            scopedMatch: { c, f in
+                c == code
+                    ? ScopedTrigger(
+                        id: "t", hotkey: Hotkey(keyCode: c, modifierRaw: f.rawValue),
+                        scope: .allWindows)
+                    : nil
+            },
             activationMatch: { c, _ in c == code ? "com.example.App" : nil },
             allWindowsMatch: { c, _ in c == code ? .hide : nil },
             tilingMatch: { c, _ in c == code ? .leftHalf : nil })
@@ -57,7 +63,11 @@ final class TapRoutingTests: XCTestCase {
         bindings.sameAppMatches = { _, _ in false }
         XCTAssertEqual(
             TapRouting.idle(down(tab, cmd), bindings: bindings, isAppActive: false),
-            .openScoped(scope: .allWindows, held: cmd, backwards: false))
+            .openScoped(
+                trigger: ScopedTrigger(
+                    id: "t", hotkey: Hotkey(keyCode: tab, modifierRaw: cmd.rawValue),
+                    scope: .allWindows),
+                backwards: false))
     }
 
     func testDirectActivationBeatsHideAllWhichBeatsTiling() {
@@ -197,7 +207,11 @@ final class TapRoutingTests: XCTestCase {
     func testOnlyClaimedKeystrokesAreSwallowed() {
         let claimed: [TapRouting.Decision] = [
             .consume, .open(backwards: false), .openSameApp(backwards: true),
-            .openScoped(scope: .minimized, held: cmd, backwards: false),
+            .openScoped(
+                trigger: ScopedTrigger(
+                    id: "t", hotkey: Hotkey(keyCode: 46, modifierRaw: cmd.rawValue),
+                    scope: .minimized),
+                backwards: false),
             .activate(bundleID: "x"), .allWindows(.show), .tile(.maximize),
         ]
         for decision in claimed {

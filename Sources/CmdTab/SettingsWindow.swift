@@ -620,7 +620,10 @@ struct SettingsRootView: View {
         case .general:
             GeneralSettings(loginItem: .shared, behavior: .shared)
         case .shortcuts:
-            ShortcutSettings(behavior: .shared)
+            // The same jump a search hit takes: `consumePendingAnchor` switches the tab, scrolls
+            // and outlines. Through `pendingAnchor` rather than `jump` directly so the anchor's
+            // tab is looked up in one place.
+            ShortcutSettings(behavior: .shared, jump: { navigator.pendingAnchor = $0 })
         case .behavior:
             BehaviorSettings(behavior: .shared)
         case .search:
@@ -824,8 +827,17 @@ struct GeneralSettings: View {
 
 struct ShortcutSettings: View {
     @ObservedObject var behavior: BehaviorStore
+    /// Jumps to a section anchor anywhere in Settings — the collision popover's way of taking
+    /// the user to the binding that needs fixing. Defaulted to inert so previews and tests can
+    /// build the pane without a navigator.
+    var jump: (String) -> Void = { _ in }
     @ObservedObject private var scoped = ScopedTriggersStore.shared
     @ObservedObject private var actions = SwitcherShortcutsStore.shared
+    /// Which trigger's presets popover is open, by trigger id — one for the whole list, so
+    /// opening a second row's presets closes the first.
+    @State private var optionsFor: String?
+    /// Which collision's issue popover is open, by collision id — same shape as `optionsFor`.
+    @State private var issueFor: String?
 
     /// The keys the panel handles itself, listed in the order someone meets them.
     private static let panelKeys: [(title: String, keys: String)] = [
@@ -880,8 +892,25 @@ struct ShortcutSettings: View {
                         title: collision.display,
                         subtitle: description(of: collision)
                     ) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(Color.orange)
+                        Button {
+                            issueFor = issueFor == collision.id ? nil : collision.id
+                        } label: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Color.orange)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Show what claims this combination")
+                        .popover(
+                            isPresented: Binding(
+                                get: { issueFor == collision.id },
+                                set: { issueFor = $0 ? collision.id : nil }),
+                            arrowEdge: .bottom
+                        ) {
+                            CollisionIssueView(collision: collision) { anchor in
+                                issueFor = nil
+                                jump(anchor)
+                            }
+                        }
                     }
                 }
             }
@@ -980,9 +1009,10 @@ struct ShortcutSettings: View {
 
             SettingsSection(
                 title: "Scoped shortcuts", anchor: SettingsAnchor.scoped,
-                footer: "Each opens the switcher on part of the window list instead of all of it. "
-                    + "Held and released like the main trigger, and never sticky — a scoped cycle "
-                    + "is a quick jump, not a panel to browse."
+                footer: "Each opens the switcher on part of the window list instead of all of it, "
+                    + "held and released like the main trigger. The sliders button gives a "
+                    + "shortcut its own presets — layout, position, order, thumbnails, or a panel "
+                    + "that stays open — where it should differ from the main switcher."
             ) {
                 if scoped.scoped.triggers.isEmpty {
                     SettingsWideRow {
@@ -999,10 +1029,34 @@ struct ShortcutSettings: View {
                         SettingsRow(
                             title: trigger.scope.title,
                             subtitle: scopedSubtitle(for: trigger),
-                            controlWidth: 210
+                            controlWidth: 236
                         ) {
                             HStack(spacing: 6) {
                                 ScopedShortcutRecorder(trigger: trigger, store: scoped)
+                                Button {
+                                    optionsFor = optionsFor == trigger.id ? nil : trigger.id
+                                } label: {
+                                    Image(systemName: "slider.horizontal.3")
+                                        .font(.system(size: 11))
+                                        // Filled accent when any preset is set, so a trigger that
+                                        // will not look like the main switcher says so from the
+                                        // list.
+                                        .foregroundStyle(
+                                            trigger.overrides.isDefault
+                                                ? AnyShapeStyle(.secondary)
+                                                : AnyShapeStyle(Color.accentColor))
+                                }
+                                .buttonStyle(.plain)
+                                .help("Presets for this shortcut")
+                                .popover(
+                                    isPresented: Binding(
+                                        get: { optionsFor == trigger.id },
+                                        set: { optionsFor = $0 ? trigger.id : nil }),
+                                    arrowEdge: .bottom
+                                ) {
+                                    ScopedTriggerOptions(
+                                        trigger: trigger, store: scoped, behavior: behavior)
+                                }
                                 Button {
                                     scoped.remove(id: trigger.id)
                                 } label: {
@@ -1076,6 +1130,78 @@ struct ShortcutSettings: View {
                 }
             }
         }
+    }
+}
+
+/// The Overview's answer to "so which bindings are these, and where do I fix one": every entry
+/// claiming a collided combination, the one that fires first, each clickable to jump straight to
+/// the section where it is edited — the same scroll-and-outline a search hit gets. A macOS-owned
+/// binding is listed but not clickable: it is edited in System Settings, which no anchor reaches,
+/// and its location column already says so.
+private struct CollisionIssueView: View {
+    let collision: ShortcutCollision
+    /// Called with the section anchor of the binding that was picked; the caller closes the
+    /// popover and performs the jump.
+    let jump: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(collision.entries.enumerated()), id: \.element.id) { index, entry in
+                row(entry, fires: index == 0)
+            }
+            Divider().padding(.vertical, 4)
+            SettingsChrome.text("Click a binding to go to where it is set.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(width: 320)
+    }
+
+    @ViewBuilder
+    private func row(_ entry: ShortcutEntry, fires: Bool) -> some View {
+        if let anchor = entry.kind.anchor {
+            Button {
+                jump(anchor)
+            } label: {
+                content(entry, fires: fires, jumps: true)
+            }
+            .buttonStyle(.plain)
+        } else {
+            content(entry, fires: fires, jumps: false)
+        }
+    }
+
+    private func content(_ entry: ShortcutEntry, fires: Bool, jumps: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: fires ? "checkmark.circle.fill" : "xmark.circle")
+                .font(.system(size: 11))
+                .foregroundStyle(fires ? AnyShapeStyle(Color.green) : AnyShapeStyle(.secondary))
+            VStack(alignment: .leading, spacing: 1) {
+                // The label is data — an app's name, an arrangement's — never looked up.
+                Text(verbatim: entry.label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                (Text(verbatim: "\(entry.kind.title) · \(entry.kind.location) · ")
+                    + SettingsChrome.text(fires ? "Fires" : "Never fires"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(verbatim: entry.display)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                // Hidden rather than dropped for the System Settings rows, so the chord column
+                // lines up down the popover instead of drifting right on the one row that
+                // cannot jump.
+                .opacity(jumps ? 1 : 0)
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
     }
 }
 
