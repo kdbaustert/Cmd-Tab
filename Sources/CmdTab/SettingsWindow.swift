@@ -1535,6 +1535,9 @@ final class SettingsPresenter: NSObject, NSWindowDelegate, NSMenuItemValidation 
         // Dock tile out from under a window that is still closing can leave the tile behind. The
         // release waits for the same turn, so the window is not freed partway through its close.
         DispatchQueue.main.async { [weak self] in
+            // A `show()` inside that turn reused this window rather than building one, so it is
+            // back on screen and keeps the tile and the reference.
+            guard self?.window?.isVisible != true else { return }
             NSApp.setActivationPolicy(.accessory)
             self?.window = nil
         }
