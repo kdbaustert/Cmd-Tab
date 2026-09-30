@@ -1484,7 +1484,7 @@ private struct ScreenRecordingWarning: View {
 /// full-size-content with a hidden title, which is what lets the sidebar run the full height with
 /// the traffic lights sitting over it — the shape System Settings has.
 @MainActor
-final class SettingsPresenter: NSObject, NSWindowDelegate {
+final class SettingsPresenter: NSObject, NSWindowDelegate, NSMenuItemValidation {
     private var window: NSWindow?
     /// Carries a section jump into `SettingsRootView` from outside the SwiftUI tree — the same
     /// scroll-and-outline machinery the in-window search field drives, just fed from a second
@@ -1502,7 +1502,7 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
         window.delegate = self
         // A Dock tile needs a menu bar to go with it — see `makeMainMenu`. Installed before the
         // policy change so the bar is never momentarily empty.
-        if NSApp.mainMenu == nil { NSApp.mainMenu = Self.makeMainMenu() }
+        if NSApp.mainMenu == nil { NSApp.mainMenu = Self.makeMainMenu(closingSettingsWith: self) }
         // Ordinary app for as long as the window is up: a Dock tile to click back to, an entry in
         // the system's own window management, and a menu bar. The app spends the rest of its life
         // as `.accessory` — see `windowWillClose`.
@@ -1540,6 +1540,19 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
         }
     }
 
+    /// ⌘Q — see `makeMainMenu`. Aimed at this window rather than sent down the responder chain,
+    /// which would close whatever happened to be key and make the item's title a guess.
+    @objc func closeSettings(_ sender: Any?) {
+        window?.performClose(sender)
+    }
+
+    /// Off while an alert or open panel is up. Those are raised from inside Settings and answered
+    /// back into it, so closing the window under one would free the view waiting on the answer.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(closeSettings(_:)) else { return true }
+        return window != nil && NSApp.modalWindow == nil
+    }
+
     /// The menu bar that a Dock tile implies.
     ///
     /// `NSApp.mainMenu` is nil here — an accessory app that only ever showed a panel never needed
@@ -1547,55 +1560,66 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
     /// menu: cut, copy, paste, undo and select-all are *menu* commands on macOS, so every text field
     /// in Settings would quietly stop answering ⌘C and ⌘V. The responder-based selectors below go to
     /// whichever field is first responder, which is what makes them work without any code of ours.
-    private static func makeMainMenu() -> NSMenu {
+    private static func makeMainMenu(closingSettingsWith settings: SettingsPresenter) -> NSMenu {
         let main = NSMenu()
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "Hide Cmd-Tab", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        let hideOthers = appMenu.addItem(
-            withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)),
+            withTitle: String(localized: "Hide Cmd-Tab"), action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(
+            withTitle: String(localized: "Hide Others"),
+            action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(
-            withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)),
-            keyEquivalent: "")
+            withTitle: String(localized: "Show All"),
+            action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         // ⌘Q closes Settings rather than quitting. The app's job is the switcher, which runs with
         // no window at all, so the reflex ⌘Q that dismisses a window elsewhere took ⌘-Tab down with
         // it. Quitting stays one deliberate click away, here and in the menu-bar item.
+        let closeSettings = appMenu.addItem(
+            withTitle: String(localized: "Close Settings"),
+            action: #selector(SettingsPresenter.closeSettings(_:)), keyEquivalent: "q")
+        closeSettings.target = settings
         appMenu.addItem(
-            withTitle: "Close Settings", action: #selector(NSWindow.performClose(_:)),
-            keyEquivalent: "q")
-        appMenu.addItem(
-            withTitle: "Quit Cmd-Tab", action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "")
+            withTitle: String(localized: "Quit Cmd-Tab"),
+            action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let editMenu = NSMenu(title: String(localized: "Edit"))
+        editMenu.addItem(
+            withTitle: String(localized: "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
         let redo = editMenu.addItem(
-            withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+            withTitle: String(localized: "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(
-            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+            withTitle: String(localized: "Cut"), action: #selector(NSText.cut(_:)),
+            keyEquivalent: "x")
+        editMenu.addItem(
+            withTitle: String(localized: "Copy"), action: #selector(NSText.copy(_:)),
+            keyEquivalent: "c")
+        editMenu.addItem(
+            withTitle: String(localized: "Paste"), action: #selector(NSText.paste(_:)),
+            keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: String(localized: "Select All"), action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a")
         editItem.submenu = editMenu
         main.addItem(editItem)
 
         let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "Window")
+        let windowMenu = NSMenu(title: String(localized: "Window"))
         windowMenu.addItem(
-            withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
-            keyEquivalent: "m")
+            withTitle: String(localized: "Minimize"),
+            action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(
-            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+            withTitle: String(localized: "Close"), action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "w")
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
 

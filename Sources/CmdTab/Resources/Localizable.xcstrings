@@ -1140,6 +1140,40 @@
         }
       }
     },
+    "Close": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer"
+          }
+        }
+      }
+    },
+    "Close Settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close Settings"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer les réglages"
+          }
+        }
+      }
+    },
     "Close window": {
       "extractionState": "manual",
       "localizations": {
@@ -1374,6 +1408,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Flou personnalisé"
+          }
+        }
+      }
+    },
+    "Cut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cut"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couper"
           }
         }
       }
@@ -1730,7 +1781,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modifier"
+            "value": "Édition"
           }
         }
       }
@@ -2517,6 +2568,23 @@
         }
       }
     },
+    "Hide Cmd-Tab": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide Cmd-Tab"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer Cmd-Tab"
+          }
+        }
+      }
+    },
     "Hide every app to clear the screen to the desktop.": {
       "extractionState": "manual",
       "localizations": {
@@ -2581,6 +2649,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Masquer les autres applications"
+          }
+        }
+      }
+    },
+    "Hide Others": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide Others"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer les autres"
           }
         }
       }
@@ -3448,6 +3533,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tiers central"
+          }
+        }
+      }
+    },
+    "Minimize": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimize"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Placer dans le Dock"
           }
         }
       }
@@ -4829,6 +4931,23 @@
         }
       }
     },
+    "Paste": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coller"
+          }
+        }
+      }
+    },
     "Paste into Terminal to read back what was logged.": {
       "extractionState": "manual",
       "localizations": {
@@ -5067,6 +5186,23 @@
         }
       }
     },
+    "Quit Cmd-Tab": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit Cmd-Tab"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitter Cmd-Tab"
+          }
+        }
+      }
+    },
     "Quits the highlighted app and drops it from the list.": {
       "extractionState": "manual",
       "localizations": {
@@ -5114,6 +5250,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Récupération"
+          }
+        }
+      }
+    },
+    "Redo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir"
           }
         }
       }
@@ -5781,6 +5934,23 @@
         }
       }
     },
+    "Select All": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select All"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tout sélectionner"
+          }
+        }
+      }
+    },
     "Send to a display": {
       "extractionState": "manual",
       "localizations": {
@@ -5896,6 +6066,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Raccourcis"
+          }
+        }
+      }
+    },
+    "Show All": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show All"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tout afficher"
           }
         }
       }
@@ -7341,6 +7528,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Non associés par défaut : ils agissent sur tout le système et n'ont pas de touche naturelle, la combinaison vous revient donc plutôt que de nous revenir."
+          }
+        }
+      }
+    },
+    "Undo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Undo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annuler"
           }
         }
       }
