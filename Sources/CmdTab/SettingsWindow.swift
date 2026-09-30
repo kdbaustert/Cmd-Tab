@@ -1562,9 +1562,15 @@ final class SettingsPresenter: NSObject, NSWindowDelegate {
             withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)),
             keyEquivalent: "")
         appMenu.addItem(.separator())
+        // ⌘Q closes Settings rather than quitting. The app's job is the switcher, which runs with
+        // no window at all, so the reflex ⌘Q that dismisses a window elsewhere took ⌘-Tab down with
+        // it. Quitting stays one deliberate click away, here and in the menu-bar item.
+        appMenu.addItem(
+            withTitle: "Close Settings", action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "q")
         appMenu.addItem(
             withTitle: "Quit Cmd-Tab", action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q")
+            keyEquivalent: "")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
