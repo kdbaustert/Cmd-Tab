@@ -472,8 +472,8 @@ final class DragSnap {
 /// Read at show time rather than baked in when a panel is built: the panels are made once and
 /// reused for the life of the app, so anything read at creation would be stale after a change.
 ///
-/// The ring around the cursor in the hold-and-point gesture is not here: it is fixed greys, drawn
-/// in glass where there is glass, and has no setting — see `AnchorDot`.
+/// The ring around the cursor in the hold-and-point gesture is not here: it is drawn in the
+/// system's own colours on a glass plate, and has no setting — see `AnchorDot`.
 @MainActor
 final class SnapAppearance {
     static let shared = SnapAppearance()

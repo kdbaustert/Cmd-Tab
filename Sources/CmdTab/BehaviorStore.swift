@@ -820,8 +820,8 @@ final class BehaviorStore: ObservableObject {
     ///   separate keys rather than the one this was, so the name stays retired.
     ///   `Migration.reviveSnapHighlightColor` seeds both new keys from it once, so a colour chosen
     ///   before the withdrawal is not lost.
-    /// - `windowSnapDotColorHex`: the hold-and-point ring's colour. The ring became fixed greys,
-    ///   drawn in glass, and the setting went with it.
+    /// - `windowSnapDotColorHex`: the hold-and-point ring's colour. The ring is drawn in the
+    ///   system's own accent and greys now, and the setting went with it.
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
         "alwaysShowTitles", "panelOpacity", "windowSnapHighlightColorHex", "showBadges",

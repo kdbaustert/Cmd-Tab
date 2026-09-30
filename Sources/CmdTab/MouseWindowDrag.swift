@@ -1585,44 +1585,46 @@ private final class TargetOutline {
 /// it is released.
 ///
 /// It began as Hookshot's affordance — a dot left where the chord went down, so the direction had a
-/// visible origin — and now rides with the cursor instead, as one unbroken ring. The eighth of it
-/// facing the destination is lit over a faint track — one eighth per direction the gesture can
-/// point — and while the cursor is still inside the dead zone, where releasing takes the whole
-/// screen, the whole ring is lit. So the ring says where the window will go, next to the pointer,
-/// without the eye having to leave it for the landing block.
+/// visible origin — and now rides with the cursor instead, drawn the way the system draws its own
+/// floating indicators: a round plate of material (glass on macOS 26 and later, the HUD blur before
+/// it) with a soft shadow, and on it a progress-style ring — a track in the system's adaptive grey
+/// and an arc in the accent colour, the same weight, rounded at both ends. The arc is centred on
+/// the direction the window will go and glides round the ring as that changes; while the cursor is
+/// still inside the dead zone, where releasing takes the whole screen, the whole ring is the accent
+/// colour. So the ring says where the window will go, next to the pointer, without the eye having
+/// to leave it for the landing block.
 @MainActor
 private final class AnchorDot {
-    /// Big enough to read as a ring around the pointer rather than a mark beside it, at the cost of
-    /// being well past Rectangle Pro's 15pt reticle. Its strokes are all that cover anything.
+    /// The plate's size — the whole footprint. Big enough to read as an indicator around the pointer
+    /// rather than a mark beside it, at the cost of being well past Rectangle Pro's 15pt reticle.
     private static let diameter: CGFloat = 90
-    /// A thin line for the seven directions not taken, and a heavier one for the one that is: the
-    /// difference in weight, not only in colour, is what makes the lit segment read at a glance.
-    private static let trackWidth: CGFloat = 3
-    private static let litWidth: CGFloat = 6
-    /// Greys, fixed — not a setting. The lit segment is a darker grey than the faint light-grey
-    /// track, so the one direction reads by tone as well as by weight. On glass these are tints,
-    /// which the glass lightens or deepens with whatever is behind it; without glass they are the
-    /// flat colours.
-    private static let litGrey = NSColor(white: 0.45, alpha: 0.9)
-    private static let trackGrey = NSColor(white: 0.9, alpha: 0.35)
-    /// How long the lit segment takes to travel to a new direction. Short enough to finish well
-    /// before the next sector change on any real movement, long enough to be seen as travel.
+    /// Material showing between the ring and the plate's edge, so the ring sits *on* the plate the
+    /// way the system's indicators sit on theirs, rather than running round its rim.
+    private static let inset: CGFloat = 5
+    /// One weight for the track and the arc, as a progress ring has: the arc reads as part of the
+    /// ring filled in, not as a second line laid on top of it.
+    private static let lineWidth: CGFloat = 5
+    /// How much of the ring the arc covers, rounded ends included. A quarter, centred on its
+    /// direction: wide enough to read as a filled stretch of ring at a glance, which the 45° a
+    /// sector strictly owns is not at this size.
+    private static let arcDegrees: CGFloat = 90
+    /// How long the arc takes to travel to a new direction. Short enough to finish well before the
+    /// next sector change on any real movement, long enough to be seen as travel.
     private static let glide: CFTimeInterval = 0.15
 
     private var panel: NSPanel?
-    /// Each part of the ring is a view filled with glass (or, before macOS 26, a flat colour) and
-    /// cut to its shape by a mask — glass only comes as a rounded rectangle, so the mask is
-    /// how it becomes a ring. Measured on macOS 27: a masked `NSGlassEffectView` renders clipped to
-    /// the mask, and its `tintColor` shows only in the `.clear` style; `.regular` stays grey.
-    private var track = NSView()
-    /// The whole ring lit, for the dead zone — releasing there takes the whole screen.
-    private var litAll = NSView()
-    /// One segment, cut facing due east and turned to face the direction being pointed at. The
-    /// *mask* turns, not the view, so a change of direction animates as the segment travelling
-    /// round the ring through glass that stays put.
-    private var litOne = NSView()
-    private let litOneMask = CAShapeLayer()
-    /// `litOneMask`'s rotation in radians, kept unwrapped so the glide can always take the short way.
+    /// The ring's own layer-backed view, stacked over the plate. Its own view rather than sublayers
+    /// of the content view: AppKit keeps a subview's layer above hand-added sublayers, so the ring
+    /// drawn straight onto the content view disappeared under the glass (measured).
+    private let ring = NSView()
+    private let track = CAShapeLayer()
+    /// The whole ring in the accent colour, for the dead zone — releasing there takes the whole
+    /// screen.
+    private let full = CAShapeLayer()
+    /// The arc, drawn facing due east and turned to face the direction being pointed at, so a
+    /// change of direction animates as the arc travelling round the ring.
+    private let arc = CAShapeLayer()
+    /// `arc`'s rotation in radians, kept unwrapped so the glide can always take the short way.
     private var angle: CGFloat = 0
     private var lit: WindowArrangement?
 
@@ -1631,34 +1633,50 @@ private final class AnchorDot {
         let panel = self.panel ?? make()
         self.panel = panel
         panel.setFrame(Self.frame(centredOn: point), display: true)
-        // Straight to the dead zone's whole ring: whatever the last gesture ended on has no business
-        // showing on a ring that has not been pointed anywhere yet.
-        litOne.isHidden = true
-        litAll.isHidden = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Read on every show: the accent is the user's to change in System Settings at any time,
+        // and a `CGColor` resolved once would keep the old one. Resolved under the panel's own
+        // appearance, which is where it is drawn.
+        // The track in the system's adaptive grey, so it reads against the plate whether that is
+        // light or dark glass — resolved the same way, and for the same reason, as the accent.
+        ring.effectiveAppearance.performAsCurrentDrawingAppearance {
+            track.strokeColor = NSColor.tertiaryLabelColor.cgColor
+            full.strokeColor = NSColor.controlAccentColor.cgColor
+            arc.strokeColor = NSColor.controlAccentColor.cgColor
+        }
+        // Straight to the dead zone's full ring, with no fade: whatever the last gesture ended on
+        // has no business showing on a ring that has not been pointed anywhere yet.
+        arc.opacity = 0
+        full.opacity = 1
+        CATransaction.commit()
         lit = .maximize
         panel.restoreAllSpaces("drag anchor dot")
         panel.orderFrontRegardless()
     }
 
-    /// Re-centres the ring on `point`, for the per-move path. The frame only: the colour, the shape
+    /// Re-centres the ring on `point`, for the per-move path. The frame only: the colours, the shape
     /// and the Space tagging were all settled by `show(at:)` and do not change mid-gesture.
     func move(to point: CGPoint) {
         panel?.setFrameOrigin(Self.frame(centredOn: point).origin)
     }
 
-    /// Lights the eighth facing `zone`, or the whole ring for `.maximize`. Called when the zone
-    /// changes, not on every move.
+    /// Points the arc at `zone`, or fills the ring for `.maximize`. Called when the zone changes,
+    /// not on every move.
     ///
-    /// From one direction to another the lit segment glides round the ring the short way; one
-    /// appearing from the dead zone starts where it is going rather than travelling from wherever
-    /// it was last. Reduce Motion makes it instant.
+    /// From one direction to another the arc glides round the ring the short way; one appearing
+    /// from the dead zone starts where it is going rather than travelling from wherever it was
+    /// last. Reduce Motion makes it instant.
     func highlight(_ zone: WindowArrangement) {
         guard zone != lit else { return }
         let wasPointing = lit.flatMap(PointDirection.heading(of:)) != nil
         lit = zone
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         guard let heading = PointDirection.heading(of: zone) else {
-            litOne.isHidden = true
-            litAll.isHidden = false
+            arc.opacity = 0
+            full.opacity = 1
             return
         }
         let from = angle
@@ -1668,20 +1686,17 @@ private final class AnchorDot {
         // The model value set with actions off, and the travel added explicitly: an implicit
         // `transform` animation interpolates matrices, which cuts across the ring rather than going
         // round it.
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        litOneMask.setValue(angle, forKeyPath: "transform.rotation.z")
-        CATransaction.commit()
+        arc.setValue(angle, forKeyPath: "transform.rotation.z")
         if wasPointing, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let travel = CABasicAnimation(keyPath: "transform.rotation.z")
             travel.fromValue = from
             travel.toValue = angle
             travel.duration = Self.glide
             travel.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            litOneMask.add(travel, forKey: "travel")
+            arc.add(travel, forKey: "travel")
         }
-        litOne.isHidden = false
-        litAll.isHidden = true
+        arc.opacity = 1
+        full.opacity = 0
     }
 
     func hide() {
@@ -1693,70 +1708,65 @@ private final class AnchorDot {
             x: point.x - diameter / 2, y: point.y - diameter / 2, width: diameter, height: diameter)
     }
 
-    /// What one part of the ring is filled with: clear glass tinted `grey` on macOS 26 and later —
-    /// `.clear` is the style whose tint shows — and a flat layer of it before that.
-    private static func fill(_ bounds: CGRect, grey: NSColor) -> NSView {
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView(frame: bounds)
-            glass.style = .clear
-            glass.cornerRadius = 0
-            glass.tintColor = grey
-            return glass
-        }
-        let view = NSView(frame: bounds)
-        view.wantsLayer = true
-        view.layer?.backgroundColor = grey.cgColor
-        return view
-    }
-
-    /// The lit eighth, facing due east, as the outline of a `width`-wide stroke with rounded ends —
-    /// a shape to mask with, not a line to stroke. Its rounded ends included, it covers exactly the
-    /// 45° of its direction's sector, so it sits on the track as that direction and no more.
-    private static func eighth(width: CGFloat, centre: CGPoint, radius: CGFloat) -> CGPath {
-        let half = 22.5 * .pi / 180 - (width / 2) / radius
-        let line = CGMutablePath()
-        line.addArc(
-            center: centre, radius: radius, startAngle: -half, endAngle: half, clockwise: false)
-        return line.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 1)
-    }
-
-    /// The whole ring as the outline of a `width`-wide stroke: unbroken, so no direction is
-    /// singled out until one is pointed at.
-    private static func circle(width: CGFloat, centre: CGPoint, radius: CGFloat) -> CGPath {
-        CGPath(
-            ellipseIn: CGRect(
-                x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2),
-            transform: nil
-        ).copy(strokingWithWidth: width, lineCap: .butt, lineJoin: .round, miterLimit: 1)
-    }
-
     /// Above the destination block, which is a full half-screen the ring would otherwise be lost
-    /// inside. The fills and their masks are built once here — the panel never changes size — and
-    /// only the colour, which part shows and the one mask's rotation change after that.
+    /// inside. The plate and the paths are built once here — the panel never changes size — and
+    /// only the colours, which ring layer shows and the arc's rotation change after that.
     private func make() -> NSPanel {
         let panel = OverlayPanel.make(level: .statusBar)
+        // The one overlay with a shadow: it is a small solid plate, where the others are outlines
+        // that a shadow would double. The window server takes it from the plate's round shape.
+        panel.hasShadow = true
         let bounds = CGRect(x: 0, y: 0, width: Self.diameter, height: Self.diameter)
+        panel.contentView?.addSubview(Self.plate(bounds))
+        ring.frame = bounds
+        ring.wantsLayer = true
+        panel.contentView?.addSubview(ring)
+
         let centre = CGPoint(x: bounds.midX, y: bounds.midY)
-        // Both weights on one centreline, inset so the heavier one stays inside `diameter`.
-        let radius = (Self.diameter - Self.litWidth) / 2
-        // Angles anticlockwise from due east, the space `PointDirection.heading(of:)` answers in:
-        // the layer is y-up, so +90° sits at the top on screen (measured), and a positive rotation
-        // of `litOneMask` turns the lit eighth anticlockwise to match.
-        let trackMask = CAShapeLayer()
-        trackMask.path = Self.circle(width: Self.trackWidth, centre: centre, radius: radius)
-        let litAllMask = CAShapeLayer()
-        litAllMask.path = Self.circle(width: Self.litWidth, centre: centre, radius: radius)
-        litOneMask.path = Self.eighth(width: Self.litWidth, centre: centre, radius: radius)
-        track = Self.fill(bounds, grey: Self.trackGrey)
-        litAll = Self.fill(bounds, grey: Self.litGrey)
-        litOne = Self.fill(bounds, grey: Self.litGrey)
-        for (view, mask) in [(track, trackMask), (litAll, litAllMask), (litOne, litOneMask)] {
-            view.wantsLayer = true
-            // Turning `litOneMask` about its own centre is turning it about the ring's.
-            mask.frame = bounds
-            view.layer?.mask = mask
-            panel.contentView?.addSubview(view)
+        // Inset from the plate's edge, then by half the stroke so the stroke stays inside that.
+        let radius = (Self.diameter - Self.lineWidth) / 2 - Self.inset
+        let circle = CGPath(
+            ellipseIn: CGRect(
+                x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2),
+            transform: nil)
+        // Facing due east, the zero of `PointDirection.heading(of:)`. The layer is y-up, so +90°
+        // sits at the top on screen (measured), and a positive rotation of `arc` turns it
+        // anticlockwise to match. The rounded ends reach past the path's own ends by half the
+        // stroke, so the path is shortened by that much at each end to keep `arcDegrees` true.
+        let half = Self.arcDegrees / 2 * .pi / 180 - (Self.lineWidth / 2) / radius
+        let arcPath = CGMutablePath()
+        arcPath.addArc(
+            center: centre, radius: radius, startAngle: -half, endAngle: half, clockwise: false)
+        track.path = circle
+        full.path = circle
+        arc.path = arcPath
+        arc.lineCap = .round
+        for layer in [track, full, arc] {
+            // Turning `arc` about its own centre is turning it about the ring's.
+            layer.frame = bounds
+            layer.fillColor = nil
+            layer.lineWidth = Self.lineWidth
+            ring.layer?.addSublayer(layer)
         }
         return panel
+    }
+
+    /// The round plate under the ring: glass on macOS 26 and later, whose own corner radius makes
+    /// the circle, and the dark HUD blur before it — the material the system's volume and
+    /// brightness indicators were drawn on before glass.
+    private static func plate(_ bounds: CGRect) -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: bounds)
+            glass.cornerRadius = bounds.width / 2
+            return glass
+        }
+        let blur = NSVisualEffectView(frame: bounds)
+        blur.material = .hudWindow
+        blur.blendingMode = .behindWindow
+        blur.state = .active
+        blur.wantsLayer = true
+        blur.layer?.cornerRadius = bounds.width / 2
+        blur.layer?.masksToBounds = true
+        return blur
     }
 }
