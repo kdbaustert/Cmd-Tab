@@ -373,21 +373,31 @@ enum SpaceMover {
     /// 8, so it is not even an ordering — and a position in the Spaces Bar shifts the moment a
     /// Desktop is added or removed.
     ///
-    /// A Space with an empty UUID is skipped rather than stored under `""`. Real: the fourth
-    /// Desktop of the display this was written against has one, and keying it by the empty string
-    /// would collide every such Space onto one entry and hand a binding the wrong Desktop. Nothing
-    /// is lost by dropping them — a Space with no UUID is a Space no binding can name.
+    /// A Space with an empty UUID is keyed under `""` — but only when it is the only one. It is the
+    /// display's original Desktop, and a binding *can* name it: measured, apps assigned to the
+    /// fourth Desktop here, whose UUID is empty, read back from `app-bindings` as `""`, while All
+    /// Desktops reads back as `"AllSpaces"`. Skipping it, as this once did, left every app assigned
+    /// there wherever a display change put it. Two such Spaces — plausible once a second display
+    /// brings its own original Desktop, unmeasured — would leave `""` naming either, and handing a
+    /// binding the wrong Desktop is worse than leaving the window where it is, so then neither is.
     static func spaceIDsByUUID() -> [String: UInt64] {
+        spaceIDsByUUID(in: managedDisplays())
+    }
+
+    /// `spaceIDsByUUID()` over a given layout, so the empty-UUID rule can be tested against the
+    /// two-display case one machine cannot be relied on to produce.
+    static func spaceIDsByUUID(in displays: [[String: Any]]) -> [String: UInt64] {
         var out: [String: UInt64] = [:]
-        for display in managedDisplays() {
+        var blank: [UInt64] = []
+        for display in displays {
             guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
             for space in spaces where (space["type"] as? Int) == 0 {
-                guard let uuid = space["uuid"] as? String, !uuid.isEmpty,
-                    let id = spaceID(from: space)
+                guard let uuid = space["uuid"] as? String, let id = spaceID(from: space)
                 else { continue }
-                out[uuid] = id
+                if uuid.isEmpty { blank.append(id) } else { out[uuid] = id }
             }
         }
+        if blank.count == 1 { out[""] = blank[0] }
         return out
     }
 

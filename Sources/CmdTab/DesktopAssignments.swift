@@ -146,8 +146,10 @@ final class DesktopAssignments {
     /// every app whose identifier is not already lower case, and it fails silently — which is the
     /// whole feature quietly doing nothing on precisely the app it was set up for.
     ///
-    /// An empty value means "All Desktops" and is dropped here, so callers never have to spot it:
-    /// an app on every Desktop is on the right one by definition.
+    /// All Desktops is stored as `"AllSpaces"` and is dropped here, so callers never have to spot
+    /// it: an app on every Desktop is on the right one by definition. An *empty* value is not All
+    /// Desktops, however much it reads like it — it names the Desktop whose UUID is empty, and is
+    /// kept; `SpaceMover.spaceIDsByUUID()` has the measurement and the one case it cannot resolve.
     /// `nonisolated` for the reason `DisplayLayouts` gives for the same annotation on its own
     /// statics: this reads a preferences key and touches no instance state, and without it the
     /// `@MainActor` on the class would drag it onto the main actor — which a test cannot reach
@@ -157,7 +159,7 @@ final class DesktopAssignments {
             let raw = CFPreferencesCopyAppValue(
                 "app-bindings" as CFString, "com.apple.spaces" as CFString) as? [String: String]
         else { return [:] }
-        return raw.filter { !$0.value.isEmpty }
+        return raw.filter { $0.value != "AllSpaces" }
     }
 
     // MARK: - The restore
@@ -224,6 +226,8 @@ final class DesktopAssignments {
         // been unplugged, whose Spaces go with it — resolves to nothing and is skipped. There is no
         // sensible substitute to pick: a window cannot be moved to a Desktop that is gone, and
         // inventing a nearby one would be this feature putting windows somewhere nobody asked for.
+        // `""` goes the same way when no single Desktop lacks a UUID, and says so, because unlike
+        // an unplugged display that is not something the user can see for themselves.
         let live = SpaceMover.spaceIDsByUUID()
         let placed = SpaceMover.windowSpaces()
         guard !placed.isEmpty else { return [] }
@@ -231,7 +235,15 @@ final class DesktopAssignments {
 
         var work: [Move] = []
         for app in apps {
-            guard let uuid = bindings[app.bundleID.lowercased()], let target = live[uuid] else {
+            guard let uuid = bindings[app.bundleID.lowercased()] else { continue }
+            guard let target = live[uuid] else {
+                if uuid.isEmpty {
+                    Log.general.notice(
+                        """
+                        desktop assignments: \(app.name, privacy: .public) is assigned to the \
+                        desktop with no uuid, and there is not exactly one such desktop; leaving it
+                        """)
+                }
                 continue
             }
             if appRules[app.bundleID]?.neverTile == true { continue }
