@@ -86,9 +86,12 @@ final class TargetProvider {
     ///
     /// `FavoritesStore.appInfo` is a LaunchServices lookup plus two disk reads (display name, icon),
     /// and it runs on the main thread for every favourite on every refresh — even though the answer
-    /// only changes when the app is moved or uninstalled. Bounded by the favourites list, which the
-    /// `didSet` above prunes it back to.
-    private var appInfoCache: [String: (url: URL, name: String, icon: NSImage)] = [:]
+    /// only changes when the app is moved, updated or uninstalled. `stamp` is `bundleStamp` read
+    /// when the entry was resolved; `uncheckedLaunchFavorites` re-stats it each pass and re-resolves
+    /// on any difference, so an updated favourite's icon (and display name) change without this
+    /// process restarting. Bounded by the favourites list, which the `didSet` above prunes it
+    /// back to.
+    private var appInfoCache: [String: (url: URL, name: String, icon: NSImage, stamp: Date?)] = [:]
 
     /// Icons for the *running* apps, keyed by bundle id.
     ///
@@ -101,14 +104,17 @@ final class TargetProvider {
     /// changes when an app is replaced on disk.
     ///
     /// Keyed by bundle id rather than pid: two instances of one app share an icon, and a bundle id
-    /// cannot be recycled onto a different app the way a pid can. An app updated in place while
-    /// running keeps the icon it had until it is next launched, which is the same bargain
-    /// `appInfoCache` above already makes.
+    /// cannot be recycled onto a different app the way a pid can. Each entry carries `bundleStamp`
+    /// read when the icon was faulted, and a pass that stats a different date re-reads the icon —
+    /// so an app updated in place shows its new artwork on the next refresh rather than keeping
+    /// the old one until it is relaunched, the same check `appInfoCache` above makes. One `stat`
+    /// per app per pass buys that, against the icon fault documented above that staying cached
+    /// saves.
     ///
     /// Pruned to what the pass actually saw rather than emptied from the terminate notification.
     /// The enumeration *is* the list of what is running, so a prune against it cannot miss a quit,
     /// and the cache can never outgrow the app list.
-    private var iconCache: [String: NSImage] = [:]
+    private var iconCache: [String: (icon: NSImage, stamp: Date?)] = [:]
 
     /// Window titles, keyed by `CGWindowID`, with the refresh they're still good through.
     ///
@@ -865,10 +871,10 @@ final class TargetProvider {
     /// the pass's answers and the prune, and doing it in one place is what keeps the cache exactly
     /// the set of apps this pass saw.
     private nonisolated static func enumerateApps(
-        excluded: Set<String>, rules: [String: AppRule], iconCache: [String: NSImage]
-    ) -> (apps: [AppInfo], iconCache: [String: NSImage]) {
+        excluded: Set<String>, rules: [String: AppRule], iconCache: [String: (icon: NSImage, stamp: Date?)]
+    ) -> (apps: [AppInfo], iconCache: [String: (icon: NSImage, stamp: Date?)]) {
         let mine = ProcessInfo.processInfo.processIdentifier
-        var seen: [String: NSImage] = [:]
+        var seen: [String: (icon: NSImage, stamp: Date?)] = [:]
         let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AppInfo? in
             guard app.activationPolicy == .regular,
                   app.processIdentifier != mine,
@@ -887,8 +893,16 @@ final class TargetProvider {
             // second thing to do about it.
             let icon: NSImage?
             if let bundleID = app.bundleIdentifier {
-                let resolved = iconCache[bundleID] ?? app.icon
-                seen[bundleID] = resolved
+                // nil compares equal only to nil, so an app whose bundle can't be statted keeps
+                // the old cache-until-quit behaviour rather than paying the fault every pass.
+                let stamp = bundleStamp(app.bundleURL)
+                let resolved: NSImage?
+                if let cached = iconCache[bundleID], cached.stamp == stamp {
+                    resolved = cached.icon
+                } else {
+                    resolved = app.icon
+                }
+                seen[bundleID] = resolved.map { ($0, stamp) }
                 icon = resolved
             } else {
                 icon = app.icon
@@ -901,6 +915,22 @@ final class TargetProvider {
                 isHidden: app.isHidden)
         }
         return (apps, seen)
+    }
+
+    /// The modification date of a bundle's `Contents/Info.plist` — the on-disk marker that the app
+    /// changed, read with a single `stat`.
+    ///
+    /// The plist rather than the `.app` directory: an updater that swaps the whole bundle
+    /// (Sparkle, brew, the App Store) refreshes both, but one that rewrites contents in place only
+    /// touches what it replaces, and a directory's date moves only when a *direct* child does. No
+    /// version change ships without a new `Info.plist`, so its date moves in every case. nil when
+    /// there is no bundle URL or the plist cannot be statted — an uninstall, mid-swap moment, or a
+    /// bundle with no plist — and what nil means is the caller's call.
+    nonisolated static func bundleStamp(_ bundleURL: URL?) -> Date? {
+        guard let url = bundleURL else { return nil }
+        let plist = url.appendingPathComponent("Contents/Info.plist")
+        let attributes = try? FileManager.default.attributesOfItem(atPath: plist.path)
+        return attributes?[.modificationDate] as? Date
     }
 
     /// Launchable tiles for favourites that aren't currently running (and aren't excluded), in the
@@ -933,20 +963,22 @@ final class TargetProvider {
             guard !excluded.contains(id),
                 NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
             else { return nil }
-            // Checked against the disk before it is trusted. The cache is otherwise never
-            // revisited, so a favourite uninstalled or moved while this process ran kept a tile
-            // that could only fail to open. One `stat` per non-running favourite per pass, against
-            // the LaunchServices lookup and two disk reads it saves.
+            // Checked against the disk before it is trusted. The stored stamp answers two
+            // questions with the one `stat` the old existence check already paid: gone means
+            // uninstalled or moved, so the tile is rebuilt or dropped; different means the app was
+            // updated in place, so the icon and display name are re-read rather than kept until
+            // this process restarts. A nil stamp is never trusted — that entry re-resolves each
+            // pass rather than risking a tile for an app that is gone.
             if let cached = appInfoCache[id] {
-                if FileManager.default.fileExists(atPath: cached.url.path) {
-                    return (id, Self.launchTarget(id: id, info: cached))
+                if cached.stamp != nil, cached.stamp == Self.bundleStamp(cached.url) {
+                    return (id, Self.launchTarget(id: id, info: (cached.url, cached.name, cached.icon)))
                 }
                 appInfoCache[id] = nil
             }
             // A failure is deliberately not cached: an app that isn't installed yet should be picked
             // up when it arrives, rather than being remembered as missing for the whole session.
             guard let info = FavoritesStore.appInfo(for: id) else { return nil }
-            appInfoCache[id] = info
+            appInfoCache[id] = (info.url, info.name, info.icon, Self.bundleStamp(info.url))
             return (id, Self.launchTarget(id: id, info: info))
         }
     }
