@@ -477,23 +477,6 @@
         }
       }
     },
-    "Anchor dot": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anchor dot"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Point d'ancrage"
-          }
-        }
-      }
-    },
     "Any app": {
       "extractionState": "manual",
       "localizations": {
@@ -7243,23 +7226,6 @@
         }
       }
     },
-    "The block showing where the window will end up. Drawn as a solid border with the fill washed back, so one colour covers both.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The block showing where the window will end up. Drawn as a solid border with the fill washed back, so one colour covers both."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Le bloc indiquant où la fenêtre va atterrir. Dessiné en bordure pleine avec un remplissage atténué, pour qu'une seule couleur suffise aux deux."
-          }
-        }
-      }
-    },
     "The border drawn around the window a gesture is about to act on.": {
       "extractionState": "manual",
       "localizations": {
@@ -7273,6 +7239,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "La bordure dessinée autour de la fenêtre sur laquelle un geste va agir."
+          }
+        }
+      }
+    },
+    "The border showing where the window will end up. Drawn as an outline only, so what is underneath stays visible.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The border showing where the window will end up. Drawn as an outline only, so what is underneath stays visible."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La bordure indiquant où la fenêtre va atterrir. Dessinée en contour seulement, pour que ce qui se trouve dessous reste visible."
           }
         }
       }
@@ -7324,23 +7307,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Le bouton vert : agrandir, ou rétablir une fenêtre zoomée."
-          }
-        }
-      }
-    },
-    "The mark the hold-and-point gesture measures its direction from.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The mark the hold-and-point gesture measures its direction from."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Le repère à partir duquel le geste « maintenir et pointer » mesure sa direction."
           }
         }
       }

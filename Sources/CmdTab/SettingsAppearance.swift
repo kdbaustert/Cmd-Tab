@@ -9,6 +9,8 @@ struct AppearanceSettings: View {
 
     private var metrics: Metrics { appearance.metrics }
     private static let customLabel = "Custom…"
+    /// The system's own scheme, for a preview whose theme leaves the panel to match it.
+    @Environment(\.colorScheme) private var systemScheme
 
     /// Installed families, resolved once. `availableFontFamilies` walks the font registry, which is
     /// slow enough to be worth keeping out of a view body that re-evaluates on every slider drag.
@@ -23,8 +25,6 @@ struct AppearanceSettings: View {
             title: "Appearance",
             subtitle: "Changes apply live, including to a switcher that is already open."
         ) {
-            preview
-
             SettingsSection(title: "Layout", anchor: SettingsAnchor.layout) {
                 SettingsChoice(
                     title: "Layout",
@@ -50,6 +50,7 @@ struct AppearanceSettings: View {
                 footer: "A theme carries only the look — never a shortcut — so importing one can "
                     + "not change what your keys do."
             ) {
+                preview
                 themeRow
             }
 
@@ -178,9 +179,20 @@ struct AppearanceSettings: View {
     /// A real panel: same glass, same metrics, real icons, and the layout that is actually
     /// selected. The switcher itself cannot be seen while the settings window is frontmost, so this
     /// has to stand in for it faithfully.
+    ///
+    /// It sits in the Theme card, over the picker, because picking a theme is when you most need to
+    /// see one — and it draws everything a theme carries that a still panel can show: the forced
+    /// light or dark appearance (glass included), the ⌘-number hints, the highlight, corners, font,
+    /// sizes and material. Only the fade is left out, being motion. Every slider further down the
+    /// page moves it too.
     private var preview: some View {
         let entries = Array(apps.entries.prefix(4))
         let selected = min(1, max(entries.count - 1, 0))
+        let forced: ColorScheme? = switch behavior.panelAppearance {
+        case .light: .light
+        case .dark: .dark
+        case .system: nil
+        }
         return VStack(spacing: 0) {
             Group {
                 if behavior.layout == .list {
@@ -195,23 +207,25 @@ struct AppearanceSettings: View {
             .background(
                 VisualEffectBackground(
                     material: behavior.panelMaterial.nsMaterial,
-                    blurRadius: behavior.blurOverride ? behavior.blurRadius : nil))
+                    blurRadius: behavior.blurOverride ? behavior.blurRadius : nil,
+                    appearance: behavior.panelAppearance.nsAppearance))
             .clipShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
             )
+            // After the glass and the border, so the text, the row hints and the border's own
+            // `.primary` all take the theme's appearance along with the glass behind them.
+            .environment(\.colorScheme, forced ?? systemScheme)
             .fixedSize()
             .scaleEffect(previewScale, anchor: .center)
             .frame(maxWidth: .infinity)
         }
-        // Fixed, so the window does not jump around as the sliders move.
+        // Fixed, so the window does not jump around as the sliders move. No card of its own: the
+        // Theme section's card is the frame, and a card inside it would be a box in a box.
         .frame(height: 200)
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: SettingsChrome.cardCorner, style: .continuous)
-                .fill(Color.primary.opacity(0.04)))
-        .clipShape(RoundedRectangle(cornerRadius: SettingsChrome.cardCorner, style: .continuous))
+        .background(Color.primary.opacity(0.04))
     }
 
     /// Keeps a panel built from the largest icon size inside the preview strip rather than letting
@@ -245,6 +259,7 @@ struct AppearanceSettings: View {
                         icon: entry.icon,
                         tile: metrics.tile(for: .apps),
                         iconSize: metrics.iconSize,
+                        number: behavior.showNumbers ? i + 1 : nil,
                         isSelected: i == selected,
                         corner: behavior.tileCorner,
                         highlightColor: behavior.highlightColor)
@@ -268,6 +283,7 @@ struct AppearanceSettings: View {
                     name: entry.name,
                     row: row,
                     iconSize: metrics.listIconSize,
+                    number: behavior.showNumbers ? i + 1 : nil,
                     isSelected: i == selected,
                     corner: behavior.tileCorner,
                     highlightColor: behavior.highlightColor,
@@ -349,12 +365,17 @@ private struct PreviewTile: View {
     let icon: NSImage?
     let tile: CGSize
     let iconSize: CGFloat
+    let number: Int?
     let isSelected: Bool
     let corner: CGFloat
     let highlightColor: Color
 
     var body: some View {
         PreviewIcon(icon: icon, size: iconSize)
+            // Where `TargetIcon` hangs it: off the icon's corner, lifted up its trailing edge.
+            .overlay(alignment: .bottomTrailing) {
+                if let number { NumberBadge(number: number).offset(x: -1, y: -1) }
+            }
             .frame(width: tile.width, height: tile.height)
             .background { PreviewHighlight(corner: corner, color: highlightColor, on: isSelected) }
     }
@@ -365,6 +386,7 @@ private struct PreviewRow: View {
     let name: String
     let row: CGSize
     let iconSize: CGFloat
+    let number: Int?
     let isSelected: Bool
     let corner: CGFloat
     let highlightColor: Color
@@ -379,6 +401,7 @@ private struct PreviewRow: View {
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .lineLimit(1)
             Spacer(minLength: 0)
+            if let number { RowNumber(number: number) }
         }
         .padding(.horizontal, 8)
         .frame(width: row.width, height: row.height)

@@ -1162,7 +1162,6 @@ final class WindowTilingStore: ObservableObject {
         static let gapBottom = "windowTilingGapBottom"
         static let gapLeft = "windowTilingGapLeft"
         static let gapRight = "windowTilingGapRight"
-        static let dotHex = "windowSnapDotColorHex"
         static let outlineHex = "windowSnapOutlineColorHex"
         static let landingHex = "windowSnapLandingColorHex"
         static let mouseDrag = "windowMouseDragEnabled"
@@ -1180,7 +1179,7 @@ final class WindowTilingStore: ObservableObject {
         Key.dragSnapTopHalf, Key.dragSnapBottomThirds,
         Key.followsDesktopMove, Key.pointerFollowsDisplay,
         Key.gap, Key.gapTop, Key.gapBottom, Key.gapLeft, Key.gapRight,
-        Key.dotHex, Key.outlineHex, Key.landingHex,
+        Key.outlineHex, Key.landingHex,
         Key.mouseDrag, Key.mouseMove, Key.mouseResize,
         Key.focusFollows, Key.focusFollowsDelay, Key.restoreOnDisplayChange,
         Key.restoreDesktopAssignments,
@@ -1278,8 +1277,7 @@ final class WindowTilingStore: ObservableObject {
         }
     }
 
-    /// The block showing where the window will land. Drawn as a full-strength border with the fill
-    /// washed to `SnapAppearance.blockAlpha`, so one colour covers both.
+    /// The border showing where the window will land. A border only, with nothing filled in.
     @Published var landingColor: Color = SnapAppearance.defaultLanding {
         didSet {
             guard landingColor != oldValue, !isReloading else { return }
@@ -1288,14 +1286,6 @@ final class WindowTilingStore: ObservableObject {
         }
     }
 
-    /// The anchor dot the hold-and-point gesture measures its direction from.
-    @Published var dotColor: Color = SnapAppearance.defaultDot {
-        didSet {
-            guard dotColor != oldValue, !isReloading else { return }
-            persist(dotColor, forKey: Key.dotHex)
-            SnapAppearance.shared.apply(dot: dotColor)
-        }
-    }
 
     /// Writes a colour as hex, skipping the write when it has none.
     ///
@@ -1439,13 +1429,11 @@ final class WindowTilingStore: ObservableObject {
     private func loadSnapColors() {
         let outline = Self.loadColor(Key.outlineHex, default: SnapAppearance.defaultOutline)
         let landing = Self.loadColor(Key.landingHex, default: SnapAppearance.defaultLanding)
-        let dot = Self.loadColor(Key.dotHex, default: SnapAppearance.defaultDot)
         isReloading = true
         outlineColor = outline
         landingColor = landing
-        dotColor = dot
         isReloading = false
-        SnapAppearance.shared.apply(outline: outline, landing: landing, dot: dot)
+        SnapAppearance.shared.apply(outline: outline, landing: landing)
     }
 
     /// Suppresses the write half of the snap-colour observers while `loadSnapColors` runs. See

@@ -501,19 +501,12 @@ struct MouseFocusSettings: View {
                 }
                 SettingsRow(
                     title: "Landing block",
-                    subtitle: "The block showing where the window will end up. Drawn as a solid "
-                        + "border with the fill washed back, so one colour covers both.",
+                    subtitle: "The border showing where the window will end up. Drawn as an "
+                        + "outline only, so what is underneath stays visible.",
                     controlWidth: Self.colorControlWidth
                 ) {
                     ColorSettingControl(
                         color: $store.landingColor, reset: SnapAppearance.defaultLanding)
-                }
-                SettingsRow(
-                    title: "Anchor dot",
-                    subtitle: "The mark the hold-and-point gesture measures its direction from.",
-                    controlWidth: Self.colorControlWidth
-                ) {
-                    ColorSettingControl(color: $store.dotColor, reset: SnapAppearance.defaultDot)
                 }
             }
 

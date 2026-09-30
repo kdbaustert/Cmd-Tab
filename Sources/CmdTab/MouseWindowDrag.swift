@@ -1061,12 +1061,32 @@ final class MouseWindowDrag: @unchecked Sendable {
 /// the window to say *where*, and re-reading what is under it mid-gesture would retarget the
 /// gesture onto whatever it flew over.
 enum PointDirection {
+    /// How far the cursor must travel from the anchor before it names a direction rather than the
+    /// whole screen.
+    static let deadZone: CGFloat = 45
+
+    /// How far through the dead zone an offset is, from 0 at the anchor to 1 at its edge and beyond.
+    /// 1 means releasing picks a direction — see `flick(for:)`.
+    static func progress(for delta: CGSize) -> CGFloat {
+        min(hypot(delta.width, delta.height) / deadZone, 1)
+    }
+
+    /// What a chord released before the gesture armed asks for: the direction it was flicked in, or
+    /// nil for a tap that stayed inside the dead zone. Nil is not "maximize" here, as it is for an
+    /// armed gesture: a bare tap of the chord is how every ⌃⌘ keyboard shortcut starts, and one
+    /// that maximized the window under the pointer would fire on all of them.
+    static func flick(for delta: CGSize) -> WindowArrangement? {
+        progress(for: delta) < 1 ? nil : zone(for: delta)
+    }
+
     /// The zone a cursor offset from the anchor asks for, or nil if the offset is meaningless.
     ///
     /// Eight sectors and a dead zone, in Cocoa's y-up space. Staying put means the whole screen:
     /// that is the one "direction" with nowhere to point, and taking the whole display is the
     /// natural thing for it to mean.
-    static func zone(for delta: CGSize, deadZone: CGFloat = 45) -> WindowArrangement {
+    static func zone(for delta: CGSize, deadZone: CGFloat = PointDirection.deadZone)
+        -> WindowArrangement
+    {
         let distance = hypot(delta.width, delta.height)
         guard distance >= deadZone else { return .maximize }
 
@@ -1083,6 +1103,19 @@ enum PointDirection {
         case 247.5..<292.5: return .bottomHalf
         default: return .bottomRight
         }
+    }
+
+    /// The directions `zone(for:)` can answer with a direction for, in order anticlockwise from due
+    /// east — each one's sector centred on a multiple of 45°. What the ring around the cursor is
+    /// cut into, one segment per entry.
+    static let headings: [WindowArrangement] = [
+        .rightHalf, .topRight, .topHalf, .topLeft, .leftHalf, .bottomLeft, .bottomHalf, .bottomRight,
+    ]
+
+    /// The centre of `zone`'s sector in degrees, anticlockwise from due east in y-up space, or nil
+    /// for the one answer with no direction — `.maximize`, the dead zone.
+    static func heading(of zone: WindowArrangement) -> CGFloat? {
+        headings.firstIndex(of: zone).map { CGFloat($0) * 45 }
     }
 }
 
@@ -1274,26 +1307,12 @@ final class ModifierTargetHighlight {
     /// enough to be one rather than the front of a keyboard shortcut.
     private func activate() {
         armTask = nil
-        guard let point = anchor else { return }
-        // A window-server round trip on the main thread. Marked so a stall inside it says so.
-        guard let target = MainLoopMonitor.marking("point-gesture window lookup", {
-            Self.windowUnderCursor(at: point)
-        }) else { return cancel() }
-        // An app the user has told us never to tile is not offered a destination at all — no
-        // outline, no dot, no landing block. Refusing at the *drop* instead would draw the whole
-        // affordance and then silently do nothing, which reads as the gesture being broken rather
-        // than as the setting being obeyed.
-        let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
-        if id.map({ appRules[$0]?.neverTile == true }) ?? false
-            || Self.titleProtects(target, bundleID: id, rules: titleRules) {
-            Log.general.notice(
-                "point gesture: \(id ?? "window", privacy: .public) is set to never tile; not arming")
-            return cancel()
-        }
+        guard let point = anchor, let target = armableTarget(at: point) else { return cancel() }
         self.target = target
         outline.show(target.bounds)
-        // The anchor stays put while the cursor leaves it: the gesture is a direction, and a
-        // direction needs both ends visible to be read.
+        // Shown at the cursor and carried with it by `follow`, so it marks where the pointer is
+        // aiming. The anchor the direction is measured from is no longer drawn; the ring's fill
+        // is what says how far from it the cursor has come.
         dot.show(at: point)
         Log.general.notice(
             "point gesture: armed on pid \(target.pid, privacy: .public)")
@@ -1317,14 +1336,50 @@ final class ModifierTargetHighlight {
         follow()
     }
 
+    /// The window under `point` the gesture may act on, or nil — said in the log either way it
+    /// refuses. Shared by arming and by a flick, which both aim at the window that was under the
+    /// pointer when the chord went down.
+    private func armableTarget(at point: CGPoint) -> (pid: pid_t, bounds: CGRect)? {
+        // A window-server round trip on the main thread. Marked so a stall inside it says so.
+        guard let target = MainLoopMonitor.marking("point-gesture window lookup", {
+            Self.windowUnderCursor(at: point)
+        }) else {
+            // Said, because this is the one refusal the user sees as "the chord did nothing": the
+            // desktop, the menu bar, the Dock or some other app's surface drawn above the ordinary
+            // windows is under the cursor — see `MouseWindowDrag.window(at:)`.
+            Log.general.notice(
+                """
+                point gesture: no window to act on under the cursor at \
+                (\(Int(point.x), privacy: .public), \(Int(point.y), privacy: .public))
+                """)
+            return nil
+        }
+        // An app the user has told us never to tile is not offered a destination at all — no
+        // outline, no dot, no landing block. Refusing at the *drop* instead would draw the whole
+        // affordance and then silently do nothing, which reads as the gesture being broken rather
+        // than as the setting being obeyed.
+        let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+        if id.map({ appRules[$0]?.neverTile == true }) ?? false
+            || Self.titleProtects(target, bundleID: id, rules: titleRules) {
+            Log.general.notice(
+                "point gesture: \(id ?? "window", privacy: .public) is set to never tile")
+            return nil
+        }
+        return target
+    }
+
     /// Offers the zone the cursor is currently pointing at.
     private func follow() {
         guard let anchor else { return }
         let point = NSEvent.mouseLocation
         let delta = CGSize(width: point.x - anchor.x, height: point.y - anchor.y)
+        // Ahead of the zone guard below: the ring tracks every move, not just the ones that change
+        // the zone. One frame change on a 90pt panel, and only while the chord is held.
+        dot.move(to: point)
         let next = PointDirection.zone(for: delta)
         guard next != zone else { return }
         zone = next
+        dot.highlight(next)
         showPreview(next, near: anchor)
     }
 
@@ -1335,20 +1390,19 @@ final class ModifierTargetHighlight {
     /// exactly `maxY`, the one value `contains` rejects.
     private func showPreview(_ zone: WindowArrangement, near point: CGPoint) {
         area = nil
-        // One read of the display list, not two paired by index — see `MouseWindowDrag.refreshDisplays`,
-        // which fixed the same fragility for the drag gesture after a screen reconfiguration could
-        // desync a separate `NSScreen.screens` walk from `visibleAreas()`.
-        guard
-            let display = WindowTiler.visibleDisplays().first(where: {
-                NSMouseInRect(point, $0.frame, false)
-            })
-        else {
-            return
-        }
-        let area = display.area
+        guard let area = Self.area(containing: point) else { return }
         self.area = area
         guard let frame = zone.frame(in: area, current: area, fraction: 0.5) else { return }
         SnapPreview.shared.show(zone.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame)
+    }
+
+    /// The visible area of the display `point` (Cocoa bottom-up) is on.
+    ///
+    /// One read of the display list, not two paired by index — see `MouseWindowDrag.refreshDisplays`,
+    /// which fixed the same fragility for the drag gesture after a screen reconfiguration could
+    /// desync a separate `NSScreen.screens` walk from `visibleAreas()`.
+    private static func area(containing point: CGPoint) -> CGRect? {
+        WindowTiler.visibleDisplays().first { NSMouseInRect(point, $0.frame, false) }?.area
     }
 
     /// Gives the chord up to a drag that has claimed it, without snapping anything.
@@ -1387,16 +1441,50 @@ final class ModifierTargetHighlight {
         cancel()
     }
 
-    /// The chord came up: snap to whatever was being offered.
+    /// The chord came up: snap to whatever was being offered — or, if it came up before the gesture
+    /// armed, to the direction it was flicked in.
     private func complete() {
         defer { cancel() }
+        if armTask != nil { return flick() }
         guard let zone, let target, let area else { return }
+        snap(target, to: zone, on: area, how: "snapping")
+    }
+
+    /// A chord let go of inside `armDelay`, before anything was drawn. The pointer thrown past the
+    /// dead zone in that time snaps the window it started over in that direction — a gesture done
+    /// faster than the ring could appear is still the gesture. One that stayed inside it is a tap,
+    /// and a tap does nothing; see `PointDirection.flick`.
+    ///
+    /// The window is looked up here, at the anchor, rather than at arming, which never happened.
+    /// Nothing has moved it since the chord went down, so the answer is the one arming would have
+    /// given, never rules included.
+    private func flick() {
+        guard let anchor else { return }
+        let point = NSEvent.mouseLocation
+        let delta = CGSize(width: point.x - anchor.x, height: point.y - anchor.y)
+        guard let zone = PointDirection.flick(for: delta) else {
+            Log.general.notice(
+                """
+                point gesture: chord tapped, pointer moved \
+                \(Int(hypot(delta.width, delta.height)), privacy: .public)pt; nothing snapped
+                """)
+            return
+        }
+        guard let target = armableTarget(at: anchor), let area = Self.area(containing: anchor)
+        else { return }
+        snap(target, to: zone, on: area, how: "flicked, snapping")
+    }
+
+    /// Hands the window to the tiler. `how` only names the path in the log.
+    private func snap(
+        _ target: (pid: pid_t, bounds: CGRect), to zone: WindowArrangement, on area: CGRect,
+        how: String
+    ) {
         Log.general.notice(
             """
-            point gesture: snapping pid \(target.pid, privacy: .public) to \
+            point gesture: \(how, privacy: .public) pid \(target.pid, privacy: .public) to \
             \(zone.rawValue, privacy: .public)
             """)
-        let gap = self.gap
         // By its frame, not by its pid. This gesture never touches the window — no click, no focus,
         // nothing raised — which is exactly what the type's own doc comment promises, and handing
         // the tiler a bare pid quietly broke that promise: it re-resolved to `AX.frontWindow` and
@@ -1453,9 +1541,10 @@ final class ModifierTargetHighlight {
 
 /// A border drawn around the window a gesture is about to act on.
 ///
-/// Deliberately an outline where `SnapPreview` is a filled block: one says "this is the window",
-/// the other says "this is where it will land", and a gesture that goes from one to the other should
-/// not look like the same thing moving.
+/// Both this and `SnapPreview` are borders now, so they are told apart by corner radius and by each
+/// having its own colour setting: one says "this is the window", the other says "this is where it
+/// will land", and a gesture that goes from one to the other should not look like the same thing
+/// moving.
 @MainActor
 private final class TargetOutline {
     private var panel: NSPanel?
@@ -1492,45 +1581,182 @@ private final class TargetOutline {
 }
 
 
-/// The dot the hold-and-point gesture starts from, marking where the cursor was when the chord went
-/// down.
+/// The ring the hold-and-point gesture draws around the cursor, from the moment the chord arms until
+/// it is released.
 ///
-/// Hookshot's own affordance, and it earns its place: without it the gesture has one visible end —
-/// you can see where the window will go but not what the direction is being measured from, which
-/// matters most in the dead zone, where "near the dot" is the difference between maximize and a
-/// half.
+/// It began as Hookshot's affordance — a dot left where the chord went down, so the direction had a
+/// visible origin — and now rides with the cursor instead, as one unbroken ring. The eighth of it
+/// facing the destination is lit over a faint track — one eighth per direction the gesture can
+/// point — and while the cursor is still inside the dead zone, where releasing takes the whole
+/// screen, the whole ring is lit. So the ring says where the window will go, next to the pointer,
+/// without the eye having to leave it for the landing block.
 @MainActor
 private final class AnchorDot {
-    private static let diameter: CGFloat = 14
+    /// Big enough to read as a ring around the pointer rather than a mark beside it, at the cost of
+    /// being well past Rectangle Pro's 15pt reticle. Its strokes are all that cover anything.
+    private static let diameter: CGFloat = 90
+    /// A thin line for the seven directions not taken, and a heavier one for the one that is: the
+    /// difference in weight, not only in colour, is what makes the lit segment read at a glance.
+    private static let trackWidth: CGFloat = 3
+    private static let litWidth: CGFloat = 6
+    /// Greys, fixed — not a setting. The lit segment is a darker grey than the faint light-grey
+    /// track, so the one direction reads by tone as well as by weight. On glass these are tints,
+    /// which the glass lightens or deepens with whatever is behind it; without glass they are the
+    /// flat colours.
+    private static let litGrey = NSColor(white: 0.45, alpha: 0.9)
+    private static let trackGrey = NSColor(white: 0.9, alpha: 0.35)
+    /// How long the lit segment takes to travel to a new direction. Short enough to finish well
+    /// before the next sector change on any real movement, long enough to be seen as travel.
+    private static let glide: CFTimeInterval = 0.15
+
     private var panel: NSPanel?
+    /// Each part of the ring is a view filled with glass (or, before macOS 26, a flat colour) and
+    /// cut to its shape by a mask — glass only comes as a rounded rectangle, so the mask is
+    /// how it becomes a ring. Measured on macOS 27: a masked `NSGlassEffectView` renders clipped to
+    /// the mask, and its `tintColor` shows only in the `.clear` style; `.regular` stays grey.
+    private var track = NSView()
+    /// The whole ring lit, for the dead zone — releasing there takes the whole screen.
+    private var litAll = NSView()
+    /// One segment, cut facing due east and turned to face the direction being pointed at. The
+    /// *mask* turns, not the view, so a change of direction animates as the segment travelling
+    /// round the ring through glass that stays put.
+    private var litOne = NSView()
+    private let litOneMask = CAShapeLayer()
+    /// `litOneMask`'s rotation in radians, kept unwrapped so the glide can always take the short way.
+    private var angle: CGFloat = 0
+    private var lit: WindowArrangement?
 
     /// `point` is in Cocoa's bottom-up space — straight from `NSEvent.mouseLocation`, no flip.
     func show(at point: CGPoint) {
         let panel = self.panel ?? make()
         self.panel = panel
-        // The one configurable colour here, read on every show — along with the shape, which lives
-        // here rather than in the factory so the panel has exactly one styling path.
-        if let layer = panel.contentView?.layer {
-            layer.backgroundColor = SnapAppearance.shared.dot.cgColor
-            layer.cornerRadius = Self.diameter / 2
-            // Without this the corner radius shapes the border but not the fill, and a 14pt dot
-            // renders as a square with rounded edges drawn on top of it.
-            layer.masksToBounds = true
-        }
-        panel.setFrame(
-            NSRect(
-                x: point.x - Self.diameter / 2, y: point.y - Self.diameter / 2,
-                width: Self.diameter, height: Self.diameter),
-            display: true)
+        panel.setFrame(Self.frame(centredOn: point), display: true)
+        // Straight to the dead zone's whole ring: whatever the last gesture ended on has no business
+        // showing on a ring that has not been pointed anywhere yet.
+        litOne.isHidden = true
+        litAll.isHidden = false
+        lit = .maximize
         panel.restoreAllSpaces("drag anchor dot")
         panel.orderFrontRegardless()
+    }
+
+    /// Re-centres the ring on `point`, for the per-move path. The frame only: the colour, the shape
+    /// and the Space tagging were all settled by `show(at:)` and do not change mid-gesture.
+    func move(to point: CGPoint) {
+        panel?.setFrameOrigin(Self.frame(centredOn: point).origin)
+    }
+
+    /// Lights the eighth facing `zone`, or the whole ring for `.maximize`. Called when the zone
+    /// changes, not on every move.
+    ///
+    /// From one direction to another the lit segment glides round the ring the short way; one
+    /// appearing from the dead zone starts where it is going rather than travelling from wherever
+    /// it was last. Reduce Motion makes it instant.
+    func highlight(_ zone: WindowArrangement) {
+        guard zone != lit else { return }
+        let wasPointing = lit.flatMap(PointDirection.heading(of:)) != nil
+        lit = zone
+        guard let heading = PointDirection.heading(of: zone) else {
+            litOne.isHidden = true
+            litAll.isHidden = false
+            return
+        }
+        let from = angle
+        var delta = (heading * .pi / 180 - angle).truncatingRemainder(dividingBy: 2 * .pi)
+        if delta > .pi { delta -= 2 * .pi } else if delta <= -.pi { delta += 2 * .pi }
+        angle += delta
+        // The model value set with actions off, and the travel added explicitly: an implicit
+        // `transform` animation interpolates matrices, which cuts across the ring rather than going
+        // round it.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        litOneMask.setValue(angle, forKeyPath: "transform.rotation.z")
+        CATransaction.commit()
+        if wasPointing, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let travel = CABasicAnimation(keyPath: "transform.rotation.z")
+            travel.fromValue = from
+            travel.toValue = angle
+            travel.duration = Self.glide
+            travel.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            litOneMask.add(travel, forKey: "travel")
+        }
+        litOne.isHidden = false
+        litAll.isHidden = true
     }
 
     func hide() {
         panel?.orderOut(nil)
     }
 
-    /// Above the destination block, which is a full half-screen the dot would otherwise be lost
-    /// inside. Its colour and corner radius are set on every show — see `show(at:)`.
-    private func make() -> NSPanel { OverlayPanel.make(level: .statusBar) }
+    private static func frame(centredOn point: CGPoint) -> NSRect {
+        NSRect(
+            x: point.x - diameter / 2, y: point.y - diameter / 2, width: diameter, height: diameter)
+    }
+
+    /// What one part of the ring is filled with: clear glass tinted `grey` on macOS 26 and later —
+    /// `.clear` is the style whose tint shows — and a flat layer of it before that.
+    private static func fill(_ bounds: CGRect, grey: NSColor) -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: bounds)
+            glass.style = .clear
+            glass.cornerRadius = 0
+            glass.tintColor = grey
+            return glass
+        }
+        let view = NSView(frame: bounds)
+        view.wantsLayer = true
+        view.layer?.backgroundColor = grey.cgColor
+        return view
+    }
+
+    /// The lit eighth, facing due east, as the outline of a `width`-wide stroke with rounded ends —
+    /// a shape to mask with, not a line to stroke. Its rounded ends included, it covers exactly the
+    /// 45° of its direction's sector, so it sits on the track as that direction and no more.
+    private static func eighth(width: CGFloat, centre: CGPoint, radius: CGFloat) -> CGPath {
+        let half = 22.5 * .pi / 180 - (width / 2) / radius
+        let line = CGMutablePath()
+        line.addArc(
+            center: centre, radius: radius, startAngle: -half, endAngle: half, clockwise: false)
+        return line.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 1)
+    }
+
+    /// The whole ring as the outline of a `width`-wide stroke: unbroken, so no direction is
+    /// singled out until one is pointed at.
+    private static func circle(width: CGFloat, centre: CGPoint, radius: CGFloat) -> CGPath {
+        CGPath(
+            ellipseIn: CGRect(
+                x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2),
+            transform: nil
+        ).copy(strokingWithWidth: width, lineCap: .butt, lineJoin: .round, miterLimit: 1)
+    }
+
+    /// Above the destination block, which is a full half-screen the ring would otherwise be lost
+    /// inside. The fills and their masks are built once here — the panel never changes size — and
+    /// only the colour, which part shows and the one mask's rotation change after that.
+    private func make() -> NSPanel {
+        let panel = OverlayPanel.make(level: .statusBar)
+        let bounds = CGRect(x: 0, y: 0, width: Self.diameter, height: Self.diameter)
+        let centre = CGPoint(x: bounds.midX, y: bounds.midY)
+        // Both weights on one centreline, inset so the heavier one stays inside `diameter`.
+        let radius = (Self.diameter - Self.litWidth) / 2
+        // Angles anticlockwise from due east, the space `PointDirection.heading(of:)` answers in:
+        // the layer is y-up, so +90° sits at the top on screen (measured), and a positive rotation
+        // of `litOneMask` turns the lit eighth anticlockwise to match.
+        let trackMask = CAShapeLayer()
+        trackMask.path = Self.circle(width: Self.trackWidth, centre: centre, radius: radius)
+        let litAllMask = CAShapeLayer()
+        litAllMask.path = Self.circle(width: Self.litWidth, centre: centre, radius: radius)
+        litOneMask.path = Self.eighth(width: Self.litWidth, centre: centre, radius: radius)
+        track = Self.fill(bounds, grey: Self.trackGrey)
+        litAll = Self.fill(bounds, grey: Self.litGrey)
+        litOne = Self.fill(bounds, grey: Self.litGrey)
+        for (view, mask) in [(track, trackMask), (litAll, litAllMask), (litOne, litOneMask)] {
+            view.wantsLayer = true
+            // Turning `litOneMask` about its own centre is turning it about the ring's.
+            mask.frame = bounds
+            view.layer?.mask = mask
+            panel.contentView?.addSubview(view)
+        }
+        return panel
+    }
 }

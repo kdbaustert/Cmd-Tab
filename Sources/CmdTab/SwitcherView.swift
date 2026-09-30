@@ -658,7 +658,9 @@ private struct TargetRow: View {
 /// The ⌘-number hint on a list row. Set in the panel's own text colours rather than the tile
 /// badge's fixed black-on-grey: on a row it sits against the glass, not against app artwork, so it
 /// can follow the appearance the way the rest of the row does.
-private struct RowNumber: View {
+///
+/// Not private, like `NumberBadge`: the Appearance preview draws the real hints rather than a copy.
+struct RowNumber: View {
     let number: Int
 
     var body: some View {
@@ -845,7 +847,10 @@ private struct Badge: View {
 
 /// The ⌘-number shortcut for a tile. Deliberately quiet — it is a hint, not a decoration, and
 /// there is one on every tile at once.
-private struct NumberBadge: View {
+///
+/// Not private: the Appearance preview draws the real badge, so a theme that turns the numbers off
+/// visibly loses them there too.
+struct NumberBadge: View {
     /// #b7b7b7 on #000000. Fixed rather than semantic: the badge sits on top of app artwork of
     /// every possible colour, not on the panel, so it cannot follow the light/dark appearance.
     private static let foreground = Color(red: 183 / 255, green: 183 / 255, blue: 183 / 255)
@@ -868,6 +873,9 @@ struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
     /// nil keeps the material's built-in blur; a value retunes the glass's blur radius.
     var blurRadius: Double?
+    /// nil inherits, which is what the switcher wants — its panels carry the forced appearance
+    /// themselves. The Settings preview has no panel of its own to carry it, so it passes one.
+    var appearance: NSAppearance?
 
     func makeNSView(context: Context) -> BlurVisualEffectView {
         let view = BlurVisualEffectView()
@@ -875,6 +883,7 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.blendingMode = .behindWindow
         view.state = .active
         view.overrideBlurRadius = blurRadius
+        view.appearance = appearance
         return view
     }
 
@@ -884,6 +893,7 @@ struct VisualEffectBackground: NSViewRepresentable {
         // material re-tears the glass down while `overrideBlurRadius` walks the layer tree.
         if view.material != material { view.material = material }
         view.overrideBlurRadius = blurRadius
+        if view.appearance != appearance { view.appearance = appearance }
     }
 }
 

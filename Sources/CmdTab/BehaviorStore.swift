@@ -820,12 +820,14 @@ final class BehaviorStore: ObservableObject {
     ///   separate keys rather than the one this was, so the name stays retired.
     ///   `Migration.reviveSnapHighlightColor` seeds both new keys from it once, so a colour chosen
     ///   before the withdrawal is not lost.
+    /// - `windowSnapDotColorHex`: the hold-and-point ring's colour. The ring became fixed greys,
+    ///   drawn in glass, and the setting went with it.
     static let retiredDefaultsKeys = [
         "titleWeight", "mode", "windowScope", "skipMinimized", "reflectModeInMenuBar",
         "alwaysShowTitles", "panelOpacity", "windowSnapHighlightColorHex", "showBadges",
         // Saved layouts, removed with the feature. `Migration.dropSavedLayouts` deletes it once;
         // listed here too so a reset sweeps it on any install that migration has not reached.
-        "windowLayouts", "configFileLocation",
+        "windowLayouts", "configFileLocation", "windowSnapDotColorHex",
     ]
 
     /// Wipes every owned key. Does not fire `onChange` itself — callers follow with `reload()`,

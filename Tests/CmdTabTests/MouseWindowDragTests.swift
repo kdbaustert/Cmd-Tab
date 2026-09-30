@@ -279,6 +279,44 @@ final class MouseWindowDragTests: XCTestCase {
         XCTAssertEqual(PointDirection.zone(for: CGSize(width: 20, height: -15)), .maximize)
     }
 
+    /// Progress grows with distance, in any direction, and reaches 1 exactly where the offset stops
+    /// meaning the whole screen — which is the line a flick has to cross.
+    func testProgressCrossesTheDeadZone() {
+        let edge = PointDirection.deadZone
+        XCTAssertEqual(PointDirection.progress(for: .zero), 0)
+        XCTAssertEqual(PointDirection.progress(for: CGSize(width: 0, height: -edge / 2)), 0.5)
+        XCTAssertEqual(PointDirection.progress(for: CGSize(width: 27, height: 36)), 45 / edge)
+        XCTAssertEqual(PointDirection.progress(for: CGSize(width: -300, height: 0)), 1)
+        XCTAssertEqual(PointDirection.progress(for: CGSize(width: edge, height: 0)), 1)
+        XCTAssertNotEqual(PointDirection.zone(for: CGSize(width: edge, height: 0)), .maximize)
+        XCTAssertEqual(PointDirection.zone(for: CGSize(width: edge - 1, height: 0)), .maximize)
+    }
+
+    /// The ring lights the segment centred on each sector, so a pointer aimed straight at a segment
+    /// gets that segment's arrangement — the ring and the snap cannot disagree about a direction.
+    func testEachRingSegmentFacesTheZoneItLightsFor() throws {
+        XCTAssertEqual(PointDirection.headings.count, 8)
+        XCTAssertNil(PointDirection.heading(of: .maximize))
+        for zone in PointDirection.headings {
+            let radians = try XCTUnwrap(PointDirection.heading(of: zone)) * .pi / 180
+            let aimed = CGSize(width: 200 * cos(radians), height: 200 * sin(radians))
+            XCTAssertEqual(PointDirection.zone(for: aimed), zone, "\(zone)")
+        }
+        XCTAssertEqual(PointDirection.heading(of: .topHalf), 90)
+        XCTAssertEqual(PointDirection.heading(of: .bottomLeft), 225)
+    }
+
+    /// A release before arming snaps only when the pointer was thrown past the dead zone. A tap —
+    /// the front of every ⌃⌘ keyboard shortcut — must not maximize the window under the pointer.
+    func testAFlickSnapsItsDirectionAndATapDoesNothing() {
+        let edge = PointDirection.deadZone
+        XCTAssertNil(PointDirection.flick(for: .zero))
+        XCTAssertNil(PointDirection.flick(for: CGSize(width: edge - 1, height: 0)))
+        XCTAssertEqual(PointDirection.flick(for: CGSize(width: -120, height: 0)), .leftHalf)
+        XCTAssertEqual(PointDirection.flick(for: CGSize(width: 0, height: 80)), .topHalf)
+        XCTAssertEqual(PointDirection.flick(for: CGSize(width: 90, height: -90)), .bottomRight)
+    }
+
     /// Cocoa's y-up space: pointing *up* is a positive height.
     func testTheFourCardinalDirections() {
         XCTAssertEqual(PointDirection.zone(for: CGSize(width: 300, height: 0)), .rightHalf)

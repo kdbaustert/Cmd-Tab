@@ -470,9 +470,10 @@ final class DragSnap {
 /// them cannot drift.
 ///
 /// Read at show time rather than baked in when a panel is built: the panels are made once and
-/// reused for the life of the app, so anything read at creation would be stale after a change. Only
-/// `dot` can actually change today, but reading all of it the same way is what keeps a future
-/// setting from needing new plumbing to reach the screen.
+/// reused for the life of the app, so anything read at creation would be stale after a change.
+///
+/// The ring around the cursor in the hold-and-point gesture is not here: it is fixed greys, drawn
+/// in glass where there is glass, and has no setting — see `AnchorDot`.
 @MainActor
 final class SnapAppearance {
     static let shared = SnapAppearance()
@@ -503,26 +504,15 @@ final class SnapAppearance {
     /// part, which is why this and `landing` are settings now rather than constants.
     private(set) var outline: NSColor = SnapAppearance.rectangleHighlight
 
-    /// The block showing where the window will land, washed down to `blockAlpha` inside a
-    /// full-strength border of the same colour.
+    /// The border showing where the window will land — a border only, nothing filled in, so what is
+    /// underneath stays fully visible while you decide whether to cover it.
     ///
     /// Defaults to matching `outline`, and the two are separate settings rather than one because
     /// they answer different questions — one says "this is the window", the other "this is where it
     /// goes" — and someone who wants to tell them apart at a glance can now give them two colours.
-    /// The wash is what keeps the block from pretending to *be* the window: you can still see what
-    /// is underneath, which is the thing you are deciding to cover.
+    /// With both drawn as borders, the colour and the corner radius are what tell them apart.
     private(set) var landing: NSColor = SnapAppearance.rectangleHighlight
 
-    /// Applied to the **fill only**, never to the border.
-    ///
-    /// Alpha on the window would fade the border with the fill, and a hairline at a quarter
-    /// strength over a busy backdrop is the one line you actually navigate by, lost. So the edge is
-    /// drawn full and only the fill is washed.
-    ///
-    /// Lower than the 0.3 this used when the fill was black. Black at 30% darkens whatever is
-    /// behind it and reads as shadow; a saturated purple at the same value reads as paint, and at
-    /// that strength it swamps the window content underneath rather than tinting it.
-    static let blockAlpha: CGFloat = 0.22
     /// Rectangle's `footprintBorderWidth` default.
     static let borderWidth: CGFloat = 2
 
@@ -544,30 +534,20 @@ final class SnapAppearance {
     /// leaving four wedges of window outside the highlight.
     static let outlineCornerRadius: CGFloat = 10
 
-    /// The anchor dot. Always full strength: it is 14pt across, and at `blockAlpha` — the fraction
-    /// the larger overlays are washed to — it would be invisible.
-    ///
-    /// Rectangle Pro's equivalent is its reticle, which its own `reticleSize` puts at 15pt — near
-    /// enough the same object at near enough the same size, which is why the two now share a
-    /// colour as well.
-    private(set) var dot: NSColor = SnapAppearance.rectangleHighlight
-
-    /// What an unconfigured install gets for all three. One value behind them, so the snap UI ships
+    /// What an unconfigured install gets for both. One value behind them, so the snap UI ships
     /// looking like one system and only diverges if someone deliberately pulls it apart.
     static var defaultOutline: Color { Color(nsColor: rectangleHighlight) }
     static var defaultLanding: Color { Color(nsColor: rectangleHighlight) }
-    static var defaultDot: Color { Color(nsColor: rectangleHighlight) }
 
     /// Pushed by `WindowTilingStore` whenever a colour changes, and read again by each overlay on
     /// its next `show` — every one of them restyles per-show, so a change made mid-session lands on
     /// the next gesture without anything having to be torn down or redrawn.
     ///
-    /// Individually optional so a caller can set one without having to know the other two, which is
-    /// how the store's three separate `didSet`s use it.
-    func apply(outline: Color? = nil, landing: Color? = nil, dot: Color? = nil) {
+    /// Individually optional so a caller can set one without having to know the other, which is
+    /// how the store's two separate `didSet`s use it.
+    func apply(outline: Color? = nil, landing: Color? = nil) {
         if let outline { self.outline = NSColor(outline) }
         if let landing { self.landing = NSColor(landing) }
-        if let dot { self.dot = NSColor(dot) }
     }
 }
 
@@ -611,12 +591,11 @@ final class SnapPreview {
     /// the first frame of a gesture drawn the old way.
     private func restyle(_ panel: NSPanel) {
         guard let layer = panel.contentView?.layer else { return }
-        // Opaque panel, translucent fill — see `SnapAppearance.blockAlpha` for why the alpha is
-        // here and not on the window.
+        // A border and nothing inside it: the landing spot is marked without tinting the windows
+        // it is about to cover. Full strength — a faded hairline over a busy backdrop is lost.
         panel.alphaValue = 1
-        layer.backgroundColor = SnapAppearance.shared.landing
-            .withAlphaComponent(SnapAppearance.blockAlpha).cgColor
-        layer.borderColor = SnapAppearance.shared.outline.cgColor
+        layer.backgroundColor = NSColor.clear.cgColor
+        layer.borderColor = SnapAppearance.shared.landing.cgColor
         layer.borderWidth = SnapAppearance.borderWidth
         layer.cornerRadius = SnapAppearance.blockCornerRadius
     }
