@@ -14,6 +14,8 @@ import CoreGraphics
 /// It began as "an arrangement the focused window can be snapped to", and the name still says so,
 /// but three families have since joined that do not resize anything: the display and Desktop moves,
 /// the four nudges, and — since focus and swap arrived — two that do not even act on geometry alone.
+/// Two more act on *every* window on the display rather than the focused one — tile all and cascade
+/// all — and are dispatched ahead of the tiler the way a swap is.
 /// They live here rather than in a store of their own because everything *around* a binding is the
 /// same work whatever the binding does: persistence that can tell "cleared" from "never set", a
 /// recorder, cross-store conflict detection, the per-app `neverTile` guard and the Overview. A
@@ -33,6 +35,66 @@ enum MarkedTiling {
         case 3: return [.leftThird, .centerThird, .rightThird]
         case 4: return [.topLeft, .topRight, .bottomLeft, .bottomRight]
         default: return nil
+        }
+    }
+}
+
+/// The arithmetic behind "Tile all windows" and "Cascade all windows", kept out of the controller
+/// and the tiler for the reason `MarkedTiling` is: the layout is the part with real logic in it, and
+/// as a pure function of a count, a size and an area it is testable without a window on screen.
+///
+/// Everything around it — which windows, the never-tile rules, the Accessibility writes, the restore
+/// points — is `SwitcherController.arrangeAllWindows` and `WindowTiler.arrange`'s job.
+enum ArrangeAll {
+    /// The most windows either verb touches; the frontmost ones, and the rest are left where they
+    /// are. A grid of twelve is already four columns of windows a few hundred points wide on a
+    /// laptop, and a cascade of twelve spends a third of the screen on titlebars. Past that the
+    /// layout stops being something anyone arranged on purpose and starts being a way to lose a
+    /// window under the ones that moved — and every window is a round trip to another process.
+    static let limit = 12
+
+    /// One cell per window, frontmost first, filled row by row from the top-left.
+    ///
+    /// `ceil(sqrt(count))` columns — the squarest grid that holds them — and as many rows as that
+    /// needs. The last row is usually short, and its windows widen to share the row's full width
+    /// rather than leaving a hole beside them: each row is cut into as many columns as it has
+    /// windows. `gap` is applied per cell by `TilingGap.inset`, so the seams and the screen edges
+    /// come out as they do for any other tile; a single window is the maximize frame.
+    static func grid(count: Int, in area: CGRect, gap: CGFloat) -> [CGRect] {
+        guard count > 0 else { return [] }
+        let columns = Int(Double(count).squareRoot().rounded(.up))
+        let rows = (count + columns - 1) / columns
+        return (0..<count).map { index in
+            let row = index / columns
+            let inRow = row == rows - 1 ? count - columns * (rows - 1) : columns
+            let frame = WindowArrangement.cell(index % columns, of: inRow, row, of: rows, in: area)
+            return TilingGap.inset(frame, in: area, gap: gap)
+        }
+    }
+
+    /// One frame per window, frontmost first, stacked so the frontmost sits at the largest offset.
+    ///
+    /// `sizes` are the windows' own, and each is kept — only shrunk where the whole stack would
+    /// otherwise run past `area`, which is what stops the last titlebar ending up off the screen.
+    /// The windows are already stacked front to back, so handing the back one the top-left corner
+    /// and each one nearer the front a titlebar further down and across puts every titlebar in
+    /// view and needs no raise. The step shrinks on an axis too short for the stack, so the
+    /// windows never have to be squeezed below `minimumSize` to make room.
+    static func cascade(sizes: [CGSize], in area: CGRect) -> [CGRect] {
+        guard !sizes.isEmpty else { return [] }
+        let steps = CGFloat(sizes.count - 1)
+        let stepX = steps > 0
+            ? min(WindowTiler.titlebarHeight, max(0, area.width - WindowArrangement.minimumSize) / steps)
+            : 0
+        let stepY = steps > 0
+            ? min(WindowTiler.titlebarHeight, max(0, area.height - WindowArrangement.minimumSize) / steps)
+            : 0
+        return sizes.enumerated().map { index, size in
+            let depth = CGFloat(sizes.count - 1 - index)
+            return CGRect(
+                x: area.minX + depth * stepX, y: area.minY + depth * stepY,
+                width: min(size.width, area.width - steps * stepX),
+                height: min(size.height, area.height - steps * stepY))
         }
     }
 }
@@ -57,6 +119,13 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
     case desktop6, desktop7, desktop8, desktop9
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
+    case firstFourth, secondFourth, thirdFourth, lastFourth, leftThreeFourths, rightThreeFourths
+    case topLeftSixth, topCenterSixth, topRightSixth
+    case bottomLeftSixth, bottomCenterSixth, bottomRightSixth
+    case topLeftNinth, topCenterNinth, topRightNinth
+    case middleLeftNinth, middleCenterNinth, middleRightNinth
+    case bottomLeftNinth, bottomCenterNinth, bottomRightNinth
+    case tileAll, cascadeAll
 
     var id: String { rawValue }
 
@@ -126,6 +195,29 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
         case .swapRight: return "Swap with window to the right"
         case .swapUp: return "Swap with window above"
         case .swapDown: return "Swap with window below"
+        case .firstFourth: return "First fourth"
+        case .secondFourth: return "Second fourth"
+        case .thirdFourth: return "Third fourth"
+        case .lastFourth: return "Last fourth"
+        case .leftThreeFourths: return "Left three-fourths"
+        case .rightThreeFourths: return "Right three-fourths"
+        case .topLeftSixth: return "Top-left sixth"
+        case .topCenterSixth: return "Top-middle sixth"
+        case .topRightSixth: return "Top-right sixth"
+        case .bottomLeftSixth: return "Bottom-left sixth"
+        case .bottomCenterSixth: return "Bottom-middle sixth"
+        case .bottomRightSixth: return "Bottom-right sixth"
+        case .topLeftNinth: return "Top-left ninth"
+        case .topCenterNinth: return "Top-middle ninth"
+        case .topRightNinth: return "Top-right ninth"
+        case .middleLeftNinth: return "Middle-left ninth"
+        case .middleCenterNinth: return "Center ninth"
+        case .middleRightNinth: return "Middle-right ninth"
+        case .bottomLeftNinth: return "Bottom-left ninth"
+        case .bottomCenterNinth: return "Bottom-middle ninth"
+        case .bottomRightNinth: return "Bottom-right ninth"
+        case .tileAll: return "Tile all windows"
+        case .cascadeAll: return "Cascade all windows"
         }
     }
 
@@ -145,6 +237,12 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
     /// not asked for, is the guess `GlobalActions` declines to make for exactly the same reason. So
     /// focus, swap and the nudges arrive as rows with a recorder and no chord, one click from being
     /// bound, and nobody who does not want them pays a keystroke for them.
+    ///
+    /// The fourths, sixths and ninths are unbound for the opposite reason: there are twenty-one of
+    /// them, and no key cluster on the machine has room for twenty-one chords that a finger could
+    /// learn. They are for someone who has a layout in mind and wants to bind the two or three
+    /// cells of it. Tile all and cascade all are unbound because they are the only verbs here that
+    /// move windows the user did not point at, which is not something to arm with a default chord.
     ///
     /// The two thirds pairs are unbound on a second argument as well: the width cycle already
     /// reaches them. Pressing ⌃⌘← twice gives the left two-thirds and three times the left third, so
@@ -179,6 +277,17 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
         case .nudgeLeft, .nudgeRight, .nudgeUp, .nudgeDown: return nil
         case .focusLeft, .focusRight, .focusUp, .focusDown: return nil
         case .swapLeft, .swapRight, .swapUp, .swapDown: return nil
+        case .firstFourth, .secondFourth, .thirdFourth, .lastFourth,
+            .leftThreeFourths, .rightThreeFourths:
+            return nil
+        case .topLeftSixth, .topCenterSixth, .topRightSixth,
+            .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth:
+            return nil
+        case .topLeftNinth, .topCenterNinth, .topRightNinth,
+            .middleLeftNinth, .middleCenterNinth, .middleRightNinth,
+            .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth:
+            return nil
+        case .tileAll, .cascadeAll: return nil
         // The three whole-window variants. ⌃⌘↩ is maximize and there is no second key that reads as
         // "maximize, but only this way" — so they arrive as rows with a recorder, and reachable by
         // URL without spending a chord at all.
@@ -385,6 +494,13 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
     /// Whether this only moves the keyboard focus, changing no window's geometry at all.
     var isFocus: Bool { focusStep != nil }
 
+    /// Whether this acts on every window on the display rather than one — tile all and cascade all.
+    ///
+    /// They have no frame of their own: the layout depends on how many windows there are, so they
+    /// are dispatched ahead of the tiler (see `SwitcherController.arrangeAllWindows`) and answer
+    /// nil from `frame`, exactly as a swap does.
+    var arrangesAll: Bool { self == .tileAll || self == .cascadeAll }
+
     /// Whether the tiling switch governs this arrangement. See `ungated` for the argument.
     ///
     /// A computed property rather than a lookup in `ungated`, because it is asked on the event-tap
@@ -415,9 +531,10 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
 
     /// Everything the tiling switch does **not** govern.
     ///
-    /// Two families, on one argument: neither resizes anything. A move carries a window to another
-    /// display or Desktop at exactly the size it already had, and a focus chord touches no window's
-    /// frame whatsoever — so "I don't want Cmd-Tab resizing my windows" is not a reason to lose
+    /// Two families, on one argument: neither resizes anything of its own accord. A move carries a
+    /// window to another display or Desktop at the size it already had — or, for a window still
+    /// where a tile left it, as that same tile there, a shape the user already asked for — and a
+    /// focus chord touches no window's frame whatsoever — so "I don't want Cmd-Tab resizing my windows" is not a reason to lose
     /// either, and a chord that silently did nothing because of a checkbox captioned about tiling is
     /// the failure this split exists to avoid.
     ///
@@ -441,9 +558,12 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
     /// is wherever its app put it — so "a little bigger than that" is not a placement anyone can
     /// have meant. A swap has a second disqualification on top, which is that it needs a neighbour
     /// to swap with and a launching window has no established place among its neighbours yet.
+    ///
+    /// Tile all and cascade all go too, on the plainest ground: a rule's arrangement is where *one*
+    /// window opens, and these rearrange every window on the display.
     static let launchable: [WindowArrangement] = tilingArrangements.filter {
         $0 != .restore && $0.sizeStep == nil && $0.nudgeStep == nil && $0.swapStep == nil
-            && $0.edgeStep == nil
+            && $0.edgeStep == nil && !$0.arrangesAll
     }
 
     /// Whether a gap applies. Only the arrangements that *tile* — the ones whose frame is a
@@ -471,6 +591,11 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
         // two different things depending on which key produced the window.
         case .maximizeHeight, .maximizeWidth, .almostMaximize:
             return false
+        // Cascading is not tiling: the windows overlap on purpose and keep their own sizes, so there
+        // is no seam for a gap to widen. Tile all *does* take one, but `ArrangeAll.grid` applies it
+        // itself — it is the only place that knows which row a cell is in.
+        case .cascadeAll:
+            return false
         default:
             return sizeStep == nil && nudgeStep == nil && focusStep == nil && swapStep == nil
                 && edgeStep == nil
@@ -484,6 +609,35 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .leftHalf, .rightHalf, .topHalf, .bottomHalf: return true
         default: return false
+        }
+    }
+
+    /// Whether the frame is nothing but a fraction of the area it is applied to — the window's own
+    /// frame takes no part in it, so the same arrangement on another display is the same tile there.
+    ///
+    /// That is what lets a window still sitting where such a tile left it be *re-tiled* when it is
+    /// moved across displays, instead of carried at its absolute size. `.center`, the two
+    /// half-maximizes, the size steps, the edge resizes and the nudges are all defined against the
+    /// window as it is, so they are out, and so are tile all and cascade all, whose cell depends on
+    /// how many windows were on the display. An arrangement that later adds another fraction opts
+    /// in by adding its case here and nowhere else.
+    var isPureFraction: Bool {
+        switch self {
+        case .leftHalf, .rightHalf, .topHalf, .bottomHalf,
+            .leftThird, .centerThird, .rightThird, .topThird, .bottomThird,
+            .leftTwoThirds, .rightTwoThirds,
+            .topLeft, .topRight, .bottomLeft, .bottomRight,
+            .firstFourth, .secondFourth, .thirdFourth, .lastFourth,
+            .leftThreeFourths, .rightThreeFourths,
+            .topLeftSixth, .topCenterSixth, .topRightSixth,
+            .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth,
+            .topLeftNinth, .topCenterNinth, .topRightNinth,
+            .middleLeftNinth, .middleCenterNinth, .middleRightNinth,
+            .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth,
+            .maximize, .almostMaximize:
+            return true
+        default:
+            return false
         }
     }
 
@@ -545,6 +699,36 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
             return CGRect(
                 x: area.maxX - area.width * 2 / 3, y: area.minY,
                 width: area.width * 2 / 3, height: area.height)
+        // Fourths, sixths and ninths are cells of one grid, and `cell` is what keeps the trailing
+        // ones flush: the last column and row are written as `max - size`, as the right third is.
+        // Sixths are three columns by two rows and no more — a portrait display gets the same
+        // landscape layout, not a transposed one.
+        case .firstFourth: return Self.cell(0, of: 4, in: area)
+        case .secondFourth: return Self.cell(1, of: 4, in: area)
+        case .thirdFourth: return Self.cell(2, of: 4, in: area)
+        case .lastFourth: return Self.cell(3, of: 4, in: area)
+        case .leftThreeFourths:
+            return CGRect(
+                x: area.minX, y: area.minY, width: area.width * 3 / 4, height: area.height)
+        case .rightThreeFourths:
+            return CGRect(
+                x: area.maxX - area.width * 3 / 4, y: area.minY,
+                width: area.width * 3 / 4, height: area.height)
+        case .topLeftSixth: return Self.cell(0, of: 3, 0, of: 2, in: area)
+        case .topCenterSixth: return Self.cell(1, of: 3, 0, of: 2, in: area)
+        case .topRightSixth: return Self.cell(2, of: 3, 0, of: 2, in: area)
+        case .bottomLeftSixth: return Self.cell(0, of: 3, 1, of: 2, in: area)
+        case .bottomCenterSixth: return Self.cell(1, of: 3, 1, of: 2, in: area)
+        case .bottomRightSixth: return Self.cell(2, of: 3, 1, of: 2, in: area)
+        case .topLeftNinth: return Self.cell(0, of: 3, 0, of: 3, in: area)
+        case .topCenterNinth: return Self.cell(1, of: 3, 0, of: 3, in: area)
+        case .topRightNinth: return Self.cell(2, of: 3, 0, of: 3, in: area)
+        case .middleLeftNinth: return Self.cell(0, of: 3, 1, of: 3, in: area)
+        case .middleCenterNinth: return Self.cell(1, of: 3, 1, of: 3, in: area)
+        case .middleRightNinth: return Self.cell(2, of: 3, 1, of: 3, in: area)
+        case .bottomLeftNinth: return Self.cell(0, of: 3, 2, of: 3, in: area)
+        case .bottomCenterNinth: return Self.cell(1, of: 3, 2, of: 3, in: area)
+        case .bottomRightNinth: return Self.cell(2, of: 3, 2, of: 3, in: area)
         case .larger, .smaller:
             return resized(current, in: area)
         case .growLeft, .growRight, .growUp, .growDown,
@@ -592,11 +776,25 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
         // Focus moves no window, and a swap needs a second window this function has never been told
         // about. Both are dispatched before the tiler is ever reached — see
         // `SwitcherController.applyTiling` — and answer nil here for the same reason `.restore` does:
-        // there is no frame computable from this screen alone.
+        // there is no frame computable from this screen alone. Tile all and cascade all join them:
+        // their layout is a function of how many windows there are, which this never hears.
         case .focusLeft, .focusRight, .focusUp, .focusDown,
-            .swapLeft, .swapRight, .swapUp, .swapDown:
+            .swapLeft, .swapRight, .swapUp, .swapDown, .tileAll, .cascadeAll:
             return nil
         }
+    }
+
+    /// The cell at `column` of `columns` and `row` of `rows` in `area`, the last of each written as
+    /// `max - size` so it lands flush against the far edge whatever the division rounds to.
+    fileprivate static func cell(
+        _ column: Int, of columns: Int, _ row: Int = 0, of rows: Int = 1, in area: CGRect
+    ) -> CGRect {
+        let width = area.width / CGFloat(columns)
+        let height = area.height / CGFloat(rows)
+        return CGRect(
+            x: column == columns - 1 ? area.maxX - width : area.minX + CGFloat(column) * width,
+            y: row == rows - 1 ? area.maxY - height : area.minY + CGFloat(row) * height,
+            width: width, height: height)
     }
 
     /// `current` grown or shrunk by one step, anchored on its own centre and held inside `area`.
@@ -734,7 +932,9 @@ enum WindowArrangement: String, CaseIterable, Identifiable, Sendable {
 
     /// The smallest a window may be shrunk to. Roughly a titlebar's worth in each direction — enough
     /// to still carry the traffic lights and be grabbed with a cursor.
-    private static let minimumSize: CGFloat = 120
+    ///
+    /// Not private: `ArrangeAll.cascade` stops stepping windows down the stack at the same floor.
+    static let minimumSize: CGFloat = 120
 }
 
 /// Insets a tiled frame so windows do not touch the screen edges or each other.
@@ -792,6 +992,12 @@ struct WindowTilingBindings: Equatable {
     /// Drag a window to a screen edge to tile it there. Independent of `isEnabled`: someone may want
     /// the mouse gesture and no global chords at all, or the reverse.
     var dragSnap: Bool = false
+    /// Whether dragging to the top edge tiles the top half rather than maximizing. Off by default,
+    /// which is the gesture every other platform's edge-snap has taught. See `DragSnap.EdgeOptions`.
+    var dragSnapTopHalf: Bool = false
+    /// Whether dragging to the bottom edge tiles a third of the screen's width rather than the
+    /// bottom half. Off by default, so nobody's bottom-edge drop changes on an update.
+    var dragSnapBottomThirds: Bool = false
     /// Whether the two Desktop moves fire. Off by default, and the only *move* with a switch in
     /// front of it.
     ///
@@ -944,6 +1150,8 @@ final class WindowTilingStore: ObservableObject {
         static let cycleWidths = "windowTilingCycleWidths"
         static let shortcuts = "windowTilingShortcuts"
         static let dragSnap = "windowTilingDragSnap"
+        static let dragSnapTopHalf = "windowTilingDragSnapTopHalf"
+        static let dragSnapBottomThirds = "windowTilingDragSnapBottomThirds"
         static let desktopMoves = "windowTilingDesktopMoves"
         static let followsDesktopMove = "windowTilingFollowsDesktopMove"
         static let pointerFollowsDisplay = "windowTilingPointerFollowsDisplay"
@@ -969,6 +1177,7 @@ final class WindowTilingStore: ObservableObject {
     /// Every key this store owns, for export/import/reset.
     static let defaultsKeys = [
         Key.enabled, Key.cycleWidths, Key.shortcuts, Key.dragSnap, Key.desktopMoves,
+        Key.dragSnapTopHalf, Key.dragSnapBottomThirds,
         Key.followsDesktopMove, Key.pointerFollowsDisplay,
         Key.gap, Key.gapTop, Key.gapBottom, Key.gapLeft, Key.gapRight,
         Key.dotHex, Key.outlineHex, Key.landingHex,
@@ -1135,6 +1344,24 @@ final class WindowTilingStore: ObservableObject {
         set {
             guard newValue != tiling.dragSnap else { return }
             tiling.dragSnap = newValue
+            persist()
+        }
+    }
+
+    var dragSnapTopHalf: Bool {
+        get { tiling.dragSnapTopHalf }
+        set {
+            guard newValue != tiling.dragSnapTopHalf else { return }
+            tiling.dragSnapTopHalf = newValue
+            persist()
+        }
+    }
+
+    var dragSnapBottomThirds: Bool {
+        get { tiling.dragSnapBottomThirds }
+        set {
+            guard newValue != tiling.dragSnapBottomThirds else { return }
+            tiling.dragSnapBottomThirds = newValue
             persist()
         }
     }
@@ -1365,6 +1592,8 @@ final class WindowTilingStore: ObservableObject {
             defaults.object(forKey: Key.cycleWidths) != nil
             ? defaults.bool(forKey: Key.cycleWidths) : true
         result.dragSnap = defaults.bool(forKey: Key.dragSnap)
+        result.dragSnapTopHalf = defaults.bool(forKey: Key.dragSnapTopHalf)
+        result.dragSnapBottomThirds = defaults.bool(forKey: Key.dragSnapBottomThirds)
         result.desktopMoves = defaults.bool(forKey: Key.desktopMoves)
         // Defaults to *true*, so absent has to be told from false — `bool(forKey:)` reports false
         // for both, which would silently ship the opposite of the documented default. Same shape as
@@ -1459,6 +1688,11 @@ final class WindowTilingStore: ObservableObject {
         Self.store(tiling.isEnabled, default: base.isEnabled, at: Key.enabled)
         Self.store(tiling.cycleWidths, default: base.cycleWidths, at: Key.cycleWidths)
         Self.store(tiling.dragSnap, default: base.dragSnap, at: Key.dragSnap)
+        Self.store(
+            tiling.dragSnapTopHalf, default: base.dragSnapTopHalf, at: Key.dragSnapTopHalf)
+        Self.store(
+            tiling.dragSnapBottomThirds, default: base.dragSnapBottomThirds,
+            at: Key.dragSnapBottomThirds)
         Self.store(tiling.desktopMoves, default: base.desktopMoves, at: Key.desktopMoves)
         Self.store(
             tiling.followsDesktopMove, default: base.followsDesktopMove,
@@ -1549,8 +1783,9 @@ enum WindowTiler {
     /// One window's restore slot: a frame to go back to, and what kind of frame it is.
     ///
     /// Normally it is the **anchor** — the frame the window had before any tiling started. A tile
-    /// writes it only when there is nothing recorded, so it stays the pre-tiling frame rather than
-    /// creeping forward a tile at a time. `.restore` swaps in the frame it is about to replace,
+    /// writes it only when there is nothing recorded, or when the window has been moved by hand
+    /// since the last write (see `tiled`), so it stays the pre-tiling frame rather than creeping
+    /// forward a tile at a time. `.restore` swaps in the frame it is about to replace,
     /// which is what makes restore a toggle rather than a one-shot.
     ///
     /// The swap is why `isRedo` exists. After a restore the slot holds the tile that was undone,
@@ -1571,11 +1806,34 @@ enum WindowTiler {
         var desk: [CGRect]
         /// True when `frame` is a tile a restore undid, rather than the pre-tiling anchor.
         var isRedo = false
+        /// Where the last write by the tiler left the window: the frame asked for and the frame
+        /// read back, for the reason `cycle.left` keeps both. Empty until that write has happened.
+        ///
+        /// What makes "the anchor is kept" conditional. Tile, resize by hand, tile again, and the
+        /// anchor kept from before the first tile sent restore to a frame the user had long since
+        /// left; a window that is no longer where the tiler put it has been moved by someone, and
+        /// the frame it is at now is the one to come back to.
+        var tiled: [CGRect] = []
+        /// The arrangement and width that produced `tiled`, when that was a pure fraction of the
+        /// screen — what a display move re-applies on the destination. nil after anything whose
+        /// frame depended on the window's own (see `WindowArrangement.isPureFraction`).
+        var placement: Placement?
 
-        /// The slot once a tile — anything but `.restore` — has been applied to a window at
-        /// `current`. An anchor is kept; nothing, or a redo entry, is replaced by `current`.
+        struct Placement: Equatable {
+            let arrangement: WindowArrangement
+            let fraction: CGFloat
+        }
+
+        /// Whether a window at `frame` is still where the tiler last left it.
+        func isAtTile(_ frame: CGRect) -> Bool {
+            WindowTiler.continuesCycle(left: tiled, current: frame)
+        }
+
+        /// The slot once a tile — anything but `.restore` — has been applied to a window that was
+        /// at `current` before it. An anchor is kept while the window is still where the tiler left
+        /// it; nothing, a redo entry, or a window someone has moved since is replaced by `current`.
         static func afterTile(_ slot: Self?, current: CGRect, desk: [CGRect]) -> Self {
-            if let slot, !slot.isRedo { return slot }
+            if let slot, !slot.isRedo, slot.isAtTile(current) { return slot }
             return Self(frame: current, desk: desk)
         }
 
@@ -1635,12 +1893,10 @@ enum WindowTiler {
     /// A window's frame carried from one display to another: the same fractional position, shrunk
     /// to fit if the destination is smaller, then clamped so it stays fully on it.
     ///
-    /// One copy, called from both places that move a window across displays — `apply`'s
-    /// `displayStep` branch, which is the ⌃⇧⌘-←/→ chord, and
-    /// `SwitchTarget.moveWindow(acrossDisplays:)`, which is the in-switcher move. They were
-    /// identical expressions written out twice, each with a comment promising it agreed with the
-    /// other and neither covered by a test. The drift had already happened once: the shrink-to-fit
-    /// had to be retrofitted into the switcher path after the chord already had it.
+    /// One copy, used by `displayMoveTarget` for every display move — the ⌃⇧⌘-←/→ chord, the
+    /// numbered targets and, through `apply`, `SwitchTarget.moveWindow(acrossDisplays:)`, which used
+    /// to keep a second copy of it. The drift had already happened once: the shrink-to-fit had to
+    /// be retrofitted into the switcher path after the chord already had it.
     ///
     /// `from` and `to` are *visible* areas, not full display frames — measuring against the full
     /// frame puts the window's top edge under the destination's menu bar.
@@ -1652,6 +1908,76 @@ enum WindowTiler {
             x: min(max(to.minX + relX * to.width, to.minX), max(to.minX, to.maxX - size.width)),
             y: min(max(to.minY + relY * to.height, to.minY), max(to.minY, to.maxY - size.height)),
             width: size.width, height: size.height)
+    }
+
+    /// Where a window lands when it is moved from `from` to `to`: re-tiled if it is still exactly
+    /// where a tile left it, carried at its own size otherwise.
+    ///
+    /// A right half on a 2560-wide display carried to a 1512-wide laptop at its absolute size is a
+    /// 1280-wide window floating off-centre, which is not what anyone who had just tiled it wanted.
+    /// Keeping the size is still right for a window the user sized by hand — that is the promise
+    /// `carried` makes — so the test is whether the tiler's own last write still describes it.
+    /// `gap` is applied as a tile applies it, since what comes out is a tile.
+    static func displayMoveTarget(
+        current: CGRect, from: CGRect, to: CGRect, slot: RestorePoint?, gap: CGFloat
+    ) -> CGRect {
+        guard let slot, slot.isAtTile(current), let placed = slot.placement,
+            let frame = placed.arrangement.frame(in: to, current: current, fraction: placed.fraction)
+        else { return carried(current, from: from, to: to) }
+        return placed.arrangement.takesGap ? TilingGap.inset(frame, in: to, gap: gap) : frame
+    }
+
+    /// Where to move a window that came back smaller or larger than it was told to be, or nil to
+    /// leave it.
+    ///
+    /// Hosts refuse sizes — a minimum width, a fixed size, a terminal's character grid — and the
+    /// origin written for the size asked for then leaves the window short of the edge it was meant
+    /// to touch, or spilling past the one it was meant to stop at. Per axis that differs in size,
+    /// the edge the tile was anchored on is kept: the max edge when the target sits against the
+    /// area's far side and not the near one (right half, bottom third), the min edge when it sits
+    /// against the near side (including both, full height), and otherwise — a centred tile — the
+    /// centre. Then the window is kept inside `area`, pinned to its min edge if it is bigger than
+    /// the area outright.
+    ///
+    /// nil whenever `actual`'s *origin* is not `target`'s. Hosts that apply Accessibility writes
+    /// late (Electron, Chromium) still report the old frame at this point, and correcting against
+    /// it would move a window that is about to land correctly to somewhere derived from a frame it
+    /// is no longer in. Two points of slack, as `continuesCycle` allows, and `gap` widens what
+    /// counts as "against the edge" because a tile with a gap sits that far from it.
+    static func corrected(target: CGRect, actual: CGRect, area: CGRect, gap: CGFloat) -> CGPoint? {
+        let slack: CGFloat = 2
+        guard abs(actual.minX - target.minX) <= slack, abs(actual.minY - target.minY) <= slack
+        else { return nil }
+        let x = correctedOrigin(
+            target: target.minX...target.maxX, size: actual.width, area: area.minX...area.maxX,
+            gap: gap)
+        let y = correctedOrigin(
+            target: target.minY...target.maxY, size: actual.height, area: area.minY...area.maxY,
+            gap: gap)
+        guard abs(x - actual.minX) > slack || abs(y - actual.minY) > slack else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    private static func correctedOrigin(
+        target: ClosedRange<CGFloat>, size: CGFloat, area: ClosedRange<CGFloat>, gap: CGFloat
+    ) -> CGFloat {
+        let slack: CGFloat = 2
+        // An axis that came back the right size is left exactly as the host placed it.
+        guard abs(size - (target.upperBound - target.lowerBound)) > slack else {
+            return target.lowerBound
+        }
+        let edge = gap + 1
+        let atMin = abs(target.lowerBound - area.lowerBound) <= edge
+        let atMax = abs(area.upperBound - target.upperBound) <= edge
+        let origin: CGFloat
+        if atMax && !atMin {
+            origin = target.upperBound - size
+        } else if atMin {
+            origin = target.lowerBound
+        } else {
+            origin = (target.lowerBound + target.upperBound) / 2 - size / 2
+        }
+        return max(area.lowerBound, min(origin, area.upperBound - size))
     }
 
     /// `destination` overrides which display the arrangement is measured against.
@@ -1668,10 +1994,20 @@ enum WindowTiler {
     /// and written once. It used to be a separate move queued first, with this re-reading the
     /// window's frame on the assumption the move had landed; on the hosts that apply Accessibility
     /// writes late it had not, and "display 2, left half" tiled onto display 1.
+    ///
+    /// `anchor` is the frame the window had before the *gesture* that is tiling it, for the two
+    /// that move the window first. A drag drops the window wherever the cursor hit the edge, often
+    /// half off it, so the frame read here is the drop position — recording that made restore put
+    /// a window back hanging off the screen rather than where it was picked up. Keyboard chords
+    /// move nothing first and pass none.
+    ///
+    /// `completion` runs after the window has been written, on the tiler's queue, and not at all
+    /// when nothing was — the in-switcher display move raises and focuses the window once it has
+    /// landed.
     static func apply(
         _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
         gap: CGFloat = 0, target: Target? = nil, destination: CGRect? = nil,
-        warpsPointer: Bool = false
+        anchor: CGRect? = nil, warpsPointer: Bool = false, completion: (@Sendable () -> Void)? = nil
     ) {
         guard !areas.isEmpty else { return }
         queue.async {
@@ -1710,19 +2046,29 @@ enum WindowTiler {
             }
 
             let target: CGRect
+            // What to do with the read-back once the write is in: the area the landing is checked
+            // against (nil where a refused size is the right answer — see below), the gap that
+            // area's tile carries, and what to record in the window's restore slot.
+            var fitArea: CGRect?
+            var fitGap: CGFloat = 0
+            var remember: ((inout RestorePoint, [CGRect]) -> Void)?
             if let step = arrangement.displayStep {
                 // A move, unlike a tile, is relative: without a display to count from there is no
                 // "next" one, and counting from the fallback would throw the window off a display it
                 // was never on.
                 guard resolved != nil else { return }
-                // `carried` is the shared arithmetic, and `SwitchTarget.moveWindow(acrossDisplays:)`
-                // calls the same function — which is what actually keeps the promise that a window
-                // thrown either way lands in the same place. Measured from `areas[home]` rather
-                // than `area`: a move counts from the display the window is on, and `destination`
-                // is a pointer gesture's answer, which this branch never has.
+                // `displayMoveTarget` is the shared arithmetic, and
+                // `SwitchTarget.moveWindow(acrossDisplays:)` runs through this very branch — which
+                // is what actually keeps the promise that a window thrown either way lands in the
+                // same place. Measured from `areas[home]` rather than `area`: a move counts from
+                // the display the window is on, and `destination` is a pointer gesture's answer,
+                // which this branch never has.
                 guard areas.count > 1 else { return }
                 let to = areas[displayStepTarget(from: home, step: step, in: areas)]
-                target = carried(current, from: areas[home], to: to)
+                target = displayMoveTarget(
+                    current: current, from: areas[home], to: to, slot: restorePoints[key], gap: gap)
+                (fitArea, fitGap, remember) = displayMoveBookkeeping(
+                    current: current, to: to, slot: restorePoints[key], gap: gap)
                 // A move is not a tile: it must not consume the restore point, and the width cycle
                 // has to start over on the new display.
                 cycle = nil
@@ -1737,7 +2083,11 @@ enum WindowTiler {
                 // do. Both return before anything is written, so the frame is untouched rather than
                 // rewritten to the value it already had.
                 guard resolved != nil, areas.indices.contains(index), index != home else { return }
-                target = carried(current, from: areas[home], to: areas[index])
+                target = displayMoveTarget(
+                    current: current, from: areas[home], to: areas[index],
+                    slot: restorePoints[key], gap: gap)
+                (fitArea, fitGap, remember) = displayMoveBookkeeping(
+                    current: current, to: areas[index], slot: restorePoints[key], gap: gap)
                 cycle = nil
             } else if arrangement == .restore {
                 guard let saved = restorePoints[key] else { return }
@@ -1753,6 +2103,10 @@ enum WindowTiler {
                 // this started rather than creeping forward one tile at a time — and replaces only
                 // the redo entry a restore leaves behind. See `RestorePoint`.
                 restorePoints[key] = RestorePoint.afterRestore(saved, current: current, desk: areas)
+                // Not fitted: the frame going back is one this window has held itself, so there is
+                // no size it could refuse. What it leaves behind is a redo or an anchor, neither of
+                // which is a tile a display move could re-apply.
+                remember = { slot, landed in (slot.tiled, slot.placement) = (landed, nil) }
                 // Back to the end of the queue: a window being restored is one the user is working
                 // with, and eviction is oldest-*touched* first, not oldest-recorded.
                 restoreOrder.removeAll { $0 == key }
@@ -1762,7 +2116,8 @@ enum WindowTiler {
                     saved.frame, savedOn: saved.desk, desk: areas, fallback: area)
             } else {
                 let fraction = nextFraction(
-                    for: arrangement, key: key, cycleWidths: cycleWidths, current: current)
+                    for: arrangement, key: key, cycleWidths: cycleWidths, current: current,
+                    area: area, gap: gap)
                 guard let frame = arrangement.frame(
                     in: area, current: measured, fraction: fraction) else { return }
                 // Recorded only once there is a frame to write — a press that changes nothing (an
@@ -1770,45 +2125,31 @@ enum WindowTiler {
                 // entry on the way to finding that out.
                 //
                 // Saved once per window and not overwritten by later tiles, so restore goes back to
-                // where the window was before any of this started rather than to the previous tile.
-                let existing = restorePoints[key]
-                let updated = RestorePoint.afterTile(existing, current: current, desk: areas)
-                if existing == nil {
-                    // Evict the *oldest* rather than clearing the table. Wiping it wholesale meant
-                    // tiling one more window than the cap silently threw away the restore frame of
-                    // every window the user was still working with, and ⌃⌘Z then did nothing at all.
-                    while restoreOrder.count >= restoreLimit, let oldest = restoreOrder.first {
-                        restoreOrder.removeFirst()
-                        restorePoints.removeValue(forKey: oldest)
-                    }
-                    restoreOrder.append(key)
-                } else if existing != updated {
-                    restoreOrder.removeAll { $0 == key }
-                    restoreOrder.append(key)
-                }
-                restorePoints[key] = updated
+                // where the window was before any of this started rather than to the previous tile
+                // — unless the window has been moved by hand since the last one, in which case the
+                // frame it is being tiled *from* is the one to come back to.
+                rememberAnchor(key, current: anchor ?? current, desk: areas)
                 // Applied last, to the finished tile: the gap is about where a window ends up, not
                 // about how the arrangement divides the screen, so the fraction maths above stays
                 // exactly as it is at any gap.
                 target = arrangement.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame
+                // The size steps and edge resizes are relative to the window's own size, so a
+                // window that will not take the new one has already answered; "correcting" it
+                // would throw a window that cannot grow to the far edge because the press said to.
+                if arrangement.sizeStep == nil, arrangement.edgeStep == nil {
+                    (fitArea, fitGap) = (area, arrangement.takesGap ? gap : 0)
+                }
+                let placement = arrangement.isPureFraction
+                    ? RestorePoint.Placement(arrangement: arrangement, fraction: fraction) : nil
+                remember = { slot, landed in (slot.tiled, slot.placement) = (landed, placement) }
             }
 
-            // Position, size, position. Some apps clamp a move against their *current* size (so the
-            // first position lands short) and others clamp a resize against the screen edge from
-            // their old origin. Setting position twice around the resize is what makes both land,
-            // and it is what every window manager on this platform ends up doing.
-            //
-            // One call rather than three, so tiling this app's own settings window takes a single
-            // hop onto the main thread instead of three — see `AX.onOwningThread`.
-            AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
-
-            // Where this cycle step left the window, so the next press can tell whether it is
-            // still there — see `continuesCycle`. Both the frame written and the frame read back:
-            // a host that sizes to its own increments (a terminal's character cells) lands a few
-            // points off what was asked, and one that applies writes late still reports the old
-            // frame here. Only paid on the cycling arrangements, once per press.
+            // Written, read back and remembered in one place — see `write`.
+            let landed = write(
+                window, key: key, target: target, fitArea: fitArea, fitGap: fitGap,
+                remember: remember)
             if let last = cycle, last.key == key, last.arrangement == arrangement {
-                cycle?.left = [target] + (AX.frame(window).map { [$0] } ?? [])
+                cycle?.left = landed
             }
 
             // Only the display moves offer this, and only when asked. Warped *after* the frame is
@@ -1827,7 +2168,238 @@ enum WindowTiler {
                 // snaps it back across the desk. Re-associating is what makes a warp stick.
                 CGAssociateMouseAndMouseCursorPosition(1)
             }
+            completion?()
         }
+    }
+
+    /// Where a tiled window lands when it is dragged out of its tile: the size it had before it was
+    /// tiled, with the point the user took hold of it by still under the cursor.
+    ///
+    /// `current` is the window's frame now, `pickedUp` its frame at the press, and `grab` the press
+    /// point, all in Accessibility's top-left space. The grab is reduced to how far *across* the
+    /// picked-up window it was, and that fraction is what is kept: hold a tile by its far right end
+    /// and the smaller window comes out with its far right end under the cursor, not with the
+    /// cursor stranded in empty desktop beyond it. The fraction is taken against the picked-up frame
+    /// because that is the only frame the press point was ever measured on — `current` has already
+    /// followed the cursor some distance.
+    ///
+    /// The window having followed the cursor rigidly, its current left edge already sits one grab
+    /// offset behind the cursor, so the new edge is that one moved by the width the window gained
+    /// or lost *at the grab's fraction*. That is also why the cursor's position now is not needed:
+    /// the window is wherever the cursor took it, and only the size changes under it. `y` is kept —
+    /// the title bar is being held, and it has not moved relative to the cursor.
+    ///
+    /// Pure and internal so the geometry can be tested without a window.
+    static func unsnappedFrame(
+        current: CGRect, pickedUp: CGRect, grab: CGPoint, size: CGSize
+    ) -> CGRect {
+        let across =
+            pickedUp.width > 0 ? min(max((grab.x - pickedUp.minX) / pickedUp.width, 0), 1) : 0.5
+        return CGRect(
+            x: current.minX + across * (current.width - size.width), y: current.minY,
+            width: size.width, height: size.height)
+    }
+
+    /// Sends a window that has just been dragged out of a tile back to its pre-tile size.
+    ///
+    /// Called once per drag, when `DragSnap` arms, and does its work on this queue: the restore table
+    /// is only ever touched here, and everything below is Accessibility. Acts only when the window
+    /// was *still exactly where a tile left it* when it was picked up (`RestorePoint.isAtTile`) and
+    /// the slot holds an anchor rather than a redo entry — a window someone sized by hand since, or
+    /// one a restore has just put back, has no tile to leave.
+    ///
+    /// The slot is deliberately left alone. A drop in a zone reaches `apply` with `anchor:
+    /// pickedUp`, the tile, so `afterTile` sees a window that was at its tile and keeps the original
+    /// anchor: restore still goes back to where the window was before the first tile. A drop in no
+    /// zone leaves the window at the anchor's size somewhere new, no longer at its tile, so the
+    /// next tile records wherever it is then — the same as any window moved by hand.
+    ///
+    /// The window is found by its `CGWindowID`, because the one the press landed on is already
+    /// moving and its bounds are stale by the time this runs. The front window stands in only when
+    /// not one of the app's windows can report an id (Electron and Catalyst hide it) *and* its size
+    /// is the picked-up window's — a window that size is the only one that could have been the
+    /// dragged one, and the slot check above still has to pass for it. Anything else does nothing:
+    /// resizing the wrong window is worse than not un-snapping the right one.
+    static func unsnap(pid: pid_t, windowID: CGWindowID, pickedUp: CGRect, grab: CGPoint) {
+        queue.async {
+            let windows = AX.windows(of: AX.application(pid))
+            var window = windows.first { TargetProvider.windowID($0) == windowID }
+            if window == nil, !windows.contains(where: { TargetProvider.windowID($0) != nil }),
+                let front = AX.frontWindow(ofApplication: pid), let size = AX.size(front),
+                abs(size.width - pickedUp.width) < 4, abs(size.height - pickedUp.height) < 4
+            {
+                window = front
+            }
+            guard let window, let slot = restorePoints[WindowKey(element: window)],
+                !slot.isRedo, slot.isAtTile(pickedUp), let current = AX.frame(window)
+            else { return }
+            let frame = unsnappedFrame(
+                current: current, pickedUp: pickedUp, grab: grab, size: slot.frame.size)
+            guard frame.size != current.size else { return }
+            AX.setFrame(window, frame, sizing: true, repositionAfterSizing: true)
+        }
+    }
+
+    /// Files the frame a window is about to be tiled *from* as its restore point, unless the slot
+    /// already holds the right one — see `RestorePoint.afterTile` — and keeps the eviction order.
+    ///
+    /// Shared by `apply` and `arrange`, which record a restore point under the same rules: a window
+    /// tiled as one of a set must be as undoable as one tiled alone.
+    private static func rememberAnchor(_ key: WindowKey, current: CGRect, desk: [CGRect]) {
+        let existing = restorePoints[key]
+        let updated = RestorePoint.afterTile(existing, current: current, desk: desk)
+        if existing == nil {
+            // Evict the *oldest* rather than clearing the table. Wiping it wholesale meant
+            // tiling one more window than the cap silently threw away the restore frame of
+            // every window the user was still working with, and ⌃⌘Z then did nothing at all.
+            while restoreOrder.count >= restoreLimit, let oldest = restoreOrder.first {
+                restoreOrder.removeFirst()
+                restorePoints.removeValue(forKey: oldest)
+            }
+            restoreOrder.append(key)
+        } else if existing != updated {
+            restoreOrder.removeAll { $0 == key }
+            restoreOrder.append(key)
+        }
+        restorePoints[key] = updated
+    }
+
+    /// Writes `target` to `window`, reads where it landed, corrects a refused size and records the
+    /// result in the window's restore slot. Returns the frames written and read back, which the
+    /// caller may also need — `apply` hands them to the width cycle.
+    ///
+    /// Position, size, position. Some apps clamp a move against their *current* size (so the
+    /// first position lands short) and others clamp a resize against the screen edge from
+    /// their old origin. Setting position twice around the resize is what makes both land,
+    /// and it is what every window manager on this platform ends up doing.
+    ///
+    /// One call rather than three, so tiling this app's own settings window takes a single
+    /// hop onto the main thread instead of three — see `AX.onOwningThread`.
+    ///
+    /// Where this left the window — the frame written and the frame read back: a host
+    /// that sizes to its own increments (a terminal's character cells) lands a few points
+    /// off what was asked, and one that applies writes late still reports the old frame
+    /// here. Read once per write, and only written to again when the host refused the size:
+    /// `corrected` puts the window against the edge the tile was meant to touch, which the
+    /// origin written for the size asked for did not. The cycle and the restore slot both
+    /// remember where the window *ended up* — see `continuesCycle` and `RestorePoint.tiled`.
+    @discardableResult
+    private static func write(
+        _ window: AXUIElement, key: WindowKey, target: CGRect, fitArea: CGRect?, fitGap: CGFloat,
+        remember: ((inout RestorePoint, [CGRect]) -> Void)?
+    ) -> [CGRect] {
+        AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
+        var landed = [target]
+        if var actual = AX.frame(window) {
+            if let fitArea,
+                let origin = corrected(target: target, actual: actual, area: fitArea, gap: fitGap)
+            {
+                actual.origin = origin
+                AX.setFrame(window, actual, sizing: false)
+            }
+            landed.append(actual)
+        }
+        if let remember, var slot = restorePoints[key] {
+            remember(&slot, landed)
+            restorePoints[key] = slot
+        }
+        return landed
+    }
+
+    /// One window offered to `arrange`: where the window server says it is, and whose it is.
+    struct Candidate: Sendable {
+        let pid: pid_t
+        let bounds: CGRect
+        let bundleID: String?
+    }
+
+    /// Lays a set of windows out together — the tiler's half of "Tile all windows" and "Cascade all
+    /// windows", which are dispatched here ahead of `apply` because no single window's frame can
+    /// express them.
+    ///
+    /// `candidates` are in z-order, frontmost first. Everything Accessibility is done here, on the
+    /// queue, for the reason every other such call is: resolving a window is a walk of its app's
+    /// window list, and twelve of them on the main thread is the run loop the keyboard tap is
+    /// serviced from. That includes the `.neverTile` *title* rules, because a title is only
+    /// readable once the window is resolved — a window one of them names is left where it is and
+    /// takes no cell, so the rest close up around it. A window that cannot be resolved by its bounds
+    /// is left alone the same way, as a swap does: moving part of a set is better than guessing at
+    /// which of an app's windows was meant.
+    ///
+    /// `layout` turns the survivors' current frames, in the same order, into the frames to write.
+    /// The survivors are capped at `ArrangeAll.limit` *after* the rules have had their say, so a
+    /// protected window does not use up one of the twelve places.
+    ///
+    /// Each window goes through the same restore-point and read-back machinery as a single tile
+    /// (`rememberAnchor`, `write`), so ⌃⌘Z puts any one of them back. The slot records no
+    /// `placement`: a cell of a grid of however many windows there were is not an arrangement a
+    /// display move could re-apply, and recording one that is not in the enum would be dishonest.
+    /// Written back to front, so the frontmost window is the last to be touched.
+    ///
+    /// `gap` is the tile gap the read-back correction allows for — zero for a cascade, whose
+    /// windows are not tiles.
+    static func arrange(
+        _ candidates: [Candidate], areas: [CGRect], area: CGRect, gap: CGFloat,
+        titleRules: [CompiledTitleRule],
+        layout: @escaping @Sendable ([CGRect]) -> [CGRect]
+    ) {
+        queue.async {
+            var windows: [(element: AXUIElement, key: WindowKey, current: CGRect)] = []
+            var seen = Set<WindowKey>()
+            for candidate in candidates {
+                guard windows.count < ArrangeAll.limit else { break }
+                guard
+                    let element = AX.window(ofApplication: candidate.pid, matching: candidate.bounds),
+                    let current = AX.frame(element)
+                else { continue }
+                let key = WindowKey(element: element)
+                // Two window-server entries can resolve to one element — a host's phantom backing
+                // window at the same bounds — and one window must not take two cells.
+                guard seen.insert(key).inserted else { continue }
+                if titleRules.mayNeverTile(candidate.bundleID),
+                    CompiledTitleRule.matches(
+                        titleRules, bundleID: candidate.bundleID,
+                        title: AX.copyString(element, kAXTitleAttribute) ?? "", action: .neverTile)
+                {
+                    continue
+                }
+                windows.append((element, key, current))
+            }
+            let frames = layout(windows.map(\.current))
+            guard !windows.isEmpty, frames.count == windows.count else {
+                Log.general.notice("tiling: nothing to arrange")
+                return
+            }
+            cycle = nil
+            for index in windows.indices.reversed() {
+                let window = windows[index]
+                rememberAnchor(window.key, current: window.current, desk: areas)
+                write(
+                    window.element, key: window.key, target: frames[index], fitArea: area,
+                    fitGap: gap,
+                    remember: { slot, landed in (slot.tiled, slot.placement) = (landed, nil) })
+            }
+            Log.general.notice("tiling: arranged \(windows.count, privacy: .public) window(s)")
+        }
+    }
+
+    /// What a display move records and checks once it has written — see `apply`.
+    ///
+    /// Only a window still where the tiler left it has anything to record: its remembered frames
+    /// follow it to the destination, so a tile → move → tile → restore chain still ends at the
+    /// original rather than treating the move as a hand-made one. A window the user has moved
+    /// themselves has no remembered tile to refresh. The landing is checked against the destination
+    /// only when a tile was re-applied there; a carried window keeps a size someone chose and has
+    /// no edge it was meant to touch.
+    private static func displayMoveBookkeeping(
+        current: CGRect, to: CGRect, slot: RestorePoint?, gap: CGFloat
+    ) -> (CGRect?, CGFloat, ((inout RestorePoint, [CGRect]) -> Void)?) {
+        guard let slot, slot.isAtTile(current) else { return (nil, 0, nil) }
+        let remember: (inout RestorePoint, [CGRect]) -> Void = { slot, landed in
+            slot.tiled = landed
+        }
+        guard let placed = slot.placement else { return (nil, 0, remember) }
+        return (to, placed.arrangement.takesGap ? gap : 0, remember)
     }
 
     /// The display a previous/next-display move lands on, as an index into `areas`.
@@ -1923,7 +2495,7 @@ enum WindowTiler {
 
     /// The strip along the top of a window that can be dragged. macOS's own titlebar height; nothing
     /// here depends on it being exact, only on it being the top edge rather than the whole frame.
-    private static let titlebarHeight: CGFloat = 28
+    static let titlebarHeight: CGFloat = 28
     /// How much of that strip has to be on a display for the window to count as grabbable. About the
     /// width of the traffic lights — enough to put a cursor on without hunting for it.
     private static let minimumGrab: CGFloat = 60
@@ -1931,8 +2503,13 @@ enum WindowTiler {
     /// How much of the screen this press should take, advancing the cycle when the same arrangement
     /// is applied to the same window twice running — and the window is still where the last press
     /// put it.
+    ///
+    /// A window that has not been cycled but already *is* this arrangement's half — put there by a
+    /// drag, ⌥T or a restored layout — starts at ⅔ rather than ½, since ½ would be a press that
+    /// visibly does nothing. See `stepMatching`.
     private static func nextFraction(
-        for arrangement: WindowArrangement, key: WindowKey, cycleWidths: Bool, current: CGRect
+        for arrangement: WindowArrangement, key: WindowKey, cycleWidths: Bool, current: CGRect,
+        area: CGRect, gap: CGFloat
     ) -> CGFloat {
         // The tables above are safe without a lock only while every touch is on `queue`; the
         // comment says so, this makes a caller from anywhere else fail where it stands.
@@ -1948,8 +2525,28 @@ enum WindowTiler {
             self.cycle = (key, arrangement, step, [])
             return fractions[step]
         }
-        cycle = (key, arrangement, 0, [])
-        return fractions[0]
+        // Only the half skips ahead. A window at ⅔ or ⅓ that nothing has cycled — the two-thirds
+        // chord put it there, say — gets the half: a visible change, and what the key is named for.
+        let step = stepMatching(arrangement, current: current, area: area, gap: gap) == 0 ? 1 : 0
+        cycle = (key, arrangement, step, [])
+        return fractions[step]
+    }
+
+    /// The index in `cycleFractions` of the width `arrangement` has already given a window at
+    /// `current`, or nil when it is at none of them.
+    ///
+    /// Compared on the frame the tile branch would actually write — the same area, the gap applied
+    /// the same way — with the same two points of slack as `continuesCycle`.
+    static func stepMatching(
+        _ arrangement: WindowArrangement, current: CGRect, area: CGRect, gap: CGFloat
+    ) -> Int? {
+        WindowArrangement.cycleFractions.indices.first { index in
+            guard let frame = arrangement.frame(
+                in: area, current: current, fraction: WindowArrangement.cycleFractions[index])
+            else { return false }
+            let tile = arrangement.takesGap ? TilingGap.inset(frame, in: area, gap: gap) : frame
+            return continuesCycle(left: [tile], current: current)
+        }
     }
 
     /// Whether a window at `current` is still where the last cycle step `left` it.

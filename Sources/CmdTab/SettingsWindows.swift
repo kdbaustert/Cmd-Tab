@@ -25,9 +25,10 @@ private func tilingAnchor(for title: String) -> String {
 struct TilingSettings: View {
     @ObservedObject var store: WindowTilingStore
 
-    /// The order the rows read in: the four halves, then the thirds, then the four corners, then the
-    /// three that are not a fraction of the screen at all, then the two families that are relative
-    /// to wherever the window already is.
+    /// The order the rows read in: the four halves, then the thirds, the four corners, and the finer
+    /// grids — fourths, sixths, ninths — then the three that are not a fraction of the screen at
+    /// all, the two families that are relative to wherever the window already is, and last the two
+    /// that arrange every window on the display instead of the focused one.
     ///
     /// Every group here is governed by the tiling switch. The families that are not — the display
     /// and Desktop moves, and the focus chords — have tabs of their own.
@@ -42,6 +43,28 @@ struct TilingSettings: View {
         ),
         ("Corners", [.topLeft, .topRight, .bottomLeft, .bottomRight]),
         (
+            "Fourths",
+            [
+                .firstFourth, .secondFourth, .thirdFourth, .lastFourth, .leftThreeFourths,
+                .rightThreeFourths,
+            ]
+        ),
+        (
+            "Sixths",
+            [
+                .topLeftSixth, .topCenterSixth, .topRightSixth,
+                .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth,
+            ]
+        ),
+        (
+            "Ninths",
+            [
+                .topLeftNinth, .topCenterNinth, .topRightNinth,
+                .middleLeftNinth, .middleCenterNinth, .middleRightNinth,
+                .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth,
+            ]
+        ),
+        (
             "Whole window",
             [.maximize, .maximizeHeight, .maximizeWidth, .almostMaximize, .center, .restore]
         ),
@@ -49,6 +72,7 @@ struct TilingSettings: View {
         ("Resize an edge", WindowArrangement.edgeResizes),
         ("Nudge", WindowArrangement.nudges),
         ("Swap", WindowArrangement.swaps),
+        ("All windows", [.tileAll, .cascadeAll]),
     ]
 
     private var isEnabled: Binding<Bool> {
@@ -61,6 +85,14 @@ struct TilingSettings: View {
 
     private var dragSnap: Binding<Bool> {
         Binding(get: { store.dragSnap }, set: { store.dragSnap = $0 })
+    }
+
+    private var dragSnapTopHalf: Binding<Bool> {
+        Binding(get: { store.dragSnapTopHalf }, set: { store.dragSnapTopHalf = $0 })
+    }
+
+    private var dragSnapBottomThirds: Binding<Bool> {
+        Binding(get: { store.dragSnapBottomThirds }, set: { store.dragSnapBottomThirds = $0 })
     }
 
     private var gap: Binding<Double> {
@@ -92,6 +124,18 @@ struct TilingSettings: View {
                     subtitle: "Drag a window's title bar to a screen edge or corner to tile it "
                         + "there. Independent of the shortcuts below — you can have either, or both.",
                     isOn: dragSnap)
+                SettingsToggle(
+                    title: "Top edge snaps to the top half",
+                    subtitle: "Dragging to the top edge tiles the top half instead of maximizing. "
+                        + "The middle of the screen still maximizes, and the top corners still "
+                        + "take the top quarters.",
+                    isOn: dragSnapTopHalf)
+                SettingsToggle(
+                    title: "Split the bottom edge into thirds",
+                    subtitle: "Dragging to the bottom edge tiles the left, middle or right third, "
+                        + "by where along it you let go, instead of the bottom half. The bottom "
+                        + "corners still take the bottom quarters.",
+                    isOn: dragSnapBottomThirds)
                 SettingsSlider(
                     title: "Gap",
                     subtitle: "Space left around a tiled window: the full gap against a screen "
@@ -582,6 +626,12 @@ extension WindowTilingStore {
         case .leftTwoThirds, .rightTwoThirds, .topThird, .bottomThird:
             return "Also reachable by pressing the matching half twice or three times — this is the "
                 + "same place in one press."
+        case .tileAll:
+            return "Every window on this display, front to back, in a grid starting top-left. "
+                + "Windows of apps set to never tile stay where they are."
+        case .cascadeAll:
+            return "Every window on this display, stacked a title bar apart with the front one "
+                + "on top. Each keeps its size unless the stack would not fit."
         default:
             if arrangement.nudgeStep != nil {
                 return "Moves the window without resizing it, a twentieth of the screen a press. "

@@ -98,6 +98,18 @@ enum ShortcutImport {
         "moveLeft": .nudgeLeft, "moveRight": .nudgeRight, "moveUp": .nudgeUp, "moveDown": .nudgeDown,
         "firstThird": .leftThird, "centerThird": .centerThird, "lastThird": .rightThird,
         "firstTwoThirds": .leftTwoThirds, "lastTwoThirds": .rightTwoThirds,
+        "firstFourth": .firstFourth, "secondFourth": .secondFourth, "thirdFourth": .thirdFourth,
+        "lastFourth": .lastFourth, "firstThreeFourths": .leftThreeFourths,
+        "lastThreeFourths": .rightThreeFourths,
+        "topLeftSixth": .topLeftSixth, "topCenterSixth": .topCenterSixth,
+        "topRightSixth": .topRightSixth, "bottomLeftSixth": .bottomLeftSixth,
+        "bottomCenterSixth": .bottomCenterSixth, "bottomRightSixth": .bottomRightSixth,
+        "topLeftNinth": .topLeftNinth, "topCenterNinth": .topCenterNinth,
+        "topRightNinth": .topRightNinth, "middleLeftNinth": .middleLeftNinth,
+        "middleCenterNinth": .middleCenterNinth, "middleRightNinth": .middleRightNinth,
+        "bottomLeftNinth": .bottomLeftNinth, "bottomCenterNinth": .bottomCenterNinth,
+        "bottomRightNinth": .bottomRightNinth,
+        "tileAll": .tileAll, "cascadeAll": .cascadeAll,
         "previousDisplay": .previousDisplay, "nextDisplay": .nextDisplay,
         "nextSpace": .nextDesktop, "prevSpace": .previousDesktop,
     ]
@@ -107,14 +119,7 @@ enum ShortcutImport {
     /// source is closed), only of the ones the spec's live plist and the OSS `WindowAction` enum
     /// named.
     private static let rectangleUnmappedActions: Set<String> = [
-        "topLeftSixth", "topCenterSixth", "topRightSixth",
-        "bottomLeftSixth", "bottomCenterSixth", "bottomRightSixth",
-        "topLeftNinth", "topCenterNinth", "topRightNinth",
-        "middleLeftNinth", "middleCenterNinth", "middleRightNinth",
-        "bottomLeftNinth", "bottomCenterNinth", "bottomRightNinth",
-        "firstFourth", "secondFourth", "thirdFourth", "lastFourth",
-        "firstThreeFourths", "lastThreeFourths",
-        "cascade", "cascadeAll", "reverseAll", "todo", "stash", "cycleStashed", "pin",
+        "cascade", "reverseAll", "todo", "stash", "cycleStashed", "pin",
         "appLeftHalf", "appRightHalf", "appNextDisplay", "appPreviousDisplay",
     ]
 

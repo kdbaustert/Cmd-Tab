@@ -817,6 +817,74 @@
         }
       }
     },
+    "Bottom-left ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-left ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième inférieur gauche"
+          }
+        }
+      }
+    },
+    "Bottom-left sixth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-left sixth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixième inférieur gauche"
+          }
+        }
+      }
+    },
+    "Bottom-middle ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-middle ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième inférieur central"
+          }
+        }
+      }
+    },
+    "Bottom-middle sixth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-middle sixth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixième inférieur central"
+          }
+        }
+      }
+    },
     "Bottom-right corner": {
       "extractionState": "manual",
       "localizations": {
@@ -830,6 +898,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Coin inférieur droit"
+          }
+        }
+      }
+    },
+    "Bottom-right ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-right ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième inférieur droit"
+          }
+        }
+      }
+    },
+    "Bottom-right sixth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bottom-right sixth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixième inférieur droit"
           }
         }
       }
@@ -970,6 +1072,23 @@
         }
       }
     },
+    "Cascade all windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cascade all windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disposer toutes les fenêtres en cascade"
+          }
+        }
+      }
+    },
     "Center": {
       "extractionState": "manual",
       "localizations": {
@@ -983,6 +1102,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Centrer"
+          }
+        }
+      }
+    },
+    "Center ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Center ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième central"
           }
         }
       }
@@ -1752,6 +1888,40 @@
         }
       }
     },
+    "Dragging to the bottom edge tiles the left, middle or right third, by where along it you let go, instead of the bottom half. The bottom corners still take the bottom quarters.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dragging to the bottom edge tiles the left, middle or right third, by where along it you let go, instead of the bottom half. The bottom corners still take the bottom quarters."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser vers le bord inférieur pave le tiers gauche, central ou droit, selon l'endroit où vous relâchez, au lieu de la moitié inférieure. Les coins inférieurs prennent toujours les quarts inférieurs."
+          }
+        }
+      }
+    },
+    "Dragging to the top edge tiles the top half instead of maximizing. The middle of the screen still maximizes, and the top corners still take the top quarters.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dragging to the top edge tiles the top half instead of maximizing. The middle of the screen still maximizes, and the top corners still take the top quarters."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser vers le bord supérieur pave la moitié supérieure au lieu d'agrandir. Le centre de l'écran agrandit toujours, et les coins supérieurs prennent toujours les quarts supérieurs."
+          }
+        }
+      }
+    },
     "Draw a live capture of each window as its tile instead of the app icon, with the app's icon inset in the corner. Five identical Chrome icons become five recognisable windows. Needs Screen Recording permission; tiles show icons until each capture lands, so the panel never waits.": {
       "extractionState": "manual",
       "localizations": {
@@ -1884,6 +2054,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Toutes les fenêtres de toutes les applications, quel que soit ce que le sélecteur liste normalement."
+          }
+        }
+      }
+    },
+    "Every window on this display, front to back, in a grid starting top-left. Windows of apps set to never tile stay where they are.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every window on this display, front to back, in a grid starting top-left. Windows of apps set to never tile stay where they are."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toutes les fenêtres de cet écran, de l'avant vers l'arrière, en grille à partir du coin supérieur gauche. Les fenêtres des apps réglées sur « Pas de pavage » restent en place."
+          }
+        }
+      }
+    },
+    "Every window on this display, stacked a title bar apart with the front one on top. Each keeps its size unless the stack would not fit.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every window on this display, stacked a title bar apart with the front one on top. Each keeps its size unless the stack would not fit."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toutes les fenêtres de cet écran, empilées à une barre de titre d'écart, celle de devant au-dessus. Chacune garde sa taille, sauf si la pile ne tient pas."
           }
         }
       }
@@ -2037,6 +2241,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Filtrer la liste"
+          }
+        }
+      }
+    },
+    "First fourth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "First fourth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Premier quart"
           }
         }
       }
@@ -2309,6 +2530,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Oublier les raccourcis de recherche"
+          }
+        }
+      }
+    },
+    "Fourths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fourths"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quarts"
           }
         }
       }
@@ -3197,6 +3435,23 @@
         }
       }
     },
+    "Last fourth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last fourth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dernier quart"
+          }
+        }
+      }
+    },
     "Launch apps from search": {
       "extractionState": "manual",
       "localizations": {
@@ -3278,6 +3533,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tiers gauche"
+          }
+        }
+      }
+    },
+    "Left three-fourths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left three-fourths"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trois quarts gauche"
           }
         }
       }
@@ -3533,6 +3805,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tiers central"
+          }
+        }
+      }
+    },
+    "Middle-left ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Middle-left ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième médian gauche"
+          }
+        }
+      }
+    },
+    "Middle-right ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Middle-right ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième médian droit"
           }
         }
       }
@@ -4179,6 +4485,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ne jamais afficher cette application dans le sélecteur."
+          }
+        }
+      }
+    },
+    "Ninths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ninths"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvièmes"
           }
         }
       }
@@ -5696,6 +6019,23 @@
         }
       }
     },
+    "Right three-fourths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right three-fourths"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trois quarts droit"
+          }
+        }
+      }
+    },
     "Right two-thirds": {
       "extractionState": "manual",
       "localizations": {
@@ -5930,6 +6270,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rechercher sur le Web"
+          }
+        }
+      }
+    },
+    "Second fourth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Second fourth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deuxième quart"
           }
         }
       }
@@ -6291,6 +6648,23 @@
         }
       }
     },
+    "Sixths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixths"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixièmes"
+          }
+        }
+      }
+    },
     "Size": {
       "extractionState": "manual",
       "localizations": {
@@ -6474,6 +6848,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "La barre d'espace, sans rien de saisi, affiche une grande capture en direct de la tuile sélectionnée — appuyez de nouveau ou sur Échap pour la retirer. Nécessite l'autorisation Enregistrement de l'écran."
+          }
+        }
+      }
+    },
+    "Split the bottom edge into thirds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Split the bottom edge into thirds"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diviser le bord inférieur en tiers"
           }
         }
       }
@@ -7056,6 +7447,23 @@
         }
       }
     },
+    "Third fourth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Third fourth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Troisième quart"
+          }
+        }
+      }
+    },
     "Thirds": {
       "extractionState": "manual",
       "localizations": {
@@ -7171,6 +7579,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Vignettes miniatures"
+          }
+        }
+      }
+    },
+    "Tile all windows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tile all windows"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paver toutes les fenêtres"
           }
         }
       }
@@ -7413,6 +7838,23 @@
         }
       }
     },
+    "Top edge snaps to the top half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top edge snaps to the top half"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le bord supérieur aimante vers la moitié supérieure"
+          }
+        }
+      }
+    },
     "Top half": {
       "extractionState": "manual",
       "localizations": {
@@ -7464,6 +7906,74 @@
         }
       }
     },
+    "Top-left ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-left ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième supérieur gauche"
+          }
+        }
+      }
+    },
+    "Top-left sixth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-left sixth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixième supérieur gauche"
+          }
+        }
+      }
+    },
+    "Top-middle ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-middle ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième supérieur central"
+          }
+        }
+      }
+    },
+    "Top-middle sixth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-middle sixth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixième supérieur central"
+          }
+        }
+      }
+    },
     "Top-right corner": {
       "extractionState": "manual",
       "localizations": {
@@ -7477,6 +7987,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Coin supérieur droit"
+          }
+        }
+      }
+    },
+    "Top-right ninth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-right ninth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuvième supérieur droit"
+          }
+        }
+      }
+    },
+    "Top-right sixth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top-right sixth"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sixième supérieur droit"
           }
         }
       }

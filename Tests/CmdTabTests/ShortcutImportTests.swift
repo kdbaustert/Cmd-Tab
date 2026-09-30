@@ -70,6 +70,43 @@ final class ShortcutImportTests: XCTestCase {
         XCTAssertEqual(result.arrangements[.rightTwoThirds]?.keyCode, 21)
     }
 
+    /// Rectangle's fourths, sixths, ninths and tile/cascade-all each name an arrangement here, and
+    /// the three-fourths pair keeps Cmd-Tab's left/right naming.
+    func testRectangleFinerGridsAndArrangeAllAreImported() {
+        let names: [String: WindowArrangement] = [
+            "firstFourth": .firstFourth, "secondFourth": .secondFourth,
+            "thirdFourth": .thirdFourth, "lastFourth": .lastFourth,
+            "firstThreeFourths": .leftThreeFourths, "lastThreeFourths": .rightThreeFourths,
+            "topLeftSixth": .topLeftSixth, "topCenterSixth": .topCenterSixth,
+            "topRightSixth": .topRightSixth, "bottomLeftSixth": .bottomLeftSixth,
+            "bottomCenterSixth": .bottomCenterSixth, "bottomRightSixth": .bottomRightSixth,
+            "topLeftNinth": .topLeftNinth, "topCenterNinth": .topCenterNinth,
+            "topRightNinth": .topRightNinth, "middleLeftNinth": .middleLeftNinth,
+            "middleCenterNinth": .middleCenterNinth, "middleRightNinth": .middleRightNinth,
+            "bottomLeftNinth": .bottomLeftNinth, "bottomCenterNinth": .bottomCenterNinth,
+            "bottomRightNinth": .bottomRightNinth, "tileAll": .tileAll, "cascadeAll": .cascadeAll,
+        ]
+        var plist: [String: Any] = [:]
+        for (index, name) in names.keys.sorted().enumerated() {
+            plist[name] = rectangleDict(keyCode: index, modifierFlags: 1_572_864)
+        }
+        let result = ShortcutImport.rectangleBindings(from: plist)
+        XCTAssertTrue(result.skipped.isEmpty, "\(result.skipped)")
+        for (index, name) in names.keys.sorted().enumerated() {
+            XCTAssertEqual(result.arrangements[names[name]!]?.keyCode, index, name)
+        }
+    }
+
+    /// Rectangle's other cascade/reverse/stash verbs have no counterpart and stay reported as skipped.
+    func testRectangleOtherArrangeVerbsStayUnmapped() {
+        let plist: [String: Any] = [
+            "cascade": rectangleDict(keyCode: 1, modifierFlags: 1_572_864),
+            "reverseAll": rectangleDict(keyCode: 2, modifierFlags: 1_572_864),
+        ]
+        XCTAssertEqual(
+            Set(ShortcutImport.rectangleBindings(from: plist).skipped), ["cascade", "reverseAll"])
+    }
+
     func testRectangleModifierConversion() {
         // command+control+shift = (1<<20) | (1<<18) | (1<<17) = 1_179_648 + ... compute explicitly.
         let flags: NSEvent.ModifierFlags = [.command, .control, .shift]

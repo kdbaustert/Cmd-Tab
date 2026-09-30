@@ -443,6 +443,15 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
     private var storedGap: CGFloat = 0
 
+    /// What the top and bottom edge bands answer, under the same lock as `gap`: it is read from the
+    /// tap thread on every drag event and written from the main actor. Only a move reaches it — a
+    /// resize takes corners alone, see `snapZones(for:)`.
+    var edgeOptions: DragSnap.EdgeOptions {
+        get { lock.withLock { storedEdgeOptions } }
+        set { lock.withLock { storedEdgeOptions = newValue } }
+    }
+    private var storedEdgeOptions = DragSnap.EdgeOptions()
+
     private var displays: [Display] = []
     /// The height of the primary display, for turning the tap's top-left point into the bottom-up
     /// one `DragSnap.zone` works in.
@@ -778,7 +787,8 @@ final class MouseWindowDrag: @unchecked Sendable {
                         WindowTiler.apply(
                             zone, pid: session.pid, areas: WindowTiler.visibleAreas(),
                             cycleWidths: false, gap: gap,
-                            target: dragged.map(WindowTiler.Target.element), destination: area)
+                            target: dragged.map(WindowTiler.Target.element), destination: area,
+                            anchor: session.startFrame)
                     }
                 }
             }
@@ -944,10 +954,14 @@ final class MouseWindowDrag: @unchecked Sendable {
     private func snapZone(
         at point: CGPoint, zones: DragSnap.Zones
     ) -> (zone: WindowArrangement, area: CGRect)? {
-        let (screens, height) = lock.withLock { (displays, primaryHeight) }
+        let (screens, height, edges) = lock.withLock {
+            (displays, primaryHeight, storedEdgeOptions)
+        }
         let flipped = CGPoint(x: point.x, y: height - point.y)
         for display in screens where NSMouseInRect(flipped, display.frame, false) {
-            guard let zone = DragSnap.zone(for: flipped, in: display.frame, zones: zones)
+            guard
+                let zone = DragSnap.zone(
+                    for: flipped, in: display.frame, zones: zones, edges: edges)
             else { return nil }
             return (zone, display.area)
         }

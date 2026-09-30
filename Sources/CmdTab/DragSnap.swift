@@ -54,6 +54,10 @@ final class DragSnap {
     /// every edge — and the preview is the only thing the user sees before letting go.
     var gap: CGFloat = 0
 
+    /// What the top and bottom edge bands answer — see `EdgeOptions`. Read in `mouseDragged`, on
+    /// the main thread with the rest of this class's state, so it needs no lock.
+    var edgeOptions = EdgeOptions()
+
     private var monitors: [Any] = []
     private let preview = SnapPreview.shared
 
@@ -174,6 +178,19 @@ final class DragSnap {
                 return
             }
             isDragging = true
+            // Once per drag, here at the arming and never per event: hand the tiler the window so a
+            // tile dragged out of shrinks or grows back to the size it had before it was tiled. It
+            // is one Accessibility round trip on the tiler's queue, which is where every other one
+            // lives, so this main thread — the one servicing the keyboard tap — only posts it.
+            //
+            // The press point, not the cursor now: the window has followed the cursor by however
+            // far it has travelled since, and the point the user took hold of it by is the one fact
+            // about the grab that does not change. See `WindowTiler.unsnappedFrame`.
+            if let primary = NSScreen.primary {
+                WindowTiler.unsnap(
+                    pid: pid, windowID: windowID, pickedUp: initial,
+                    grab: CGPoint(x: origin.x, y: primary.frame.height - origin.y))
+            }
         }
         // The screen resolved once and both answers taken from it, rather than `zone(for:)` and
         // `visibleArea(containing:)` each doing their own `NSScreen` lookup. That also removes the
@@ -189,7 +206,9 @@ final class DragSnap {
         // the preview shows has changed.
         let screens = NSScreen.screens
         let index = screens.firstIndex { NSMouseInRect(point, $0.frame, false) }
-        let zone = index.flatMap { Self.zone(for: point, in: screens[$0].frame) }
+        let zone = index.flatMap {
+            Self.zone(for: point, in: screens[$0].frame, edges: edgeOptions)
+        }
         guard zone != currentZone || index != currentScreen else { return }
         currentZone = zone
         currentScreen = index
@@ -227,11 +246,15 @@ final class DragSnap {
         let windowID = draggedWindowID
         // The display the preview was painted on — see `currentArea`.
         let area = currentArea
+        // Where the window was picked up, for restore: `dropped` is wherever the cursor hit the
+        // edge, often hanging off it. Captured here because `reset()` clears it on the way out.
+        let pickedUp = initialBounds
         DispatchQueue.main.async {
             let dropped = windowID.flatMap(Self.bounds(of:))
             WindowTiler.apply(
                 zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
-                target: dropped.map(WindowTiler.Target.bounds), destination: area)
+                target: dropped.map(WindowTiler.Target.bounds), destination: area,
+                anchor: pickedUp)
         }
     }
 
@@ -285,6 +308,21 @@ final class DragSnap {
         static let all: Zones = [.corners, .edges, .centre]
     }
 
+    /// Which arrangement the top and bottom edge bands answer with. Both default to off, which is
+    /// the behaviour before either setting existed: the top edge maximizes and the bottom edge is
+    /// the bottom half.
+    ///
+    /// A value type handed to `zone` rather than two more settings it reads for itself, so the
+    /// resolver stays pure — and `MouseWindowDrag`, which calls it from its tap thread, can carry a
+    /// copy under its own lock instead of reaching into this class's main-thread state.
+    struct EdgeOptions: Equatable, Sendable {
+        /// The top edge tiles the top half instead of maximizing.
+        var topHalf = false
+        /// The bottom edge tiles the third of the screen's width the cursor is over, instead of the
+        /// bottom half.
+        var bottomThirds = false
+    }
+
     /// The arrangement a cursor position is over, against an explicit screen frame, or nil away
     /// from every edge.
     ///
@@ -300,9 +338,12 @@ final class DragSnap {
     /// two independent lookups could disagree at a boundary.
     ///
     /// `zones` narrows which families can answer; a point in a family left out is nil rather than
-    /// falling through to another.
+    /// falling through to another. `edges` only changes what the top and bottom bands answer: the
+    /// corners are tested first and so still win inside their boxes, the left and right bands are
+    /// untouched, and the centre box still maximizes.
     nonisolated static func zone(
-        for point: CGPoint, in frame: CGRect, threshold: CGFloat? = nil, zones: Zones = .all
+        for point: CGPoint, in frame: CGRect, threshold: CGFloat? = nil, zones: Zones = .all,
+        edges options: EdgeOptions = EdgeOptions()
     ) -> WindowArrangement? {
         let edge = threshold ?? edgeThreshold
         // `NSMouseInRect`, not `CGRect.contains`, and the difference is the whole top edge.
@@ -342,11 +383,19 @@ final class DragSnap {
         guard zones.contains(.edges) else { return nil }
         if nearLeft { return .leftHalf }
         if nearRight { return .rightHalf }
-        // Top is maximize rather than "top half", matching every other platform's edge-snap and the
-        // gesture people already have in their fingers.
-        if nearTop { return .maximize }
-        if nearBottom { return .bottomHalf }
-        return nil
+        // Top is maximize rather than "top half" by default, matching every other platform's
+        // edge-snap and the gesture people already have in their fingers. `topHalf` is for those who
+        // would rather have the half, and lose the maximize gesture from the edge — the centre box
+        // still has it.
+        if nearTop { return options.topHalf ? .topHalf : .maximize }
+        guard nearBottom else { return nil }
+        guard options.bottomThirds else { return .bottomHalf }
+        // Thirds of the *screen's* width rather than of the visible area: the point and the frame
+        // are the same Cocoa space, and the edge itself is where the cursor is, so a third is
+        // aimed at by where along the bottom the cursor is, not by what the Dock leaves free.
+        let across = (point.x - frame.minX) / frame.width
+        if across < 1.0 / 3 { return .leftThird }
+        return across < 2.0 / 3 ? .centerThird : .rightThird
     }
 
     /// The visible area of a screen, by index into `NSScreen.screens`, in Accessibility

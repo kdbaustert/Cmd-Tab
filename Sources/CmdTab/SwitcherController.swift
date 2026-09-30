@@ -224,6 +224,10 @@ final class SwitcherController {
             publishTapState()
             dragSnap.gap = tiling.gap
             mouseWindowDrag.gap = tiling.gap
+            let edges = DragSnap.EdgeOptions(
+                topHalf: tiling.dragSnapTopHalf, bottomThirds: tiling.dragSnapBottomThirds)
+            dragSnap.edgeOptions = edges
+            mouseWindowDrag.edgeOptions = edges
             targetHighlight.gap = tiling.gap
             launchArrangements.gap = tiling.gap
             displayLayouts.isEnabled = tiling.restoresLayoutOnDisplayChange
@@ -1056,6 +1060,14 @@ final class SwitcherController {
                 WindowNavigator.focus(direction, from: pid)
                 return
             }
+            // Tile all and cascade all also go ahead of the guard below, and for the same reason in
+            // the other direction: the front app being excluded from tiling says that app's windows
+            // stay put, not that every other window on the display may not be arranged. The rule is
+            // applied per window instead — see `arrangeAllWindows`.
+            if arrangement.arrangesAll {
+                arrangeAllWindows(arrangement, frontPID: pid, gap: gap)
+                return
+            }
             // An app the user has told us never to tile. Checked here rather than in `WindowTiler`
             // so the tiler stays a pure geometry writer with no opinion about settings.
             if let id = front.bundleIdentifier, rules[id]?.neverTile == true {
@@ -1102,6 +1114,55 @@ final class SwitcherController {
             WindowTiler.apply(
                 arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
                 cycleWidths: cycleWidths, gap: gap, warpsPointer: warpsPointer)
+        }
+    }
+
+    /// Tiles or cascades every window on the display the frontmost window is on.
+    ///
+    /// The display is the one the front app's first window (in z-order) is mostly on, else the one
+    /// under the pointer, else the first — the same "which display is this window on" rule every
+    /// other tiling path uses. The windows are the ordinary on-screen ones whose own home display
+    /// is that one, so minimized windows and those on another Desktop are absent from the list to
+    /// begin with, and a window on the next monitor is not dragged across.
+    ///
+    /// An app with `neverTile` is skipped here, per window, and the title rules on the tiler's queue
+    /// (they need a resolved window to read a title from). Those windows stay where they are and
+    /// the rest arrange around them, which also means a protected front app does not block the
+    /// action: only its own windows sit it out.
+    ///
+    /// Only the cheap reads happen on this thread — the window-server list, the screens and one
+    /// bundle lookup per window. Everything Accessibility is `WindowTiler.arrange`'s, on its queue.
+    private func arrangeAllWindows(_ arrangement: WindowArrangement, frontPID: pid_t, gap: CGFloat) {
+        let areas = WindowTiler.visibleAreas()
+        let windows = WindowNavigator.onScreen()
+        let pointer = CGEvent(source: nil)?.location ?? .zero
+        let pointerCell = CGRect(origin: pointer, size: CGSize(width: 1, height: 1))
+        guard
+            let home = windows.first(where: { $0.pid == frontPID })
+                .flatMap({ WindowTiler.homeDisplay(of: $0.frame, in: areas) })
+                ?? WindowTiler.homeDisplay(of: pointerCell, in: areas)
+                ?? areas.indices.first
+        else { return }
+        let area = areas[home]
+        let candidates = windows.compactMap { window -> WindowTiler.Candidate? in
+            guard WindowTiler.homeDisplay(of: window.frame, in: areas) == home else { return nil }
+            let id = NSRunningApplication(processIdentifier: window.pid)?.bundleIdentifier
+            if let id, appRules[id]?.neverTile == true { return nil }
+            return WindowTiler.Candidate(pid: window.pid, bounds: window.frame, bundleID: id)
+        }
+        Log.tap.notice(
+            """
+            \(arrangement.rawValue, privacy: .public): \(candidates.count, privacy: .public) \
+            candidate(s) on display \(home, privacy: .public)
+            """)
+        if arrangement == .tileAll {
+            WindowTiler.arrange(
+                candidates, areas: areas, area: area, gap: gap, titleRules: titleRules
+            ) { ArrangeAll.grid(count: $0.count, in: area, gap: gap) }
+        } else {
+            WindowTiler.arrange(
+                candidates, areas: areas, area: area, gap: 0, titleRules: titleRules
+            ) { frames in ArrangeAll.cascade(sizes: frames.map(\.size), in: area) }
         }
     }
 
@@ -2627,7 +2688,7 @@ final class SwitcherController {
     /// they keep.
     private func moveSelectedWindow(acrossDisplays delta: Int) {
         model.selected?.moveWindow(
-            acrossDisplays: delta, visibleAreas: WindowTiler.visibleAreas())
+            acrossDisplays: delta, visibleAreas: WindowTiler.visibleAreas(), gap: tiling.gap)
     }
 
     /// Tiles the highlighted window, through the same tiler as the global ⌃⌘-arrow chords: one

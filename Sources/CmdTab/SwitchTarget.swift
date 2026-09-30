@@ -2150,49 +2150,39 @@ extension SwitchTarget {
             target: target)
     }
 
-    /// Moves the window to the next/previous display, keeping its position relative to the display it
-    /// leaves. `visibleAreas` are the displays' usable areas — menu bar and Dock already excluded —
-    /// in Quartz (top-left) coordinates, resolved on the main thread by the caller since `NSScreen`
-    /// is main-thread-only. `WindowTiler.visibleAreas()` is the one source for them, shared with the
-    /// keyboard chords so a window thrown either way lands in the same place.
-    func moveWindow(acrossDisplays delta: Int, visibleAreas frames: [CGRect]) {
+    /// Moves the window to the next/previous display, through the same tiler the ⌃⇧⌘-arrow chords
+    /// use — so the two cannot land differently. That matters more than it did: a window still
+    /// sitting where a tile left it is re-tiled on the destination rather than carried at its
+    /// absolute size, and that decision is read from the tiler's per-window memory, which only the
+    /// tiler can see. Keeping a second copy of the arithmetic here is what this used to do, and
+    /// the shrink-to-fit had already had to be retrofitted into it once.
+    ///
+    /// `visibleAreas` are the displays' usable areas — menu bar and Dock already excluded — in
+    /// Quartz (top-left) coordinates, resolved on the main thread by the caller since `NSScreen`
+    /// is main-thread-only. `WindowTiler.visibleAreas()` is the one source for them, shared with
+    /// the keyboard chords. `gap` is the tiling gap, for a window that is re-tiled.
+    func moveWindow(acrossDisplays delta: Int, visibleAreas frames: [CGRect], gap: CGFloat) {
         guard frames.count > 1, delta != 0 else { return }
         let kind = self.kind
         let pid = self.pid
         Self.focusQueue.async {
-            guard let window = Self.resolveWindow(kind),
-                let origin = AX.position(window), let size = AX.size(window)
-            else { return }
-            // The display the window is on, by the one rule the badge and the tiling chords also use
-            // — see `WindowTiler.homeDisplay`. nil means it overlaps no usable area at all, and a
-            // window on no display has no next display to be sent to.
-            let frame = CGRect(origin: origin, size: size)
-            guard let from = WindowTiler.homeDisplay(of: frame, in: frames) else { return }
-            // Stepped left to right across the desk, by the same rule as the ⌃⇧⌘-arrow chords —
-            // see `WindowTiler.displayStepTarget`. Stepping `frames` in its own order, which is
-            // `NSScreen.screens`' enumeration order, sent "next display" leftwards on any desk not
-            // enumerated the way it is arranged, and disagreed with the chord that means the same.
-            let to = frames[WindowTiler.displayStepTarget(from: from, step: delta, in: frames)]
-            let current = frames[from]
-            // The shared arithmetic, not a second copy of it: the promise both sides document is
-            // that a window thrown either way lands in the same place, and one function is the only
-            // thing that can keep it. Positioning without the shrink-to-fit left a window that
-            // filled a 4K external at 4K on a laptop screen, pinned to the top-left with most of it
-            // hanging off the bottom and right.
-            let placed = WindowTiler.carried(frame, from: current, to: to)
-            // Position, size, position, through the one writer — see `AX.setFrame`, which explains
-            // why all three are needed: some apps clamp a move against their *current* size and
-            // others clamp a resize against the screen edge from their old origin. This used to be
-            // `setSize` then `setPosition`, which covers the first class and not the second, and
-            // covered it differently from the chord that is meant to land in the same place. It
-            // also collapses two `onOwningThread` hops into one.
-            AX.setFrame(window, placed, sizing: true, repositionAfterSizing: true)
-            // Bring it to the front of the destination display and focus it, rather than dropping it
-            // behind whatever is already there.
-            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, true as CFTypeRef)
-            DispatchQueue.main.async {
-                NSRunningApplication(processIdentifier: pid)?.activate()
+            guard let resolved = Self.resolveWindow(kind) else { return }
+            nonisolated(unsafe) let window = resolved
+            // Named rather than left for the tiler to re-resolve from the pid, which would be the
+            // app's *focused* window — not reliably the one the panel has highlighted. The tiler
+            // steps left to right across the desk, by the same rule as the chords, and writes
+            // position, size, position through the one writer; see `AX.setFrame`.
+            WindowTiler.apply(
+                delta > 0 ? .nextDisplay : .previousDisplay, pid: pid, areas: frames,
+                cycleWidths: false, gap: gap, target: .element(window)
+            ) {
+                // Bring it to the front of the destination display and focus it, rather than
+                // dropping it behind whatever is already there. Run once it has landed.
+                AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, true as CFTypeRef)
+                DispatchQueue.main.async {
+                    NSRunningApplication(processIdentifier: pid)?.activate()
+                }
             }
         }
     }

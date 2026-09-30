@@ -55,12 +55,13 @@ full documentation — building, every setting, how it works — is in
 
 ### Window management
 
-- Keyboard tiling: halves, thirds, two-thirds, corners, maximize, almost maximize and center, with
-  adjustable gaps.
+- Keyboard tiling: halves, thirds, two-thirds, fourths, sixths, ninths, corners, maximize, almost
+  maximize and center, with adjustable gaps.
+- Tile or cascade every window on the display in one press.
 - Resize, nudge, swap with a neighbor, and restore a window's size from before it was tiled.
 - Move windows to another display or another Desktop — relatively, or straight to display 1–4 and
   desktop 1–9 by name.
-- Snap by dragging a window to an edge or corner, or move and resize with a modifier-drag.
+- Snap by dragging a window to an edge or corner (a tiled window regains its old size when dragged out), or move and resize with a modifier-drag.
 - Hide every window to show the desktop, then bring them all back.
 - Move focus by direction, or let focus follow the pointer.
 - Put windows back where they were when a set of monitors reconnects.

@@ -1153,9 +1153,11 @@ final class TilingMemoryTests: XCTestCase {
             if let tile = press {
                 slot = Slot.afterTile(slot, current: window, desk: desk)
                 window = tile
+                slot?.tiled = [window]
             } else if let saved = slot {
                 slot = Slot.afterRestore(saved, current: window, desk: desk)
                 window = saved.frame
+                slot?.tiled = [window]
             }
         }
         return window
@@ -1207,6 +1209,355 @@ final class TilingMemoryTests: XCTestCase {
         let redone = Slot.afterRestore(undone, current: original, desk: desk)
         XCTAssertFalse(redone.isRedo)
         XCTAssertEqual(redone.frame, original)
+    }
+
+    // MARK: - Restore chains
+
+    /// A window and its slot, moved the way `apply` moves them: a tile or restore records where
+    /// the write left the window, a hand move records nothing.
+    private struct Sim {
+        var slot: Slot?
+        var window: CGRect
+        let desk: [CGRect]
+
+        mutating func tile(to frame: CGRect, anchor: CGRect? = nil) {
+            slot = Slot.afterTile(slot, current: anchor ?? window, desk: desk)
+            window = frame
+            slot?.tiled = [frame]
+        }
+
+        mutating func restore() {
+            guard let saved = slot else { return }
+            slot = Slot.afterRestore(saved, current: window, desk: desk)
+            window = saved.frame
+            slot?.tiled = [window]
+        }
+
+        mutating func byHand(to frame: CGRect) { window = frame }
+
+        /// A display move of a window that was at its tile refreshes what is remembered.
+        mutating func moveDisplay(to frame: CGRect) {
+            if let slot, slot.isAtTile(window) { self.slot?.tiled = [frame] }
+            window = frame
+        }
+    }
+
+    /// Tile, resize by hand, tile again: restore goes back to the hand-made frame, not to the one
+    /// from before the first tile.
+    func testRestoreAfterAHandMoveBetweenTilesGoesBackToTheHandMove() {
+        let manual = CGRect(x: 100, y: 100, width: 640, height: 480)
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        sim.byHand(to: manual)
+        sim.tile(to: right)
+        sim.restore()
+        XCTAssertEqual(sim.window, manual)
+    }
+
+    func testTileThenTileThenRestoreGoesBackToTheOriginal() {
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        sim.tile(to: right)
+        sim.restore()
+        XCTAssertEqual(sim.window, original)
+    }
+
+    func testRedoThenTileStillRestoresToTheOriginal() {
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        sim.restore()
+        sim.restore()
+        XCTAssertEqual(sim.window, left)
+        sim.tile(to: right)
+        sim.restore()
+        XCTAssertEqual(sim.window, original)
+    }
+
+    /// Dragged out of the tile and dropped in another zone: the drop is half off the screen, but the
+    /// drag started from the tile, so restore still returns to before any of it.
+    func testADragSnapFromATileRestoresToTheOriginal() {
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        sim.tile(to: right, anchor: left)
+        sim.restore()
+        XCTAssertEqual(sim.window, original)
+    }
+
+    /// A window dragged from somewhere free to a zone: the anchor is where it was picked up, not
+    /// where the cursor hit the edge.
+    func testADragSnapRecordsWhereTheWindowWasPickedUp() {
+        let dropped = CGRect(x: -300, y: 400, width: 700, height: 500)
+        var sim = Sim(slot: nil, window: dropped, desk: desk)
+        sim.tile(to: left, anchor: original)
+        sim.restore()
+        XCTAssertEqual(sim.window, original)
+    }
+
+    /// Un-snap: a tiled window dragged out is resized to the anchor's size mid-drag, then dropped in
+    /// a zone. The drop is tiled with the tile as its anchor, so the slot is kept and restore still
+    /// goes back to before the first tile — the un-snap never touches the slot.
+    func testADragOutOfATileThenIntoAZoneKeepsTheOriginalAnchor() {
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        let slot = sim.slot
+        XCTAssertEqual(slot?.isAtTile(left), true)
+        XCTAssertEqual(slot?.isRedo, false)
+        // Dragged out, shrunk to the anchor's size and carried to the edge.
+        sim.byHand(to: CGRect(origin: CGPoint(x: -200, y: 300), size: original.size))
+        sim.tile(to: right, anchor: left)
+        XCTAssertEqual(sim.slot?.frame, original)
+        sim.restore()
+        XCTAssertEqual(sim.window, original)
+    }
+
+    /// Dropped in no zone: the window stays at the anchor's size, no longer at its tile, so the next
+    /// tile records wherever it was dropped — like any window moved by hand — and un-snap will not
+    /// fire again for it (it is not at the tile it was left in).
+    func testADragOutOfATileIntoNoZoneIsAnOrdinaryHandMove() {
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        let dropped = CGRect(origin: CGPoint(x: 500, y: 300), size: original.size)
+        sim.byHand(to: dropped)
+        XCTAssertEqual(sim.slot?.isAtTile(dropped), false)
+        sim.tile(to: right)
+        sim.restore()
+        XCTAssertEqual(sim.window, dropped)
+    }
+
+    // MARK: - Un-snap geometry
+
+    /// A right half picked up at (960, 0), 960 wide, carried 100pt right and 40 down before the
+    /// tiler's queue ran; the anchor it came from was 640 wide.
+    private let tile = CGRect(x: 960, y: 0, width: 960, height: 1080)
+
+    private func unsnapped(grabX: CGFloat, to size: CGSize) -> CGRect {
+        WindowTiler.unsnappedFrame(
+            current: tile.offsetBy(dx: 100, dy: 40), pickedUp: tile,
+            grab: CGPoint(x: grabX, y: 10), size: size)
+    }
+
+    /// Held at its left end, the window keeps its left edge where the cursor took it.
+    func testUnsnapHeldAtTheLeftKeepsTheLeftEdge() {
+        let frame = unsnapped(grabX: 960, to: CGSize(width: 640, height: 480))
+        XCTAssertEqual(frame, CGRect(x: 1060, y: 40, width: 640, height: 480))
+    }
+
+    /// Held in the middle, the cursor stays over the middle of the smaller window.
+    func testUnsnapHeldInTheMiddleKeepsTheMiddleUnderTheCursor() {
+        let frame = unsnapped(grabX: 1440, to: CGSize(width: 640, height: 480))
+        XCTAssertEqual(frame.minX, 1060 + 160)
+        XCTAssertEqual(frame.midX, tile.midX + 100)
+    }
+
+    /// Held at its right end, the window's right end stays under the cursor.
+    func testUnsnapHeldAtTheRightKeepsTheRightEdge() {
+        let frame = unsnapped(grabX: 1920, to: CGSize(width: 640, height: 480))
+        XCTAssertEqual(frame.maxX, tile.maxX + 100)
+    }
+
+    /// An anchor wider than the tile grows the window about the same grab fraction.
+    func testUnsnapToAWiderAnchorGrowsAboutTheGrab() {
+        let wide = CGSize(width: 1440, height: 900)
+        let left = unsnapped(grabX: 960, to: wide)
+        let middle = unsnapped(grabX: 1440, to: wide)
+        let right = unsnapped(grabX: 1920, to: wide)
+        XCTAssertEqual(left.minX, 1060)
+        XCTAssertEqual(middle.minX, 1060 - 240)
+        XCTAssertEqual(right.minX, 1060 - 480)
+        XCTAssertEqual(right.maxX, tile.maxX + 100)
+        XCTAssertEqual(middle.size, wide)
+    }
+
+    /// `y` is the title bar's and never changes; a grab outside the window clamps to its ends.
+    func testUnsnapKeepsYAndClampsAGrabOutsideTheWindow() {
+        let size = CGSize(width: 640, height: 480)
+        XCTAssertEqual(unsnapped(grabX: 1440, to: size).minY, 40)
+        XCTAssertEqual(unsnapped(grabX: 0, to: size).minX, unsnapped(grabX: 960, to: size).minX)
+        XCTAssertEqual(unsnapped(grabX: 5000, to: size).minX, unsnapped(grabX: 1920, to: size).minX)
+    }
+
+    func testANudgeOrSizeStepBetweenTilesKeepsTheAnchor() {
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        sim.tile(to: left.insetBy(dx: -40, dy: -40))
+        sim.restore()
+        XCTAssertEqual(sim.window, original)
+    }
+
+    func testADisplayMoveOfATiledWindowKeepsTheChain() {
+        let onOther = CGRect(x: 1600, y: 0, width: 960, height: 1080)
+        var sim = Sim(slot: nil, window: original, desk: desk)
+        sim.tile(to: left)
+        sim.moveDisplay(to: onOther)
+        sim.tile(to: right)
+        sim.restore()
+        XCTAssertEqual(sim.window, original)
+    }
+
+    // MARK: - Re-tiling on a display move
+
+    private let laptop = CGRect(x: 0, y: 25, width: 1512, height: 900)
+    private let external = CGRect(x: 1512, y: 0, width: 2560, height: 1400)
+
+    private func tiledSlot(_ arrangement: WindowArrangement, fraction: CGFloat = 0.5, at frame: CGRect)
+        -> Slot
+    {
+        var slot = Slot(frame: original, desk: desk)
+        slot.tiled = [frame]
+        slot.placement = .init(arrangement: arrangement, fraction: fraction)
+        return slot
+    }
+
+    func testATiledWindowIsReTiledOnTheOtherDisplay() {
+        let rightHalf = CGRect(x: 1512 + 1280, y: 0, width: 1280, height: 1400)
+        let slot = tiledSlot(.rightHalf, at: rightHalf)
+        let moved = WindowTiler.displayMoveTarget(
+            current: rightHalf, from: external, to: laptop, slot: slot, gap: 0)
+        XCTAssertEqual(moved, CGRect(x: 756, y: 25, width: 756, height: 900))
+    }
+
+    func testAReTiledWindowTakesTheGap() {
+        let rightHalf = CGRect(x: 1512 + 1280, y: 0, width: 1280, height: 1400)
+        let slot = tiledSlot(.rightHalf, at: rightHalf)
+        let moved = WindowTiler.displayMoveTarget(
+            current: rightHalf, from: external, to: laptop, slot: slot, gap: 10)
+        XCTAssertEqual(moved, CGRect(x: 761, y: 35, width: 741, height: 880))
+    }
+
+    func testAReTiledWindowKeepsItsCycleWidth() {
+        let wide = CGRect(x: 1512 + 2560 / 3, y: 0, width: 2560 * 2 / 3, height: 1400)
+        let slot = tiledSlot(.rightHalf, fraction: 2.0 / 3, at: wide)
+        let moved = WindowTiler.displayMoveTarget(
+            current: wide, from: external, to: laptop, slot: slot, gap: 0)
+        XCTAssertEqual(moved.width, 1008, accuracy: 0.001)
+        XCTAssertEqual(moved.maxX, 1512, accuracy: 0.001)
+    }
+
+    /// Moved by hand since the tile: the size someone chose is kept, exactly as before.
+    func testAWindowMovedSinceItsTileIsCarriedNotReTiled() {
+        let rightHalf = CGRect(x: 1512 + 1280, y: 0, width: 1280, height: 1400)
+        let slot = tiledSlot(.rightHalf, at: rightHalf)
+        let hand = rightHalf.offsetBy(dx: -200, dy: 50)
+        XCTAssertEqual(
+            WindowTiler.displayMoveTarget(
+                current: hand, from: external, to: laptop, slot: slot, gap: 0),
+            WindowTiler.carried(hand, from: external, to: laptop))
+    }
+
+    func testAWindowWithNoTileOnRecordIsCarried() {
+        let window = CGRect(x: 1600, y: 100, width: 800, height: 600)
+        XCTAssertEqual(
+            WindowTiler.displayMoveTarget(
+                current: window, from: external, to: laptop, slot: nil, gap: 0),
+            WindowTiler.carried(window, from: external, to: laptop))
+    }
+
+    func testOnlyFractionArrangementsAreReTiled() {
+        XCTAssertTrue(WindowArrangement.rightHalf.isPureFraction)
+        XCTAssertTrue(WindowArrangement.bottomRight.isPureFraction)
+        XCTAssertTrue(WindowArrangement.maximize.isPureFraction)
+        XCTAssertTrue(WindowArrangement.almostMaximize.isPureFraction)
+        XCTAssertFalse(WindowArrangement.center.isPureFraction)
+        XCTAssertFalse(WindowArrangement.maximizeHeight.isPureFraction)
+        XCTAssertFalse(WindowArrangement.larger.isPureFraction)
+        XCTAssertFalse(WindowArrangement.nudgeLeft.isPureFraction)
+        XCTAssertFalse(WindowArrangement.growRight.isPureFraction)
+        XCTAssertFalse(WindowArrangement.restore.isPureFraction)
+    }
+
+    // MARK: - Refused sizes
+
+    private let area = CGRect(x: 0, y: 25, width: 1280, height: 975)
+
+    func testARightThirdWithAMinimumWidthStaysFlushRight() {
+        let target = CGRect(x: 853.333, y: 25, width: 426.667, height: 975)
+        let actual = CGRect(x: 853.333, y: 25, width: 600, height: 975)
+        let origin = WindowTiler.corrected(target: target, actual: actual, area: area, gap: 0)
+        XCTAssertEqual(origin?.x ?? 0, 680, accuracy: 0.001)
+        XCTAssertEqual(origin?.y ?? 0, 25, accuracy: 0.001)
+    }
+
+    func testARightThirdWithAGapKeepsTheGap() {
+        let target = CGRect(x: 863.333, y: 35, width: 406.667, height: 955)
+        let actual = CGRect(x: 863.333, y: 35, width: 600, height: 955)
+        let origin = WindowTiler.corrected(target: target, actual: actual, area: area, gap: 10)
+        XCTAssertEqual(origin?.x ?? 0, 670, accuracy: 0.001)
+    }
+
+    func testABottomHalfThatCameBackShortStaysOnTheBottom() {
+        let target = CGRect(x: 0, y: 512.5, width: 1280, height: 487.5)
+        let actual = CGRect(x: 0, y: 512.5, width: 1280, height: 400)
+        let origin = WindowTiler.corrected(target: target, actual: actual, area: area, gap: 0)
+        XCTAssertEqual(origin?.y ?? 0, 600, accuracy: 0.001)
+        XCTAssertEqual(origin?.x ?? 0, 0, accuracy: 0.001)
+    }
+
+    func testAMiddleThirdThatCameBackWiderStaysCentred() {
+        let target = CGRect(x: 426.667, y: 25, width: 426.667, height: 975)
+        let actual = CGRect(x: 426.667, y: 25, width: 600, height: 975)
+        let origin = WindowTiler.corrected(target: target, actual: actual, area: area, gap: 0)
+        XCTAssertEqual(origin?.x ?? 0, 340, accuracy: 0.001)
+    }
+
+    func testAWindowLargerThanTheAreaPinsToTheMinEdge() {
+        let target = CGRect(x: 640, y: 25, width: 640, height: 975)
+        let actual = CGRect(x: 640, y: 25, width: 1500, height: 975)
+        let origin = WindowTiler.corrected(target: target, actual: actual, area: area, gap: 0)
+        XCTAssertEqual(origin?.x ?? 1, 0, accuracy: 0.001)
+    }
+
+    func testALeftHalfThatCameBackWiderKeepsItsLeftEdge() {
+        let target = CGRect(x: 0, y: 25, width: 640, height: 975)
+        let actual = CGRect(x: 0, y: 25, width: 700, height: 975)
+        XCTAssertNil(WindowTiler.corrected(target: target, actual: actual, area: area, gap: 0))
+    }
+
+    /// Electron and Chromium apply writes late: the frame read back is still the old one, and
+    /// correcting against it would move a window that is about to land correctly.
+    func testALateWriteIsLeftAlone() {
+        let target = CGRect(x: 853.333, y: 25, width: 426.667, height: 975)
+        let stale = CGRect(x: 200, y: 100, width: 600, height: 400)
+        XCTAssertNil(WindowTiler.corrected(target: target, actual: stale, area: area, gap: 0))
+    }
+
+    func testAnExactFitIsLeftAlone() {
+        let target = CGRect(x: 853.333, y: 25, width: 426.667, height: 975)
+        XCTAssertNil(
+            WindowTiler.corrected(
+                target: target, actual: target.insetBy(dx: 0.5, dy: 0.5), area: area, gap: 0))
+    }
+
+    // MARK: - Starting the cycle on a window already at a half
+
+    func testAWindowAlreadyAtTheHalfStartsTheCycleAtTwoThirds() {
+        let half = WindowArrangement.leftHalf.frame(in: area, current: original, fraction: 0.5)!
+        XCTAssertEqual(
+            WindowTiler.stepMatching(.leftHalf, current: half, area: area, gap: 0), 0)
+    }
+
+    func testAWindowAtTwoThirdsOrAThirdIsMatchedToo() {
+        let twoThirds = WindowArrangement.rightHalf.frame(
+            in: area, current: original, fraction: 2.0 / 3)!
+        let third = WindowArrangement.rightHalf.frame(
+            in: area, current: original, fraction: 1.0 / 3)!
+        XCTAssertEqual(
+            WindowTiler.stepMatching(.rightHalf, current: twoThirds, area: area, gap: 0), 1)
+        XCTAssertEqual(
+            WindowTiler.stepMatching(.rightHalf, current: third, area: area, gap: 0), 2)
+    }
+
+    func testTheMatchIsMadeOnTheFrameTheGapProduces() {
+        let half = WindowArrangement.leftHalf.frame(in: area, current: original, fraction: 0.5)!
+        let gapped = TilingGap.inset(half, in: area, gap: 12)
+        XCTAssertEqual(
+            WindowTiler.stepMatching(.leftHalf, current: gapped, area: area, gap: 12), 0)
+        XCTAssertNil(WindowTiler.stepMatching(.leftHalf, current: half, area: area, gap: 12))
+    }
+
+    func testAWindowAnywhereElseStartsTheCycleAtAHalf() {
+        XCTAssertNil(WindowTiler.stepMatching(.leftHalf, current: original, area: area, gap: 0))
+        let right = WindowArrangement.rightHalf.frame(in: area, current: original, fraction: 0.5)!
+        XCTAssertNil(WindowTiler.stepMatching(.leftHalf, current: right, area: area, gap: 0))
     }
 
     // MARK: - Width cycle
@@ -1366,6 +1717,101 @@ final class DragSnapZoneTests: XCTestCase {
         let squat = CGRect(x: 0, y: 0, width: 400, height: 200)
         XCTAssertEqual(DragSnap.zone(for: CGPoint(x: 2, y: 100), in: squat), .leftHalf)
         XCTAssertEqual(DragSnap.zone(for: CGPoint(x: 200, y: 199), in: squat), .maximize)
+    }
+
+    // MARK: - Edge options
+
+    private let topHalf = DragSnap.EdgeOptions(topHalf: true)
+    private let thirds = DragSnap.EdgeOptions(bottomThirds: true)
+    private let both = DragSnap.EdgeOptions(topHalf: true, bottomThirds: true)
+
+    private func zone(_ x: CGFloat, _ y: CGFloat, _ options: DragSnap.EdgeOptions)
+        -> WindowArrangement?
+    {
+        DragSnap.zone(for: CGPoint(x: x, y: y), in: frame, edges: options)
+    }
+
+    /// Both options off is the behaviour from before they existed.
+    func testTheDefaultEdgeOptionsChangeNothing() {
+        XCTAssertEqual(DragSnap.EdgeOptions(), DragSnap.EdgeOptions(topHalf: false, bottomThirds: false))
+        XCTAssertEqual(zone(800, 999, DragSnap.EdgeOptions()), .maximize)
+        XCTAssertEqual(zone(800, 1, DragSnap.EdgeOptions()), .bottomHalf)
+    }
+
+    func testTheTopEdgeCanTileTheTopHalf() {
+        XCTAssertEqual(zone(800, 999, topHalf), .topHalf)
+        XCTAssertEqual(zone(800, 1000, topHalf), .topHalf)
+        // The bottom is unaffected by the top option.
+        XCTAssertEqual(zone(800, 1, topHalf), .bottomHalf)
+    }
+
+    func testTheTopOptionLeavesTheCentreBoxAndTheTopCornersAlone() {
+        XCTAssertEqual(zone(frame.midX, frame.midY, topHalf), .maximize)
+        XCTAssertEqual(zone(1, 999, topHalf), .topLeft)
+        XCTAssertEqual(zone(1599, 999, topHalf), .topRight)
+        XCTAssertEqual(zone(89, 999, topHalf), .topLeft)
+        XCTAssertEqual(zone(91, 999, topHalf), .topHalf)
+    }
+
+    func testTheBottomEdgeCanBeSplitIntoThirds() {
+        XCTAssertEqual(zone(300, 1, thirds), .leftThird)
+        XCTAssertEqual(zone(800, 1, thirds), .centerThird)
+        XCTAssertEqual(zone(1300, 1, thirds), .rightThird)
+        // The boundaries fall a third of the way across: 1600 / 3 = 533.3.
+        XCTAssertEqual(zone(533, 1, thirds), .leftThird)
+        XCTAssertEqual(zone(534, 1, thirds), .centerThird)
+        XCTAssertEqual(zone(1066, 1, thirds), .centerThird)
+        XCTAssertEqual(zone(1067, 1, thirds), .rightThird)
+        // The top is unaffected by the bottom option.
+        XCTAssertEqual(zone(800, 999, thirds), .maximize)
+    }
+
+    func testTheBottomCornersAndSideEdgesStillWinOverThirds() {
+        XCTAssertEqual(zone(1, 1, thirds), .bottomLeft)
+        XCTAssertEqual(zone(89, 1, thirds), .bottomLeft)
+        XCTAssertEqual(zone(91, 1, thirds), .leftThird)
+        XCTAssertEqual(zone(1599, 1, thirds), .bottomRight)
+        XCTAssertEqual(zone(1, 500, thirds), .leftHalf)
+        XCTAssertEqual(zone(1599, 500, thirds), .rightHalf)
+    }
+
+    func testBothEdgeOptionsTogether() {
+        XCTAssertEqual(zone(800, 999, both), .topHalf)
+        XCTAssertEqual(zone(800, 1, both), .centerThird)
+        XCTAssertEqual(zone(1, 999, both), .topLeft)
+        XCTAssertEqual(zone(1599, 1, both), .bottomRight)
+    }
+
+    /// A second display to the right of the first, so its frame has a non-zero origin: the thirds
+    /// are measured across *that* display, not across the desk.
+    func testThirdsAreMeasuredAcrossTheDisplayTheCursorIsOn() {
+        let second = CGRect(x: 1600, y: -200, width: 1200, height: 1000)
+        func at(_ x: CGFloat, _ y: CGFloat, _ options: DragSnap.EdgeOptions) -> WindowArrangement? {
+            DragSnap.zone(for: CGPoint(x: x, y: y), in: second, edges: options)
+        }
+        XCTAssertEqual(at(1700 + 100, -199, thirds), .leftThird)
+        XCTAssertEqual(at(2200, -199, thirds), .centerThird)
+        XCTAssertEqual(at(2700, -199, thirds), .rightThird)
+        XCTAssertEqual(at(2799, -199, thirds), .bottomRight)
+        XCTAssertEqual(at(2200, 799, topHalf), .topHalf)
+        XCTAssertEqual(at(2200, 799, DragSnap.EdgeOptions()), .maximize)
+    }
+
+    /// The modifier-drag's move shares the options; its resize takes corners only, so they never
+    /// reach it.
+    func testTheEdgeOptionsReachAModifierMoveButNotAResize() {
+        let move = MouseWindowDrag.snapZones(for: .move)
+        let resize = MouseWindowDrag.snapZones(for: .resize)
+        XCTAssertEqual(
+            DragSnap.zone(for: CGPoint(x: 800, y: 999), in: frame, zones: move, edges: both),
+            .topHalf)
+        XCTAssertEqual(
+            DragSnap.zone(for: CGPoint(x: 800, y: 1), in: frame, zones: move, edges: both),
+            .centerThird)
+        XCTAssertNil(
+            DragSnap.zone(for: CGPoint(x: 800, y: 999), in: frame, zones: resize, edges: both))
+        XCTAssertNil(
+            DragSnap.zone(for: CGPoint(x: 800, y: 1), in: frame, zones: resize, edges: both))
     }
 
     // MARK: - Restore points against a desk that has changed
@@ -1636,6 +2082,264 @@ final class DesktopMoveClaimTests: XCTestCase {
         }
         group.wait()
         XCTAssertEqual(granted.value, 1, "exactly one of a concurrent burst may claim the gesture")
+    }
+}
+
+/// Fourths, sixths and ninths, and the layout arithmetic behind tile all and cascade all.
+///
+/// The area is a second display's: a non-zero origin on both axes, so a cell that forgets to add
+/// `minX`/`minY` lands on the wrong monitor and is caught here rather than on a desk.
+final class FinerGridTests: XCTestCase {
+    private let area = CGRect(x: 1512, y: 30, width: 2400, height: 1200)
+
+    private func frame(_ arrangement: WindowArrangement, in rect: CGRect? = nil) throws -> CGRect {
+        try XCTUnwrap(
+            arrangement.frame(in: rect ?? area, current: .zero, fraction: 0.5),
+            "\(arrangement.rawValue) has no frame")
+    }
+
+    private let fourths: [WindowArrangement] = [.firstFourth, .secondFourth, .thirdFourth, .lastFourth]
+    private let sixths: [[WindowArrangement]] = [
+        [.topLeftSixth, .topCenterSixth, .topRightSixth],
+        [.bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth],
+    ]
+    private let ninths: [[WindowArrangement]] = [
+        [.topLeftNinth, .topCenterNinth, .topRightNinth],
+        [.middleLeftNinth, .middleCenterNinth, .middleRightNinth],
+        [.bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth],
+    ]
+
+    func testFourthsAreFullHeightColumnsAcrossTheArea() throws {
+        for (index, arrangement) in fourths.enumerated() {
+            XCTAssertEqual(
+                try frame(arrangement),
+                CGRect(x: 1512 + CGFloat(index) * 600, y: 30, width: 600, height: 1200))
+        }
+    }
+
+    func testThreeFourthsAreFlushWithTheirOwnSide() throws {
+        XCTAssertEqual(try frame(.leftThreeFourths), CGRect(x: 1512, y: 30, width: 1800, height: 1200))
+        XCTAssertEqual(try frame(.rightThreeFourths), CGRect(x: 2112, y: 30, width: 1800, height: 1200))
+        XCTAssertEqual(try frame(.rightThreeFourths).maxX, area.maxX)
+    }
+
+    func testSixthsAreThreeColumnsByTwoRows() throws {
+        for (row, cells) in sixths.enumerated() {
+            for (column, arrangement) in cells.enumerated() {
+                XCTAssertEqual(
+                    try frame(arrangement),
+                    CGRect(
+                        x: 1512 + CGFloat(column) * 800, y: 30 + CGFloat(row) * 600,
+                        width: 800, height: 600))
+            }
+        }
+    }
+
+    func testNinthsAreThreeColumnsByThreeRows() throws {
+        for (row, cells) in ninths.enumerated() {
+            for (column, arrangement) in cells.enumerated() {
+                XCTAssertEqual(
+                    try frame(arrangement),
+                    CGRect(
+                        x: 1512 + CGFloat(column) * 800, y: 30 + CGFloat(row) * 400,
+                        width: 800, height: 400))
+            }
+        }
+    }
+
+    /// An area that does not divide evenly: the trailing cells must still end on the area's edge
+    /// rather than a rounding error short of it, and neighbours must meet with no hole.
+    func testTrailingCellsLandFlushOnAnAreaThatDoesNotDivide() throws {
+        let odd = CGRect(x: 1512.5, y: 30.25, width: 1000.7, height: 700.3)
+        let everyCell: [WindowArrangement] =
+            fourths + [.rightThreeFourths] + sixths.flatMap { $0 } + ninths.flatMap { $0 }
+        for arrangement in everyCell {
+            let cell = try frame(arrangement, in: odd)
+            XCTAssertTrue(odd.contains(cell.insetBy(dx: 0.001, dy: 0.001)), arrangement.rawValue)
+        }
+        XCTAssertEqual(try frame(.lastFourth, in: odd).maxX, odd.maxX, accuracy: 0.0001)
+        XCTAssertEqual(try frame(.bottomRightSixth, in: odd).maxY, odd.maxY, accuracy: 0.0001)
+        XCTAssertEqual(try frame(.bottomRightNinth, in: odd).maxX, odd.maxX, accuracy: 0.0001)
+        XCTAssertEqual(try frame(.bottomRightNinth, in: odd).maxY, odd.maxY, accuracy: 0.0001)
+        XCTAssertEqual(
+            try frame(.secondFourth, in: odd).maxX, try frame(.thirdFourth, in: odd).minX,
+            accuracy: 0.0001)
+    }
+
+    func testEachFamilyTilesTheAreaExactly() throws {
+        for family in [fourths.map { [$0] }, sixths, ninths].map({ $0.flatMap { $0 } }) {
+            let total = try family.reduce(CGFloat(0)) { $0 + (try frame($1)).area }
+            XCTAssertEqual(total, area.area, accuracy: 0.001)
+        }
+    }
+
+    /// Interior cells sit between two neighbours on an axis, so the gap reaches them as two halves;
+    /// an edge cell takes the whole gap on the screen side. Across a seam the space is one gap.
+    func testGapSeamsBetweenInteriorCells() throws {
+        let gap: CGFloat = 20
+        let left = TilingGap.inset(try frame(.secondFourth), in: area, gap: gap)
+        let right = TilingGap.inset(try frame(.thirdFourth), in: area, gap: gap)
+        XCTAssertEqual(right.minX - left.maxX, gap, accuracy: 0.001)
+        let centre = TilingGap.inset(try frame(.middleCenterNinth), in: area, gap: gap)
+        XCTAssertEqual(centre.width, 800 - gap, accuracy: 0.001)
+        XCTAssertEqual(centre.height, 400 - gap, accuracy: 0.001)
+        let corner = TilingGap.inset(try frame(.topLeftNinth), in: area, gap: gap)
+        XCTAssertEqual(corner.minX - area.minX, gap, accuracy: 0.001)
+        XCTAssertEqual(corner.minY - area.minY, gap, accuracy: 0.001)
+    }
+
+    func testTheNewFractionsAreTilesThatTakeTheGapAndDoNotCycle() {
+        let cells = fourths + [.leftThreeFourths, .rightThreeFourths]
+            + sixths.flatMap { $0 } + ninths.flatMap { $0 }
+        XCTAssertEqual(cells.count, 21)
+        for arrangement in cells {
+            XCTAssertTrue(arrangement.isPureFraction, arrangement.rawValue)
+            XCTAssertTrue(arrangement.takesGap, arrangement.rawValue)
+            XCTAssertFalse(arrangement.cycles, arrangement.rawValue)
+            XCTAssertTrue(WindowArrangement.launchable.contains(arrangement), arrangement.rawValue)
+            XCTAssertNil(arrangement.defaultHotkey, arrangement.rawValue)
+        }
+    }
+
+    // MARK: - Tile all / cascade all
+
+    func testArrangeAllVerbsAreGatedUnboundAndNeverASinglePlacement() throws {
+        for arrangement in [WindowArrangement.tileAll, .cascadeAll] {
+            XCTAssertTrue(arrangement.arrangesAll)
+            XCTAssertFalse(arrangement.isUngated)
+            XCTAssertFalse(arrangement.isPureFraction)
+            XCTAssertFalse(arrangement.cycles)
+            XCTAssertNil(arrangement.defaultHotkey)
+            XCTAssertNil(arrangement.frame(in: area, current: .zero, fraction: 0.5))
+            XCTAssertFalse(WindowArrangement.launchable.contains(arrangement))
+            XCTAssertTrue(WindowArrangement.tilingArrangements.contains(arrangement))
+        }
+        XCTAssertFalse(WindowArrangement.cascadeAll.takesGap)
+        XCTAssertEqual(WindowArrangement.allCases.filter(\.arrangesAll).count, 2)
+    }
+
+    func testGridOfOneIsTheMaximizeFrame() {
+        XCTAssertEqual(ArrangeAll.grid(count: 1, in: area, gap: 0), [area])
+        let gapped = ArrangeAll.grid(count: 1, in: area, gap: 10)
+        XCTAssertEqual(gapped, [TilingGap.inset(area, in: area, gap: 10)])
+    }
+
+    func testGridOfTwoIsTwoColumns() {
+        XCTAssertEqual(
+            ArrangeAll.grid(count: 2, in: area, gap: 0),
+            [
+                CGRect(x: 1512, y: 30, width: 1200, height: 1200),
+                CGRect(x: 2712, y: 30, width: 1200, height: 1200),
+            ])
+    }
+
+    /// Three windows make two columns and two rows; the lone one in the short row takes its width.
+    func testGridOfThreeWidensTheLoneWindowInTheShortRow() {
+        XCTAssertEqual(
+            ArrangeAll.grid(count: 3, in: area, gap: 0),
+            [
+                CGRect(x: 1512, y: 30, width: 1200, height: 600),
+                CGRect(x: 2712, y: 30, width: 1200, height: 600),
+                CGRect(x: 1512, y: 630, width: 2400, height: 600),
+            ])
+    }
+
+    func testGridOfFiveIsThreeOverTwo() {
+        let cells = ArrangeAll.grid(count: 5, in: area, gap: 0)
+        XCTAssertEqual(cells.count, 5)
+        XCTAssertEqual(cells[0], CGRect(x: 1512, y: 30, width: 800, height: 600))
+        XCTAssertEqual(cells[2], CGRect(x: 1512 + 1600, y: 30, width: 800, height: 600))
+        XCTAssertEqual(cells[3], CGRect(x: 1512, y: 630, width: 1200, height: 600))
+        XCTAssertEqual(cells[4], CGRect(x: 1512 + 1200, y: 630, width: 1200, height: 600))
+    }
+
+    func testGridOfTwelveIsFourByThree() {
+        let cells = ArrangeAll.grid(count: 12, in: area, gap: 0)
+        XCTAssertEqual(Set(cells.map(\.minX)).count, 4)
+        XCTAssertEqual(Set(cells.map(\.minY)).count, 3)
+        XCTAssertTrue(cells.allSatisfy { $0.size == CGSize(width: 600, height: 400) })
+        XCTAssertEqual(cells.map(\.area).reduce(0, +), area.area, accuracy: 0.001)
+    }
+
+    /// Z-order in, reading order out: the frontmost window takes the top-left cell and each one
+    /// further back the next cell along, row by row.
+    func testGridMapsZOrderToReadingOrder() {
+        let cells = ArrangeAll.grid(count: 7, in: area, gap: 0)
+        let keys = cells.map { [$0.minY, $0.minX] }
+        XCTAssertEqual(keys, keys.sorted { ($0[0], $0[1]) < ($1[0], $1[1]) })
+        XCTAssertEqual(cells[0].origin, area.origin)
+    }
+
+    func testGridCellsNeverOverlapAndStayInsideTheAreaWithAGap() {
+        for count in [1, 2, 3, 5, 7, 12] {
+            let cells = ArrangeAll.grid(count: count, in: area, gap: 16)
+            for (index, cell) in cells.enumerated() {
+                XCTAssertTrue(area.contains(cell), "count \(count), cell \(index)")
+                for other in cells[(index + 1)...] {
+                    XCTAssertTrue(cell.intersection(other).area < 0.001, "count \(count)")
+                }
+            }
+        }
+    }
+
+    func testGridWithAGapIsOneGapApartAtSeamsAndAGapFromTheEdge() {
+        let cells = ArrangeAll.grid(count: 2, in: area, gap: 20)
+        XCTAssertEqual(cells[1].minX - cells[0].maxX, 20, accuracy: 0.001)
+        XCTAssertEqual(cells[0].minX - area.minX, 20, accuracy: 0.001)
+        XCTAssertEqual(area.maxX - cells[1].maxX, 20, accuracy: 0.001)
+    }
+
+    func testGridOfNothingIsNothing() {
+        XCTAssertEqual(ArrangeAll.grid(count: 0, in: area, gap: 0), [])
+    }
+
+    func testCascadeGivesTheFrontWindowTheLargestOffset() {
+        let size = CGSize(width: 800, height: 600)
+        let frames = ArrangeAll.cascade(sizes: [size, size, size], in: area)
+        XCTAssertEqual(frames[2].origin, area.origin, "the back window takes the corner")
+        XCTAssertEqual(frames[1].origin, CGPoint(x: 1512 + 28, y: 30 + 28))
+        XCTAssertEqual(frames[0].origin, CGPoint(x: 1512 + 56, y: 30 + 56))
+        XCTAssertTrue(frames.allSatisfy { $0.size == size })
+    }
+
+    func testCascadeOfOneSitsInTheCornerAtItsOwnSize() {
+        let size = CGSize(width: 500, height: 400)
+        XCTAssertEqual(ArrangeAll.cascade(sizes: [size], in: area), [CGRect(origin: area.origin, size: size)])
+    }
+
+    func testCascadeShrinksWindowsSoTheWholeStackFits() {
+        let big = CGSize(width: 2400, height: 1200)
+        let frames = ArrangeAll.cascade(sizes: [big, big, big], in: area)
+        for frame in frames {
+            XCTAssertTrue(area.contains(frame), "\(frame)")
+        }
+        XCTAssertEqual(frames[0].maxX, area.maxX, accuracy: 0.001)
+        XCTAssertEqual(frames[0].maxY, area.maxY, accuracy: 0.001)
+        XCTAssertEqual(frames[0].width, 2400 - 56, accuracy: 0.001)
+    }
+
+    /// Twelve windows on a short area would step past it: the step closes up instead, so the last
+    /// window still has the minimum size to stand in.
+    func testCascadeStepShrinksOnAnAxisTooShortForTheStack() {
+        let short = CGRect(x: 0, y: 0, width: 1000, height: 300)
+        let size = CGSize(width: 600, height: 300)
+        let frames = ArrangeAll.cascade(sizes: Array(repeating: size, count: 12), in: short)
+        let step = frames[10].minY - frames[11].minY
+        XCTAssertEqual(step, (300 - WindowArrangement.minimumSize) / 11, accuracy: 0.001)
+        XCTAssertTrue(step > 0 && step < WindowTiler.titlebarHeight)
+        for frame in frames {
+            XCTAssertTrue(short.contains(frame), "\(frame)")
+            XCTAssertGreaterThanOrEqual(frame.height, WindowArrangement.minimumSize - 0.001)
+        }
+        XCTAssertEqual(frames[0].minX, frames[11].minX + 11 * 28, accuracy: 0.001)
+    }
+
+    func testCascadeOfNothingIsNothing() {
+        XCTAssertEqual(ArrangeAll.cascade(sizes: [], in: area), [])
+    }
+
+    func testTheLimitIsTwelve() {
+        XCTAssertEqual(ArrangeAll.limit, 12)
     }
 }
 
