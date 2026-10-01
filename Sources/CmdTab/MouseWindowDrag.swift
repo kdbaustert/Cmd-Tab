@@ -1346,11 +1346,15 @@ final class ModifierTargetHighlight {
         }) else {
             // Said, because this is the one refusal the user sees as "the chord did nothing": the
             // desktop, the menu bar, the Dock or some other app's surface drawn above the ordinary
-            // windows is under the cursor — see `MouseWindowDrag.window(at:)`.
+            // windows is under the cursor — see `MouseWindowDrag.window(at:)`. Which one is named,
+            // because the window list cannot be read back afterwards: a relaunching Dock held a
+            // layer-20 surface over the whole display and refused every point on it, and the line
+            // said only where the cursor was.
             Log.general.notice(
                 """
                 point gesture: no window to act on under the cursor at \
-                (\(Int(point.x), privacy: .public), \(Int(point.y), privacy: .public))
+                (\(Int(point.x), privacy: .public), \(Int(point.y), privacy: .public)); \
+                \(Self.blocker(at: point), privacy: .public)
                 """)
             return nil
         }
@@ -1536,6 +1540,24 @@ final class ModifierTargetHighlight {
         else { return nil }
         let flipped = CGPoint(x: point.x, y: primary.frame.height - point.y)
         return MouseWindowDrag.window(at: flipped)
+    }
+
+    /// What is under a Cocoa-space point instead of an ordinary window, for the refusal's log line.
+    /// A second read of the window list, paid only on the way out of a refusal.
+    private static func blocker(at point: CGPoint) -> String {
+        guard let primary = NSScreen.primary
+        else { return "no primary display" }
+        let flipped = CGPoint(x: point.x, y: primary.frame.height - point.y)
+        guard let top = WindowHitTest.topmost(
+            at: flipped, in: WindowHitTest.onScreen(), passingThrough: getpid())
+        else { return "nothing but the desktop there" }
+        let owner = NSRunningApplication(processIdentifier: top.pid)?.localizedName
+            ?? "pid \(top.pid)"
+        let b = top.bounds
+        return """
+            covered by \(owner), layer \(top.layer), \(Int(b.width))×\(Int(b.height)) \
+            at (\(Int(b.minX)), \(Int(b.minY)))
+            """
     }
 }
 
