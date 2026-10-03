@@ -926,11 +926,19 @@ final class TargetProvider {
     /// version change ships without a new `Info.plist`, so its date moves in every case. nil when
     /// there is no bundle URL or the plist cannot be statted — an uninstall, mid-swap moment, or a
     /// bundle with no plist — and what nil means is the caller's call.
+    /// A literal `stat` call, not `FileManager.attributesOfItem`: that builds the whole attribute
+    /// dictionary — owner and group names included — to answer one date, at 35–54µs warm against
+    /// under 4µs for the syscall (measured). This runs once per regular app on the main thread
+    /// ahead of a same-app or scoped switcher drawing, so the dictionary was ~1ms of panel latency
+    /// at 25 apps.
     nonisolated static func bundleStamp(_ bundleURL: URL?) -> Date? {
         guard let url = bundleURL else { return nil }
-        let plist = url.appendingPathComponent("Contents/Info.plist")
-        let attributes = try? FileManager.default.attributesOfItem(atPath: plist.path)
-        return attributes?[.modificationDate] as? Date
+        var info = stat()
+        guard stat(url.appendingPathComponent("Contents/Info.plist").path, &info) == 0
+        else { return nil }
+        return Date(
+            timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec)
+                + TimeInterval(info.st_mtimespec.tv_nsec) / 1_000_000_000)
     }
 
     /// Launchable tiles for favourites that aren't currently running (and aren't excluded), in the

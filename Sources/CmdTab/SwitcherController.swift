@@ -2686,8 +2686,20 @@ final class SwitcherController {
     /// the top of one display landed under the destination's menu bar — and the two paths disagreed
     /// by the menu bar and Dock insets, which is exactly the promise `WindowTiler.apply` documents
     /// they keep.
+    /// `neverTile` is honoured here for the same reason `tileSelectedWindow` honours it: the chord
+    /// this row mirrors refuses such apps before `.nextDisplay`, and the move now runs through
+    /// `WindowTiler.apply`, which re-tiles a window still sitting where a tile left it — so this
+    /// path skipping the check did not merely carry a protected window across, it resized it.
     private func moveSelectedWindow(acrossDisplays delta: Int) {
-        model.selected?.moveWindow(
+        guard let target = model.selected else { return }
+        let id = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+        if id.map({ appRules[$0]?.neverTile == true }) ?? false
+            || CompiledTitleRule.matches(
+                titleRules, bundleID: id, title: target.title, action: .neverTile) {
+            Log.tap.notice("tiling: \(id ?? target.title, privacy: .public) is set to never tile")
+            return
+        }
+        target.moveWindow(
             acrossDisplays: delta, visibleAreas: WindowTiler.visibleAreas(), gap: tiling.gap)
     }
 

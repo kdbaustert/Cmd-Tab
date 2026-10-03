@@ -241,7 +241,9 @@ final class DesktopAssignments {
                     Log.general.notice(
                         """
                         desktop assignments: \(app.name, privacy: .public) is assigned to the \
-                        desktop with no uuid, and there is not exactly one such desktop; leaving it
+                        desktop with no uuid, which this desk cannot name unambiguously — more \
+                        than one such desktop, now or ever (see \
+                        \(SpaceMover.blankUUIDAmbiguousKey, privacy: .public)); leaving it
                         """)
                 }
                 continue

@@ -381,7 +381,40 @@ enum SpaceMover {
     /// brings its own original Desktop, unmeasured — would leave `""` naming either, and handing a
     /// binding the wrong Desktop is worse than leaving the window where it is, so then neither is.
     static func spaceIDsByUUID() -> [String: UInt64] {
-        spaceIDsByUUID(in: managedDisplays())
+        let displays = managedDisplays()
+        var ids = spaceIDsByUUID(in: displays)
+        // The "only when it is the only one" rule above checks the desk as it is *now* — but a
+        // restore only runs after the desk has changed, which is exactly when the second such
+        // Space would already be gone with its display. So the ambiguity is remembered the first
+        // time it is seen: a desk that has ever shown two Desktops with no UUID is a desk where
+        // `""` may name the one that is now unplugged, and from then on it names neither. The
+        // flag never clears itself; wrongly refusing a move leaves a window where the user put
+        // it, wrongly making one files it somewhere nobody asked for.
+        let defaults = UserDefaults.standard
+        if blankUUIDSpaceCount(in: displays) > 1 {
+            defaults.set(true, forKey: blankUUIDAmbiguousKey)
+        }
+        if defaults.bool(forKey: blankUUIDAmbiguousKey) {
+            ids.removeValue(forKey: "")
+        }
+        return ids
+    }
+
+    /// Remembers that this Mac has, at least once, had two Desktops with no UUID at the same time
+    /// — see `spaceIDsByUUID()`.
+    static let blankUUIDAmbiguousKey = "desktopAssignmentBlankUUIDAmbiguous"
+
+    /// How many user Spaces across the desk carry no UUID — the count `spaceIDsByUUID`'s empty-key
+    /// rule turns on, separated out so the sticky-ambiguity wrapper and the tests can ask it of a
+    /// layout directly.
+    static func blankUUIDSpaceCount(in displays: [[String: Any]]) -> Int {
+        displays.reduce(0) { count, display in
+            guard let spaces = display["Spaces"] as? [[String: Any]] else { return count }
+            return count
+                + spaces.filter {
+                    ($0["type"] as? Int) == 0 && ($0["uuid"] as? String)?.isEmpty == true
+                }.count
+        }
     }
 
     /// `spaceIDsByUUID()` over a given layout, so the empty-UUID rule can be tested against the

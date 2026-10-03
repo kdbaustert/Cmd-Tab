@@ -60,6 +60,18 @@ final class DesktopAssignmentsTests: XCTestCase {
         XCTAssertNil(SpaceMover.spaceIDsByUUID(in: [Self.display([(0, "A", 4)])])[""])
     }
 
+    /// The count the sticky-ambiguity rule turns on: an unplug takes the second blank Desktop
+    /// away before any restore runs, so `spaceIDsByUUID()` remembers ever having seen two. Only
+    /// user Spaces count — a fullscreen Space has no UUID either and is not a Desktop.
+    func testBlankUUIDSpacesAreCountedAcrossDisplaysAndFullscreenIsNot() {
+        XCTAssertEqual(
+            SpaceMover.blankUUIDSpaceCount(in: [
+                Self.display([(0, "", 1), (0, "A", 4), (4, "", 9)]),
+                Self.display([(0, "", 2), (0, "B", 5)]),
+            ]), 2)
+        XCTAssertEqual(SpaceMover.blankUUIDSpaceCount(in: [Self.display([(0, "A", 4)])]), 0)
+    }
+
     /// One display's slice of `CGSCopyManagedDisplaySpaces`, as (type, uuid, ManagedSpaceID).
     private static func display(_ spaces: [(Int, String, UInt64)]) -> [String: Any] {
         [

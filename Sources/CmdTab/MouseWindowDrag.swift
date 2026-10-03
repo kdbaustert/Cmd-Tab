@@ -1220,6 +1220,16 @@ final class ModifierTargetHighlight {
     private static let armDelay: Duration = .milliseconds(150)
     /// The pending activation, nil once it has run or been cancelled.
     private var armTask: Task<Void, Never>?
+    /// When the ring may next follow the cursor. Moving its panel is a window-server round trip
+    /// on the main thread — 0.4–0.7 ms typically, with multi-millisecond spikes (measured) — and
+    /// mouseMoved outruns the display during fast travel and on high-polling mice, so each extra
+    /// event inside a frame bought a move nobody could see. Gated to one move per display frame,
+    /// latest point wins. A gated point is dropped rather than deferred: the next event
+    /// supersedes it, and a cursor that has stopped sends none, so the ring rests at most one
+    /// frame behind a halt — off by less than its own line width.
+    private var ringMoveDue: CFTimeInterval = 0
+    /// One display frame on the display the gesture armed on.
+    private var ringMoveInterval: CFTimeInterval = 1.0 / 60
 
     /// Rebuilds the monitors after an install made without the Accessibility grant.
     ///
@@ -1314,6 +1324,10 @@ final class ModifierTargetHighlight {
         // aiming. The anchor the direction is measured from is no longer drawn; the ring's fill
         // is what says how far from it the cursor has come.
         dot.show(at: point)
+        let fps = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) }?
+            .maximumFramesPerSecond ?? 60
+        ringMoveInterval = 1.0 / Double(max(fps, 30))
+        ringMoveDue = 0
         Log.general.notice(
             "point gesture: armed on pid \(target.pid, privacy: .public)")
 
@@ -1378,8 +1392,12 @@ final class ModifierTargetHighlight {
         let point = NSEvent.mouseLocation
         let delta = CGSize(width: point.x - anchor.x, height: point.y - anchor.y)
         // Ahead of the zone guard below: the ring tracks every move, not just the ones that change
-        // the zone. One frame change on a 90pt panel, and only while the chord is held.
-        dot.move(to: point)
+        // the zone — but at most once per display frame; see `ringMoveDue`.
+        let now = CACurrentMediaTime()
+        if now >= ringMoveDue {
+            ringMoveDue = now + ringMoveInterval
+            dot.move(to: point)
+        }
         let next = PointDirection.zone(for: delta)
         guard next != zone else { return }
         zone = next
@@ -1467,7 +1485,11 @@ final class ModifierTargetHighlight {
         let point = NSEvent.mouseLocation
         let delta = CGSize(width: point.x - anchor.x, height: point.y - anchor.y)
         guard let zone = PointDirection.flick(for: delta) else {
-            Log.general.notice(
+            // `.debug`, not `.notice`, under the mouse-down rule above: ⌃⌘ fronts everyday
+            // shortcuts — ⌃⌘Space, ⌃⌘F — so a persisted line per bare tap wrote one for a great
+            // many ordinary keystrokes.
+            Log.general.log(
+                level: .debug,
                 """
                 point gesture: chord tapped, pointer moved \
                 \(Int(hypot(delta.width, delta.height)), privacy: .public)pt; nothing snapped

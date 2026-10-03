@@ -1806,6 +1806,13 @@ enum WindowTiler {
         /// screen — what a display move re-applies on the destination. nil after anything whose
         /// frame depended on the window's own (see `WindowArrangement.isPureFraction`).
         var placement: Placement?
+        /// Whether dragging the window out of `tiled` should send it back to `frame`'s size — see
+        /// `unsnap`. True after a tile and after a grid cell, false after the size steps and the
+        /// edge resizes: those produce "the size the user arrived at by pressing the key" (the
+        /// `takesGap` reasoning), and un-snapping it threw away exactly the size they had just
+        /// built. Also false after a restore that put the window back at its anchor, which is no
+        /// tile to drag out of.
+        var unsnaps = false
 
         struct Placement: Equatable {
             let arrangement: WindowArrangement
@@ -1828,8 +1835,17 @@ enum WindowTiler {
         /// The slot once `.restore` has sent a window at `current` back to `slot.frame`: the frame
         /// it replaced, flagged the opposite way. Undoing a tile leaves the tile as a redo; redoing
         /// it leaves the frame it came back from as the anchor again.
+        ///
+        /// A redo entry carries the undone tile's `placement`, describing its *frame* rather than
+        /// its `tiled` — the one slot where the two differ. Redoing then writes that very tile, and
+        /// `apply` records the placement back where a display move can find it; without the carry,
+        /// a right half restored twice moved to the next display at its absolute size instead of
+        /// being re-tiled as the right half there. Carried only while the window is still at the
+        /// tile the placement describes.
         static func afterRestore(_ slot: Self, current: CGRect, desk: [CGRect]) -> Self {
-            Self(frame: current, desk: desk, isRedo: !slot.isRedo)
+            var next = Self(frame: current, desk: desk, isRedo: !slot.isRedo)
+            if !slot.isRedo, slot.isAtTile(current) { next.placement = slot.placement }
+            return next
         }
     }
 
@@ -1859,6 +1875,13 @@ enum WindowTiler {
         /// the frame it was pointed at is still its frame, and resolving here rather than at the call
         /// site keeps the Accessibility walk on this queue instead of the main thread.
         case bounds(CGRect)
+        /// The window the window server knows by this id — the drag-to-edge drop, whose bounds are
+        /// a moving target: `unsnap` is queued ahead of the drop on this same queue and resizes
+        /// the window, so bounds captured at the drop matched nothing by the time they were looked
+        /// up, and the snap fell back to the focused window. The id names the dragged window
+        /// whatever its frame is now; its *current* bounds are read here, after the un-snap has
+        /// run, for the hosts that publish no id over Accessibility.
+        case id(CGWindowID)
     }
 
     /// The window `apply` should act on.
@@ -1873,9 +1896,31 @@ enum WindowTiler {
         case .bounds(let bounds):
             return AX.window(ofApplication: pid, matching: bounds)
                 ?? AX.frontWindow(ofApplication: pid)
+        case .id(let id):
+            if let match = AX.windows(of: AX.application(pid))
+                .first(where: { TargetProvider.windowID($0) == id }) {
+                return match
+            }
+            if let bounds = serverBounds(of: id),
+                let match = AX.window(ofApplication: pid, matching: bounds) {
+                return match
+            }
+            return AX.frontWindow(ofApplication: pid)
         case nil:
             return AX.frontWindow(ofApplication: pid)
         }
+    }
+
+    /// The window server's answer for where a window is, by id — the fallback `Target.id` resolves
+    /// through when no window of the app will own up to an id over Accessibility.
+    private static func serverBounds(of id: CGWindowID) -> CGRect? {
+        guard
+            let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id)
+                as? [[String: Any]],
+            let raw = info.first?[kCGWindowBounds as String] as? [String: CGFloat],
+            let x = raw["X"], let y = raw["Y"], let w = raw["Width"], let h = raw["Height"]
+        else { return nil }
+        return CGRect(x: x, y: y, width: w, height: h)
     }
 
     /// A window's frame carried from one display to another: the same fractional position, shrunk
@@ -1927,13 +1972,25 @@ enum WindowTiler {
     /// centre. Then the window is kept inside `area`, pinned to its min edge if it is bigger than
     /// the area outright.
     ///
-    /// nil whenever `actual`'s *origin* is not `target`'s. Hosts that apply Accessibility writes
-    /// late (Electron, Chromium) still report the old frame at this point, and correcting against
-    /// it would move a window that is about to land correctly to somewhere derived from a frame it
-    /// is no longer in. Two points of slack, as `continuesCycle` allows, and `gap` widens what
-    /// counts as "against the edge" because a tile with a gap sits that far from it.
-    static func corrected(target: CGRect, actual: CGRect, area: CGRect, gap: CGFloat) -> CGPoint? {
+    /// nil whenever `actual`'s *origin* is not `target`'s, and whenever `actual` is still `before`,
+    /// the frame the window had going into the write. Hosts that apply Accessibility writes late
+    /// (Electron, Chromium) still report the old frame at this point, and correcting against it
+    /// would move a window that is about to land correctly to somewhere derived from a frame it is
+    /// no longer in. The origin check alone missed the old frames that *share* the target's origin
+    /// — centre third to right two-thirds, and every other same-edge widening or narrowing — and
+    /// the "correction" then put a third of the window off the display once the real write landed.
+    /// The cost of the second check is a host that refuses a size outright, without moving at all,
+    /// going uncorrected — which is where every such window was before read-back existed. Two
+    /// points of slack, as `continuesCycle` allows, and `gap` widens what counts as "against the
+    /// edge" because a tile with a gap sits that far from it.
+    static func corrected(
+        target: CGRect, actual: CGRect, before: CGRect? = nil, area: CGRect, gap: CGFloat
+    ) -> CGPoint? {
         let slack: CGFloat = 2
+        if let before,
+            abs(actual.minX - before.minX) <= slack, abs(actual.minY - before.minY) <= slack,
+            abs(actual.width - before.width) <= slack, abs(actual.height - before.height) <= slack
+        { return nil }
         guard abs(actual.minX - target.minX) <= slack, abs(actual.minY - target.minY) <= slack
         else { return nil }
         let x = correctedOrigin(
@@ -2092,9 +2149,15 @@ enum WindowTiler {
                 // the redo entry a restore leaves behind. See `RestorePoint`.
                 restorePoints[key] = RestorePoint.afterRestore(saved, current: current, desk: areas)
                 // Not fitted: the frame going back is one this window has held itself, so there is
-                // no size it could refuse. What it leaves behind is a redo or an anchor, neither of
-                // which is a tile a display move could re-apply.
-                remember = { slot, landed in (slot.tiled, slot.placement) = (landed, nil) }
+                // no size it could refuse. A first restore leaves the window at its anchor —
+                // nothing a display move could re-apply, nothing a drag could un-snap. A second
+                // one puts the undone tile back, and that tile's placement rode here on the redo
+                // entry (see `afterRestore`), so the move and the drag both treat it as the tile
+                // it is again.
+                let redone = saved.isRedo ? saved.placement : nil
+                remember = { slot, landed in
+                    (slot.tiled, slot.placement, slot.unsnaps) = (landed, redone, redone != nil)
+                }
                 // Back to the end of the queue: a window being restored is one the user is working
                 // with, and eviction is oldest-*touched* first, not oldest-recorded.
                 restoreOrder.removeAll { $0 == key }
@@ -2129,13 +2192,25 @@ enum WindowTiler {
                 }
                 let placement = arrangement.isPureFraction
                     ? RestorePoint.Placement(arrangement: arrangement, fraction: fraction) : nil
-                remember = { slot, landed in (slot.tiled, slot.placement) = (landed, placement) }
+                // The same split as `fitArea` above, for the same reason: a size step or an edge
+                // resize leaves the window at a size the user built a press at a time, and a drag
+                // afterwards must not throw that away — see `RestorePoint.unsnaps`.
+                let unsnaps = arrangement.sizeStep == nil && arrangement.edgeStep == nil
+                remember = { slot, landed in
+                    (slot.tiled, slot.placement, slot.unsnaps) = (landed, placement, unsnaps)
+                }
             }
 
             // Written, read back and remembered in one place — see `write`.
             let landed = write(
-                window, key: key, target: target, fitArea: fitArea, fitGap: fitGap,
-                remember: remember)
+                window, key: key, target: target, before: current, fitArea: fitArea,
+                fitGap: fitGap, remember: remember)
+            Log.general.notice(
+                """
+                tiling: \(arrangement.rawValue, privacy: .public) wrote \
+                \(Int(target.width), privacy: .public)×\(Int(target.height), privacy: .public) \
+                for pid \(pid, privacy: .public)
+                """)
             if let last = cycle, last.key == key, last.arrangement == arrangement {
                 cycle?.left = landed
             }
@@ -2210,6 +2285,28 @@ enum WindowTiler {
     /// resizing the wrong window is worse than not un-snapping the right one.
     static func unsnap(pid: pid_t, windowID: CGWindowID, pickedUp: CGRect, grab: CGPoint) {
         queue.async {
+            // Asked of the table before any Accessibility is paid for: most title-bar drags pick
+            // up a window that was never tiled, and resolving it below walks the app's whole
+            // window list only to find the table holds nothing for it. The table answers that by
+            // itself — at most `restoreLimit` entries, in plain memory — so the everyday drag
+            // costs a scan and an unpersisted line. A slot that matches the frame but refuses
+            // the un-snap still has its reason said out loud, and the *keyed* guards below stay
+            // authoritative for the window actually resolved — two windows can share a frame.
+            let candidates = restorePoints.values.filter { $0.isAtTile(pickedUp) }
+            guard candidates.contains(where: { $0.unsnaps && !$0.isRedo }) else {
+                if let slot = candidates.first {
+                    Log.general.notice(
+                        """
+                        unsnap: last write was \
+                        \(slot.isRedo ? "a restore" : "not a tile", privacy: .public); \
+                        leaving the size
+                        """)
+                } else {
+                    Log.general.log(
+                        level: .debug, "unsnap: nothing tiled at the picked-up frame")
+                }
+                return
+            }
             let windows = AX.windows(of: AX.application(pid))
             var window = windows.first { TargetProvider.windowID($0) == windowID }
             if window == nil, !windows.contains(where: { TargetProvider.windowID($0) != nil }),
@@ -2218,13 +2315,43 @@ enum WindowTiler {
             {
                 window = front
             }
-            guard let window, let slot = restorePoints[WindowKey(element: window)],
-                !slot.isRedo, slot.isAtTile(pickedUp), let current = AX.frame(window)
-            else { return }
+            // Each refusal says why. Un-snap's failure mode is a drag that simply keeps the tile's
+            // size, indistinguishable from the feature being off — the same silence the point
+            // gesture had until its "no window to act on" line.
+            guard let window else {
+                Log.general.notice(
+                    "unsnap: no window of pid \(pid, privacy: .public) matches the dragged one")
+                return
+            }
+            guard let slot = restorePoints[WindowKey(element: window)] else {
+                Log.general.notice("unsnap: window has no restore slot")
+                return
+            }
+            guard slot.unsnaps, !slot.isRedo else {
+                Log.general.notice(
+                    """
+                    unsnap: last write was \
+                    \(slot.isRedo ? "a restore" : "not a tile", privacy: .public); leaving the size
+                    """)
+                return
+            }
+            guard slot.isAtTile(pickedUp) else {
+                Log.general.notice("unsnap: window was no longer where its tile left it")
+                return
+            }
+            guard let current = AX.frame(window) else {
+                Log.general.notice("unsnap: window has no readable frame")
+                return
+            }
             let frame = unsnappedFrame(
                 current: current, pickedUp: pickedUp, grab: grab, size: slot.frame.size)
             guard frame.size != current.size else { return }
             AX.setFrame(window, frame, sizing: true, repositionAfterSizing: true)
+            Log.general.notice(
+                """
+                unsnap: back to \(Int(frame.width), privacy: .public)×\
+                \(Int(frame.height), privacy: .public) for pid \(pid, privacy: .public)
+                """)
         }
     }
 
@@ -2273,14 +2400,15 @@ enum WindowTiler {
     /// remember where the window *ended up* — see `continuesCycle` and `RestorePoint.tiled`.
     @discardableResult
     private static func write(
-        _ window: AXUIElement, key: WindowKey, target: CGRect, fitArea: CGRect?, fitGap: CGFloat,
-        remember: ((inout RestorePoint, [CGRect]) -> Void)?
+        _ window: AXUIElement, key: WindowKey, target: CGRect, before: CGRect?, fitArea: CGRect?,
+        fitGap: CGFloat, remember: ((inout RestorePoint, [CGRect]) -> Void)?
     ) -> [CGRect] {
         AX.setFrame(window, target, sizing: true, repositionAfterSizing: true)
         var landed = [target]
         if var actual = AX.frame(window) {
             if let fitArea,
-                let origin = corrected(target: target, actual: actual, area: fitArea, gap: fitGap)
+                let origin = corrected(
+                    target: target, actual: actual, before: before, area: fitArea, gap: fitGap)
             {
                 actual.origin = origin
                 AX.setFrame(window, actual, sizing: false)
@@ -2334,12 +2462,28 @@ enum WindowTiler {
         queue.async {
             var windows: [(element: AXUIElement, key: WindowKey, current: CGRect)] = []
             var seen = Set<WindowKey>()
+            // One window-list read, and one frame read per window, per *app* rather than per
+            // candidate: matching each candidate through `AX.window(ofApplication:matching:)`
+            // re-walked its app's list every time, which for twelve windows of one app was on
+            // the order of 170 Accessibility round trips into it. Reading ahead of the loop is
+            // safe because nothing is written until the loop below — the frames cannot go stale
+            // by this code's own hand. Same four-point tolerance, same first-match order.
+            var byApp: [pid_t: [(element: AXUIElement, frame: CGRect)]] = [:]
+            let tolerance: CGFloat = 4
             for candidate in candidates {
                 guard windows.count < ArrangeAll.limit else { break }
-                guard
-                    let element = AX.window(ofApplication: candidate.pid, matching: candidate.bounds),
-                    let current = AX.frame(element)
-                else { continue }
+                let listed = byApp[candidate.pid] ?? {
+                    let list = AX.windows(of: AX.application(candidate.pid))
+                        .compactMap { window in AX.frame(window).map { (window, $0) } }
+                    byApp[candidate.pid] = list
+                    return list
+                }()
+                guard let (element, current) = listed.first(where: { _, frame in
+                    abs(frame.minX - candidate.bounds.minX) < tolerance
+                        && abs(frame.minY - candidate.bounds.minY) < tolerance
+                        && abs(frame.width - candidate.bounds.width) < tolerance
+                        && abs(frame.height - candidate.bounds.height) < tolerance
+                }) else { continue }
                 let key = WindowKey(element: element)
                 // Two window-server entries can resolve to one element — a host's phantom backing
                 // window at the same bounds — and one window must not take two cells.
@@ -2363,9 +2507,14 @@ enum WindowTiler {
                 let window = windows[index]
                 rememberAnchor(window.key, current: window.current, desk: areas)
                 write(
-                    window.element, key: window.key, target: frames[index], fitArea: area,
-                    fitGap: gap,
-                    remember: { slot, landed in (slot.tiled, slot.placement) = (landed, nil) })
+                    window.element, key: window.key, target: frames[index],
+                    before: window.current, fitArea: area, fitGap: gap,
+                    remember: { slot, landed in
+                        // A grid cell is a tile for un-snapping purposes: dragging a window out
+                        // of one should give it its own size back. A cascaded window kept its
+                        // size, so the flag is moot there — un-snap finds nothing to change.
+                        (slot.tiled, slot.placement, slot.unsnaps) = (landed, nil, true)
+                    })
             }
             Log.general.notice("tiling: arranged \(windows.count, privacy: .public) window(s)")
         }

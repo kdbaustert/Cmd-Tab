@@ -238,24 +238,21 @@ final class DragSnap {
         // the wrong window is snapped, and the gesture has known which one all along — this is the
         // same fix the other two snap gestures already carry, arriving late.
         //
-        // Its bounds *now*, not `initialBounds`: the window having moved is this gesture's arming
-        // condition, so the press-time frame is stale by construction and would match nothing.
-        // `bounds(of:)` is one window-server call, taken inside the hop so it stays off the monitor
-        // callback. A nil — the window closed as it was dropped — degrades to the previous
-        // behaviour rather than to no snap at all.
+        // By *id*, not by bounds read here. The un-snap this drag queued at arming resizes the
+        // window on the tiler's queue, and a quick drop read its bounds before that write had
+        // landed — the lookup then matched nothing and the snap fell back to the focused window,
+        // the very miss named above. The id outlives any resize; `Target.id` reads whatever the
+        // bounds are once it runs, behind the un-snap on the same serial queue.
         let windowID = draggedWindowID
         // The display the preview was painted on — see `currentArea`.
         let area = currentArea
-        // Where the window was picked up, for restore: `dropped` is wherever the cursor hit the
+        // Where the window was picked up, for restore: the drop is wherever the cursor hit the
         // edge, often hanging off it. Captured here because `reset()` clears it on the way out.
         let pickedUp = initialBounds
-        DispatchQueue.main.async {
-            let dropped = windowID.flatMap(Self.bounds(of:))
-            WindowTiler.apply(
-                zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
-                target: dropped.map(WindowTiler.Target.bounds), destination: area,
-                anchor: pickedUp)
-        }
+        WindowTiler.apply(
+            zone, pid: pid, areas: WindowTiler.visibleAreas(), cycleWidths: false, gap: gap,
+            target: windowID.map(WindowTiler.Target.id), destination: area,
+            anchor: pickedUp)
     }
 
     /// Whether a title rule protects the window being dragged, found by the frame it has *now*.

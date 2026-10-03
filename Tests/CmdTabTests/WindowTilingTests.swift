@@ -1211,6 +1211,31 @@ final class TilingMemoryTests: XCTestCase {
         XCTAssertEqual(redone.frame, original)
     }
 
+    /// The redo entry carries the undone tile's placement, so the tile a second restore puts back
+    /// is still one a display move can re-apply — a right half restored twice used to move to the
+    /// next display at its absolute size instead.
+    func testARedoEntryCarriesTheUndoneTilesPlacement() {
+        var anchor = Slot.afterTile(nil, current: original, desk: desk)
+        anchor.tiled = [left]
+        anchor.placement = Slot.Placement(arrangement: .leftHalf, fraction: 0.5)
+        let undone = Slot.afterRestore(anchor, current: left, desk: desk)
+        XCTAssertEqual(undone.placement?.arrangement, .leftHalf)
+        // Flipping back to an anchor carries nothing: the frame a redo wrote gets its placement
+        // from the write itself, and the anchor frame never had one.
+        let redone = Slot.afterRestore(undone, current: original, desk: desk)
+        XCTAssertNil(redone.placement)
+    }
+
+    /// A window moved by hand since its tile is not at that tile, so the placement describes a
+    /// frame the redo entry does not hold and must not ride along.
+    func testAHandMovedWindowsRedoEntryCarriesNoPlacement() {
+        var anchor = Slot.afterTile(nil, current: original, desk: desk)
+        anchor.tiled = [right]
+        anchor.placement = Slot.Placement(arrangement: .rightHalf, fraction: 0.5)
+        let undone = Slot.afterRestore(anchor, current: left, desk: desk)
+        XCTAssertNil(undone.placement)
+    }
+
     // MARK: - Restore chains
 
     /// A window and its slot, moved the way `apply` moves them: a tile or restore records where
@@ -1518,6 +1543,28 @@ final class TilingMemoryTests: XCTestCase {
         let target = CGRect(x: 853.333, y: 25, width: 426.667, height: 975)
         let stale = CGRect(x: 200, y: 100, width: 600, height: 400)
         XCTAssertNil(WindowTiler.corrected(target: target, actual: stale, area: area, gap: 0))
+    }
+
+    /// The hard case of the late write: the old frame *shares* the target's origin — centre third
+    /// to right two-thirds — so the origin check alone could not tell it from a refused size, and
+    /// the "correction" put a third of the window off the display once the real write landed.
+    /// Only `before` can tell the two apart, which is why `write` passes it.
+    func testALateWriteSharingTheTargetsOriginIsLeftAlone() {
+        let old = CGRect(x: 426.667, y: 25, width: 426.667, height: 975)  // centre third
+        let target = CGRect(x: 426.667, y: 25, width: 853.333, height: 975)  // right two-thirds
+        XCTAssertNil(
+            WindowTiler.corrected(target: target, actual: old, before: old, area: area, gap: 0))
+    }
+
+    /// A genuinely refused size is still corrected when `before` is in hand: the read-back
+    /// differs from the pre-write frame, so the write has landed and the short fall is real.
+    func testARefusedSizeIsStillCorrectedWithBeforeInHand() {
+        let before = CGRect(x: 200, y: 100, width: 600, height: 400)
+        let target = CGRect(x: 853.333, y: 25, width: 426.667, height: 975)
+        let actual = CGRect(x: 853.333, y: 25, width: 600, height: 975)
+        let origin = WindowTiler.corrected(
+            target: target, actual: actual, before: before, area: area, gap: 0)
+        XCTAssertEqual(origin?.x ?? 0, 680, accuracy: 0.001)
     }
 
     func testAnExactFitIsLeftAlone() {
