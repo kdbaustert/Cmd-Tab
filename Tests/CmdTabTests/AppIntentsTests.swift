@@ -56,4 +56,28 @@ final class AppIntentsTests: XCTestCase {
         _ = try? await intent.perform()
         XCTAssertEqual(received.last, .activate(bundleID: "com.apple.Safari"), "newline trimmed")
     }
+
+    /// An identifier no app has is the same silent no-op one layer down — `GlobalActions.activate`
+    /// logs it and returns — so the step has to refuse it before the handler ever sees it.
+    @MainActor
+    func testAnUnknownAppIsRefusedBeforeItReachesTheHandler() async {
+        let saved = IntentActions.perform
+        defer { IntentActions.perform = saved }
+        var received: [URLCommand] = []
+        IntentActions.perform = { received.append($0) }
+
+        var intent = ActivateAppIntent()
+        intent.bundleIdentifier = "com.example.cmdtab.no-such-app"
+        do {
+            _ = try await intent.perform()
+            XCTFail("an app that does not exist must not report success")
+        } catch let error as IntentError {
+            guard case .unknownApp("com.example.cmdtab.no-such-app") = error else {
+                return XCTFail("wrong refusal: \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertTrue(received.isEmpty, "and must not reach the handler")
+    }
 }

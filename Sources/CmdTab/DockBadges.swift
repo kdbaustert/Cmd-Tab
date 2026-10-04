@@ -38,8 +38,8 @@ enum DockBadges {
         dispatchPrecondition(condition: .notOnQueue(.main))
         if let cached, Date().timeIntervalSince(cached.at) < ttl { return cached.badges }
         guard
-            let dock = NSWorkspace.shared.runningApplications
-                .first(where: { $0.bundleIdentifier == "com.apple.dock" })
+            let dock = NSRunningApplication.runningApplications(
+                withBundleIdentifier: "com.apple.dock").first
         else { return [:] }
 
         let app = AX.application(dock.processIdentifier)

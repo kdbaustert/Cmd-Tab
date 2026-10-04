@@ -1058,15 +1058,41 @@ struct WindowTilingBindings: Equatable {
                 arrangement.defaultHotkey.map { (arrangement, $0) }
             }))
 
+    /// Puts the chords the tiling switch governs back to their defaults and leaves every other
+    /// binding exactly as it is.
+    ///
+    /// Only those, because that is the set the Tiling tab's rows show (`TilingSettings.groups`,
+    /// held to this predicate by a test) and its Restore defaults button is the one caller. The
+    /// display and Desktop moves and the focus chords are recorded on the other two window tabs,
+    /// which have no reset of their own, and this one sits under rows that never mention them — so
+    /// replacing the whole table from here silently cleared a chord set two tabs away, with no
+    /// confirmation, every time someone undid a half-tile change. An arrangement that ships unbound
+    /// goes back to unbound.
+    mutating func restoreTilingDefaults() {
+        for arrangement in WindowArrangement.allCases where !arrangement.isUngated {
+            bindings[arrangement] = arrangement.defaultHotkey
+        }
+    }
+
     /// Whether `hotkey` can never fire because a switcher trigger claims it first.
     ///
-    /// The tap matches both triggers *before* tiling, using `TriggerModifiers.opens` — an exact
+    /// The tap matches every trigger *before* tiling, using `TriggerModifiers.opens` — an exact
     /// match on ⌘/⌥/⌃ with ⇧ ignored, since Shift only ever means "go backwards". A tiling chord
     /// that satisfies that test opens the switcher instead, every time, with nothing to show the
     /// user why their binding is dead. Static so the settings pane can ask the same question of a
     /// binding that has already been stored — changing the trigger can strand one after the fact.
+    ///
+    /// The scoped triggers are in the same position: `TapRouting.idle` matches them ahead of the
+    /// direct activations, the all-windows pair and tiling, with Shift ignored like the two
+    /// built-ins — so a scoped trigger on ⌃⌘← took Left half *and* ⌃⌘⇧← with it, and every check
+    /// in the app asked about the built-ins alone: no alert, no orange row, only the Overview knew.
+    /// `scoped` is a parameter so a scoped row can ask about the triggers ahead of it only — see
+    /// `ScopedTriggers.preceding`.
     @MainActor
-    static func triggerClaiming(_ hotkey: Hotkey, in behavior: BehaviorStore) -> String? {
+    static func triggerClaiming(
+        _ hotkey: Hotkey, in behavior: BehaviorStore,
+        scoped: ScopedTriggers = ScopedTriggersStore.shared.scoped
+    ) -> String? {
         let held = hotkey.heldModifiers
         if hotkey.keyCode == behavior.hotkey.keyCode,
             TriggerModifiers.opens(held, held: behavior.hotkey.heldModifiers) {
@@ -1075,6 +1101,9 @@ struct WindowTilingBindings: Equatable {
         if behavior.sameAppCycle, hotkey.keyCode == behavior.sameAppHotkey.keyCode,
             TriggerModifiers.opens(held, held: behavior.sameAppHotkey.heldModifiers) {
             return "the app-window cycle shortcut"
+        }
+        if let trigger = scoped.trigger(code: hotkey.keyCode, flags: held) {
+            return "the “\(trigger.scope.title)” shortcut"
         }
         return nil
     }
@@ -1272,7 +1301,7 @@ final class WindowTilingStore: ObservableObject {
     @Published var outlineColor: Color = SnapAppearance.defaultOutline {
         didSet {
             guard outlineColor != oldValue, !isReloading else { return }
-            persist(outlineColor, forKey: Key.outlineHex)
+            persist(outlineColor, forKey: Key.outlineHex, default: SnapAppearance.defaultOutline)
             SnapAppearance.shared.apply(outline: outlineColor)
         }
     }
@@ -1281,20 +1310,26 @@ final class WindowTilingStore: ObservableObject {
     @Published var landingColor: Color = SnapAppearance.defaultLanding {
         didSet {
             guard landingColor != oldValue, !isReloading else { return }
-            persist(landingColor, forKey: Key.landingHex)
+            persist(landingColor, forKey: Key.landingHex, default: SnapAppearance.defaultLanding)
             SnapAppearance.shared.apply(landing: landingColor)
         }
     }
 
 
-    /// Writes a colour as hex, skipping the write when it has none.
+    /// Writes a colour as hex, skipping the write when it has none, and removing the key when the
+    /// colour is the default — the Reset button used to store today's default as a choice, which no
+    /// later change to it could then reach (see `persist()` below).
     ///
     /// The macOS colour panel can hand back a pattern or catalog colour, which has no RGB to encode.
     /// The stored value is then left exactly as it was rather than overwritten with a substitute —
     /// a silently-wrong colour on the next launch is worse than one that did not take.
-    private func persist(_ color: Color, forKey key: String) {
+    private func persist(_ color: Color, forKey key: String, default fallback: Color) {
         guard let hex = color.hexString else { return }
-        UserDefaults.standard.set(hex, forKey: key)
+        if hex == fallback.hexString {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else {
+            UserDefaults.standard.set(hex, forKey: key)
+        }
     }
 
     private static func loadColor(_ key: String, default fallback: Color) -> Color {
@@ -1511,13 +1546,14 @@ final class WindowTilingStore: ObservableObject {
         recordingToken = nil
     }
 
-    /// Restores the default *chords*, and nothing else.
+    /// Restores the default *chords* of the Tiling tab's rows, and nothing else — see
+    /// `WindowTilingBindings.restoreTilingDefaults` for which rows and why only those.
     ///
     /// Both switches are carried over rather than just `isEnabled`: the button sits under the
     /// shortcut rows and is captioned about shortcuts, so someone who turned the width cycle off
     /// because it annoyed them should not find it back on after undoing a key change.
     func resetToDefaults() {
-        tiling.bindings = WindowTilingBindings.defaults.bindings
+        tiling.restoreTilingDefaults()
         persist()
     }
 
@@ -2422,8 +2458,10 @@ enum WindowTiler {
         return landed
     }
 
-    /// One window offered to `arrange`: where the window server says it is, and whose it is.
+    /// One window offered to `arrange`: which window the window server says it is, where, and
+    /// whose it is.
     struct Candidate: Sendable {
+        let id: CGWindowID
         let pid: pid_t
         let bounds: CGRect
         let bundleID: String?
@@ -2438,9 +2476,9 @@ enum WindowTiler {
     /// window list, and twelve of them on the main thread is the run loop the keyboard tap is
     /// serviced from. That includes the `.neverTile` *title* rules, because a title is only
     /// readable once the window is resolved — a window one of them names is left where it is and
-    /// takes no cell, so the rest close up around it. A window that cannot be resolved by its bounds
-    /// is left alone the same way, as a swap does: moving part of a set is better than guessing at
-    /// which of an app's windows was meant.
+    /// takes no cell, so the rest close up around it. A window that cannot be resolved by its id or
+    /// bounds is left alone the same way, as a swap does: moving part of a set is better than
+    /// guessing at which of an app's windows was meant.
     ///
     /// `layout` turns the survivors' current frames, in the same order, into the frames to write.
     /// The survivors are capped at `ArrangeAll.limit` *after* the rules have had their say, so a
@@ -2462,31 +2500,27 @@ enum WindowTiler {
         queue.async {
             var windows: [(element: AXUIElement, key: WindowKey, current: CGRect)] = []
             var seen = Set<WindowKey>()
-            // One window-list read, and one frame read per window, per *app* rather than per
-            // candidate: matching each candidate through `AX.window(ofApplication:matching:)`
-            // re-walked its app's list every time, which for twelve windows of one app was on
-            // the order of 170 Accessibility round trips into it. Reading ahead of the loop is
-            // safe because nothing is written until the loop below — the frames cannot go stale
-            // by this code's own hand. Same four-point tolerance, same first-match order.
-            var byApp: [pid_t: [(element: AXUIElement, frame: CGRect)]] = [:]
-            let tolerance: CGFloat = 4
+            // One window-list read, and one id and one frame read per window, per *app* rather
+            // than per candidate: matching each candidate through
+            // `AX.window(ofApplication:matching:)` re-walked its app's list every time, which for
+            // twelve windows of one app was on the order of 170 Accessibility round trips into it.
+            // Reading ahead of the loop is safe because nothing is written until the loop below —
+            // the frames cannot go stale by this code's own hand.
+            var byApp: [pid_t: [AX.ListedWindow]] = [:]
             for candidate in candidates {
                 guard windows.count < ArrangeAll.limit else { break }
                 let listed = byApp[candidate.pid] ?? {
-                    let list = AX.windows(of: AX.application(candidate.pid))
-                        .compactMap { window in AX.frame(window).map { (window, $0) } }
+                    let list = AX.listedWindows(ofApplication: candidate.pid)
                     byApp[candidate.pid] = list
                     return list
                 }()
-                guard let (element, current) = listed.first(where: { _, frame in
-                    abs(frame.minX - candidate.bounds.minX) < tolerance
-                        && abs(frame.minY - candidate.bounds.minY) < tolerance
-                        && abs(frame.width - candidate.bounds.width) < tolerance
-                        && abs(frame.height - candidate.bounds.height) < tolerance
-                }) else { continue }
+                guard let index = AX.index(of: candidate.id, bounds: candidate.bounds, in: listed)
+                else { continue }
+                let element = listed[index].element, current = listed[index].frame
                 let key = WindowKey(element: element)
                 // Two window-server entries can resolve to one element — a host's phantom backing
-                // window at the same bounds — and one window must not take two cells.
+                // window at the same bounds, on a host whose windows report no id — and one window
+                // must not take two cells.
                 guard seen.insert(key).inserted else { continue }
                 if titleRules.mayNeverTile(candidate.bundleID),
                     CompiledTitleRule.matches(

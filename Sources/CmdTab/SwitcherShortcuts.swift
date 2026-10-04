@@ -224,14 +224,27 @@ struct SwitcherShortcuts: Equatable {
     /// A copy with every shadowed binding moved onto `replacement`. ⇧ is preserved — it is only ever
     /// a qualifier on top of ⌥/⌃ (⌥Q quit vs ⌥⇧Q force-quit), so dropping it would collapse pairs of
     /// bindings onto each other.
+    ///
+    /// A binding whose new chord is already another action's stays where it is. The two default
+    /// arrow families sit on the same keys a modifier apart — ⌥←/→ moves between displays, ⌃←/→
+    /// tiles the halves — so a ⌥⌘ trigger's rebind would land the display moves on the tiles'
+    /// chords, and a ⌃⌘ trigger's the reverse. `action(code:extra:)` then quietly lets the first
+    /// in case order win, which trades one shadowed action for one that is dead with no row saying
+    /// why. Left in place, the action is still shadowed, and its row already says that; the alert
+    /// offering the rebind names what stays.
     func rebindingShadowed(by trigger: Hotkey, to replacement: CGEventFlags) -> SwitcherShortcuts {
         let claimed = Self.modifiersClaimed(by: trigger)
         var copy = self
         for action in actionsShadowed(by: trigger) {
             guard let existing = copy.bindings[action] else { continue }
             let kept = existing.extras.subtracting(claimed)
-            copy.bindings[action] = ActionShortcut(
+            let moved = ActionShortcut(
                 keyCode: existing.keyCode, modifierRaw: kept.union(replacement).rawValue)
+            let taken = copy.bindings.contains { other, binding in
+                other != action && binding.matches(code: moved.keyCode, extra: moved.extras)
+            }
+            if taken { continue }
+            copy.bindings[action] = moved
         }
         return copy
     }
@@ -402,12 +415,26 @@ final class SwitcherShortcutsStore: ObservableObject {
         return result
     }
 
+    /// Writes what differs from the defaults and removes the key when nothing does. It used to write
+    /// all fifteen bindings on any single rebind, pinning that build's defaults for the other
+    /// fourteen — the trap `WindowTilingStore.persist` documents; `load` starts from the defaults,
+    /// so a default binding needs no entry.
     private func persist() {
+        let raw = Self.encoded(shortcuts)
+        if raw.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.bindingsKey)
+        } else {
+            UserDefaults.standard.set(raw, forKey: Self.bindingsKey)
+        }
+        onChange?(shortcuts)
+    }
+
+    /// The non-default bindings in the stored shape `load` reads.
+    nonisolated static func encoded(_ shortcuts: SwitcherShortcuts) -> [String: [Int]] {
         var raw: [String: [Int]] = [:]
-        for (action, shortcut) in shortcuts.bindings {
+        for (action, shortcut) in shortcuts.bindings where shortcut != action.defaultShortcut {
             raw[action.rawValue] = [shortcut.keyCode, Int(bitPattern: UInt(shortcut.modifierRaw))]
         }
-        UserDefaults.standard.set(raw, forKey: Self.bindingsKey)
-        onChange?(shortcuts)
+        return raw
     }
 }

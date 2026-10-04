@@ -159,6 +159,13 @@ struct SettingsIndexItem: Identifiable {
 }
 
 enum SettingsIndex {
+    /// `items` less the ones whose section is not drawn right now. "Send to a display" exists only
+    /// with two or more displays (see `SettingsWindows`), so on one display its hit jumped to
+    /// nothing.
+    static var available: [SettingsIndexItem] {
+        NSScreen.screens.count > 1 ? items : items.filter { $0.id != "sendToDisplay" }
+    }
+
     static let items: [SettingsIndexItem] = [
         item("menuBarIcon", .general, SettingsAnchor.startup, "Startup", "Show menu-bar icon",
              ["menu bar", "status item", "hide icon", "tray"]),
@@ -555,7 +562,7 @@ struct SettingsRootView: View {
     /// rest of the time, which is why they take its place rather than covering the content.
     @ViewBuilder
     private var results: some View {
-        let hits = SettingsIndex.items.filter { $0.matches(query) }
+        let hits = SettingsIndex.available.filter { $0.matches(query) }
         if hits.isEmpty {
             Text("No matches")
                 .font(.system(size: 12))
@@ -655,6 +662,9 @@ struct GeneralSettings: View {
     @ObservedObject var loginItem: LoginItemStore
     @ObservedObject var behavior: BehaviorStore
     @ObservedObject private var config = ConfigFile.shared
+    /// A copy of `SystemSwitcher.isNativeDisabled`, which is a plain static nothing observes: read
+    /// in place, the Recovery row stayed as it was drawn until an unrelated change redrew it.
+    @State private var isNativeDisabled = SystemSwitcher.isNativeDisabled
 
     /// Says what the switch does, and why it is unavailable when it is. A greyed-out iCloud row with
     /// no reason given reads as a bug in the app rather than as a switch turned off in System
@@ -777,17 +787,26 @@ struct GeneralSettings: View {
                     subtitle: nativeSwitcherSubtitle
                 ) {
                     Button("Restore", action: restoreNativeSwitcher)
-                        .disabled(!SystemSwitcher.isNativeDisabled)
+                        .disabled(!isNativeDisabled)
                 }
             }
         }
-        .onAppear { loginItem.refresh() }
+        .onAppear {
+            loginItem.refresh()
+            isNativeDisabled = SystemSwitcher.isNativeDisabled
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: SystemSwitcher.didChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            isNativeDisabled = SystemSwitcher.isNativeDisabled
+        }
     }
 
     /// Reflects the live state rather than a stored preference — this is a recovery control, and
     /// what someone needs from it is whether the system switcher is off *right now*.
     private var nativeSwitcherSubtitle: String {
-        SystemSwitcher.isNativeDisabled
+        isNativeDisabled
             ? "Cmd-Tab has the system switcher disabled. Hand ⌘-Tab back to macOS without quitting."
             : "The system switcher is already enabled."
     }
@@ -891,9 +910,14 @@ struct ShortcutSettings: View {
                 }
             } else {
                 ForEach(collisions) { collision in
+                    // A chord and the names of what it is bound to — data, not interface, and the
+                    // names are the user's own (an app, a scoped trigger) so they must not be
+                    // read as Markdown either. See `SettingsRow.isSubtitleVerbatim`.
                     SettingsRow(
                         title: collision.display,
-                        subtitle: description(of: collision)
+                        subtitle: description(of: collision),
+                        isTitleVerbatim: true,
+                        isSubtitleVerbatim: true
                     ) {
                         Button {
                             issueFor = issueFor == collision.id ? nil : collision.id
@@ -976,7 +1000,11 @@ struct ShortcutSettings: View {
         guard let hotkey = scoped.hotkey(for: trigger.id) else {
             return "No shortcut yet — click Not set and press a combination."
         }
-        if let claimer = WindowTilingBindings.triggerClaiming(hotkey, in: behavior) {
+        // Only the scoped triggers listed ahead of this one can take its chord; the ones after it
+        // lose to it, and say so on their own rows.
+        if let claimer = WindowTilingBindings.triggerClaiming(
+            hotkey, in: behavior, scoped: scoped.scoped.preceding(trigger.id))
+        {
             return "\(hotkey.displayString) opens \(claimer) — this will never fire."
         }
         return trigger.scope.detail
@@ -1163,7 +1191,7 @@ private struct CollisionIssueView: View {
 
     @ViewBuilder
     private func row(_ entry: ShortcutEntry, fires: Bool) -> some View {
-        if let anchor = entry.kind.anchor {
+        if let anchor = entry.anchor {
             Button {
                 jump(anchor)
             } label: {
@@ -1351,7 +1379,7 @@ struct SearchSettings: View {
                 SettingsRow(
                     title: "Search template",
                     subtitle: "%s is replaced with the query.",
-                    isSubtitleVerbatim: true, controlWidth: 220
+                    controlWidth: 220
                 ) {
                     TextField("", text: $behavior.fallbackSearchTemplate)
                         .textFieldStyle(.roundedBorder)

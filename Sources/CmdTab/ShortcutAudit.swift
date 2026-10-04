@@ -77,6 +77,10 @@ struct ShortcutEntry: Identifiable {
         /// `location` as a section jump — the anchor the Overview's collision popover navigates
         /// to, through the same scroll-and-outline machinery a search hit uses. Nil for what
         /// macOS owns: its bindings are edited in System Settings, which no anchor reaches.
+        ///
+        /// The family's card, which for tiling is only the first of several: its rows are spread
+        /// over three tabs, so a tiling entry carries the card it is recorded on itself — see
+        /// `ShortcutEntry.anchor`.
         var anchor: String? {
             switch self {
             case .systemOwned: return nil
@@ -154,6 +158,14 @@ struct ShortcutEntry: Identifiable {
     /// False when the whole family is switched off — tiling with its master switch off, say. Listed,
     /// but it cannot collide with anything because it never fires.
     let isActive: Bool
+    /// The card this binding is recorded on, when that is not the kind's own anchor. The tiling
+    /// arrangements are one kind spread over three tabs — a focus chord is recorded on Mouse &
+    /// Focus, a Desktop move on Displays & Desktops — and the kind-wide anchor sent every one of
+    /// their collisions to the top of the Tiling tab, two tabs from the recorder it named.
+    var cardAnchor: String? = nil
+
+    /// Where the Overview's collision popover jumps for this binding. Nil for what macOS owns.
+    var anchor: String? { cardAnchor ?? kind.anchor }
 
     /// A comparable chord: the combination as it was recorded, narrowed to the four modifiers a
     /// binding can be built from.
@@ -261,7 +273,8 @@ enum ShortcutAudit {
                     // from anyone, so reporting it active would invent a collision. This was written
                     // out a second time here once, and it fell behind the matcher — see
                     // `WindowTilingBindings.fires`.
-                    active: tiling.tiling.fires(arrangement)))
+                    active: tiling.tiling.fires(arrangement),
+                    anchor: arrangement.settingsAnchor))
         }
 
         // After every Cmd-Tab global binding, because that is where they resolve — see
@@ -383,21 +396,23 @@ enum ShortcutAudit {
     /// there at all. It is listed as what it says, with no chord and inactive, which is how the
     /// Overview already draws a binding that cannot fire.
     nonisolated static func entry(
-        _ kind: ShortcutEntry.Kind, _ id: String, _ label: String, _ hotkey: Hotkey?, active: Bool
+        _ kind: ShortcutEntry.Kind, _ id: String, _ label: String, _ hotkey: Hotkey?, active: Bool,
+        anchor: String? = nil
     ) -> ShortcutEntry {
         guard let hotkey, hotkey.keyCode >= 0 else {
             return ShortcutEntry(
-                id: id, kind: kind, label: label, display: "Not set", chord: nil, isActive: active)
+                id: id, kind: kind, label: label, display: "Not set", chord: nil, isActive: active,
+                cardAnchor: anchor)
         }
         guard hotkey.isUsableGlobally else {
             return ShortcutEntry(
                 id: id, kind: kind, label: label, display: hotkey.displayString, chord: nil,
-                isActive: false)
+                isActive: false, cardAnchor: anchor)
         }
         return ShortcutEntry(
             id: id, kind: kind, label: label, display: hotkey.displayString,
             chord: ShortcutEntry.Chord(keyCode: hotkey.keyCode, modifiers: hotkey.modifiers),
-            isActive: active)
+            isActive: active, cardAnchor: anchor)
     }
 
     /// What macOS itself claims ahead of the tap, decoded fresh from `com.apple.symbolichotkeys`

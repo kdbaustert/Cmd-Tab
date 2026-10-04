@@ -212,6 +212,29 @@ final class AccessibilityHarnessTests: XCTestCase {
             "the Finder case: AXDialog, up, and switchable because it can be minimized")
     }
 
+    /// `TargetProvider.windowTargets` reads everything it needs about a window in one message —
+    /// `AX.windowFacts` — where it used to make a round trip per attribute. Same answers as the
+    /// single readers, or the batch is wrong somewhere they are not.
+    func testTheBatchedFactsAgreeWithTheSingleReaders() throws {
+        let window = try openWindow(
+            at: NSRect(x: 220, y: 220, width: 560, height: 380), title: "Facts")
+        let facts = AX.windowFacts(window, title: true, frame: true)
+        XCTAssertEqual(facts.role, AX.copyString(window, kAXRoleAttribute as String))
+        XCTAssertEqual(facts.subrole, AX.copyString(window, kAXSubroleAttribute as String))
+        XCTAssertEqual(facts.isMinimized, AX.isMinimized(window))
+        XCTAssertEqual(facts.title, "Facts")
+        assertFrame(
+            facts.frame,
+            CGRect(
+                origin: try XCTUnwrap(AX.position(window)), size: try XCTUnwrap(AX.size(window))))
+        XCTAssertTrue(AX.isSwitchableWindow(window, facts))
+        // Not asked for, not read.
+        let bare = AX.windowFacts(window, title: false, frame: false)
+        XCTAssertNil(bare.title)
+        XCTAssertNil(bare.frame)
+        XCTAssertEqual(bare.role, facts.role)
+    }
+
     // MARK: - Tiling
 
     /// The arithmetic is unit-tested; this is the half that is not — that a computed frame survives

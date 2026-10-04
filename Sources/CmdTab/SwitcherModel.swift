@@ -216,14 +216,19 @@ final class SwitcherModel: ObservableObject {
 
     func step(_ delta: Int) {
         guard !targets.isEmpty else { return }
+        // A true modulo, not `(x + delta + n) % n`: Swift's `%` keeps the sign, so that idiom only
+        // wraps while |delta| ≤ n. The keyboard sends ±1, but a scroll is accelerated into several
+        // tiles per event (`PanelGroup.handleScroll`), and under a two-match filter a step of −3
+        // indexed `sorted[-1]`.
         // When filtering, only step through matching indices
         if matchingIndices.isEmpty {
-            selection = (selection + delta + targets.count) % targets.count
+            let count = targets.count
+            selection = ((selection + delta) % count + count) % count
         } else {
             let sorted = matchingIndices.sorted()
             if let current = sorted.firstIndex(of: selection) {
-                let next = (current + delta + sorted.count) % sorted.count
-                selection = sorted[next]
+                let count = sorted.count
+                selection = sorted[((current + delta) % count + count) % count]
             } else {
                 selection = sorted.first ?? 0
             }

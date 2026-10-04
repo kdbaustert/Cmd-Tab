@@ -109,14 +109,12 @@ final class SwitcherPanel: NSPanel {
     /// Fade the panel in and out instead of appearing instantly.
     var fade = false
 
-    /// Invoked when a tile is clicked, with its index. Set by `PanelGroup` to commit the pick.
-    var onPick: ((Int) -> Void)?
+    /// Invoked when a tile is clicked, with its index and the click's modifiers. Set by `PanelGroup`.
+    /// Whether ⌥ turns the click into a mark toggle is the controller's call, not read here: only it
+    /// knows whether ⌥ is part of the trigger being held — see `SwitcherController.clickedTile`.
+    var onPick: ((Int, NSEvent.ModifierFlags) -> Void)?
     /// Invoked when a tile's close button is clicked, with that tile's index.
     var onClose: ((Int) -> Void)?
-    /// Invoked when a tile is ⌥-clicked, with its index — the mouse's way of toggling the mark that
-    /// ⌥-Space toggles from the keyboard. Checked ahead of `onPick` in `sendEvent`, the same way the
-    /// close button is checked ahead of it: an ⌥-click is never also a pick.
-    var onToggleMark: ((Int) -> Void)?
     /// A scroll that landed on this panel, forwarded up to the group, which owns the accumulator so
     /// a flick spanning two displays still reads as one gesture.
     var onScrollEvent: ((NSEvent) -> Void)?
@@ -158,11 +156,7 @@ final class SwitcherPanel: NSPanel {
                 return
             }
             if let index = tileIndex(at: NSEvent.mouseLocation) {
-                if event.modifierFlags.contains(.option) {
-                    onToggleMark?(index)
-                } else {
-                    onPick?(index)
-                }
+                onPick?(index, event.modifierFlags)
                 return
             }
         case .scrollWheel:

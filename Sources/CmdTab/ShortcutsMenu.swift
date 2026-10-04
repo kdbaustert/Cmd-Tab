@@ -35,15 +35,18 @@ enum ShortcutsMenuModel {
     /// Builds the submenu's sections from every binding, in `ShortcutAudit.entries()`'s own order.
     ///
     /// An unbound entry is dropped rather than shown disabled — this menu answers "what is bound",
-    /// not "what could be", which is the Overview's job. A kind with nothing bound in it drops the
-    /// whole section rather than leaving an empty header behind.
+    /// not "what could be", which is the Overview's job. So is one whose family is switched off:
+    /// a chord listed here reads as live, and a tiling row shown while tiling is off, or a mouse
+    /// chord while the mouse gestures are, names a combination that does nothing when pressed. A
+    /// kind with nothing left in it drops the whole section rather than leaving an empty header
+    /// behind.
     nonisolated static func groups(from entries: [ShortcutEntry]) -> [ShortcutMenuGroup] {
         var rowsByKind: [ShortcutEntry.Kind: [ShortcutMenuRow]] = [:]
         for entry in entries {
             // System-owned chords are what the Overview audits *against*, not a Cmd-Tab
             // binding to remind anyone of — this menu is "what have I bound", not "what is
             // macOS holding". They still feed collisions()/the conflict row above.
-            guard entry.chord != nil, entry.kind != .systemOwned else { continue }
+            guard entry.chord != nil, entry.isActive, entry.kind != .systemOwned else { continue }
             rowsByKind[entry.kind, default: []].append(
                 ShortcutMenuRow(
                     label: entry.label, display: entry.display, command: command(for: entry)))

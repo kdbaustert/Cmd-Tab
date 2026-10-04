@@ -558,10 +558,14 @@ final class BehaviorStore: ObservableObject {
     @Published var pinFavoritesFirst: Bool = Defaults[.pinFavoritesFirst] {
         didSet { persist(pinFavoritesFirst, oldValue, to: .pinFavoritesFirst) }
     }
-    @Published var showDelay: Double = Defaults[.showDelay] {
+    @Published var showDelay: Double = BehaviorStore.clamped(
+        .showDelay, in: BehaviorStore.showDelayRange)
+    {
         didSet { persist(showDelay, oldValue, to: .showDelay) }
     }
-    @Published var maxColumns: Int = Defaults[.maxColumns] {
+    @Published var maxColumns: Int = BehaviorStore.clamped(
+        .maxColumns, in: BehaviorStore.maxColumnsRange)
+    {
         didSet { persist(maxColumns, oldValue, to: .maxColumns) }
     }
     @Published var panelMaterial: PanelMaterial = Defaults[.panelMaterial] {
@@ -570,7 +574,8 @@ final class BehaviorStore: ObservableObject {
     @Published var blurOverride: Bool = Defaults[.blurOverride] {
         didSet { persist(blurOverride, oldValue, to: .blurOverride) }
     }
-    @Published var blurRadius: Double = Defaults[.blurRadius] {
+    @Published var blurRadius: Double = BehaviorStore.clamped(.blurRadius, in: Theme.blurRadiusRange)
+    {
         didSet { persist(blurRadius, oldValue, to: .blurRadius) }
     }
     @Published var showNumbers: Bool = Defaults[.showNumbers] {
@@ -589,10 +594,13 @@ final class BehaviorStore: ObservableObject {
     @Published var notificationBadges: Bool = Defaults[.notificationBadges] {
         didSet { persist(notificationBadges, oldValue, to: .notificationBadges) }
     }
-    @Published var tileCorner: Double = Defaults[.tileCorner] {
+    @Published var tileCorner: Double = BehaviorStore.clamped(.tileCorner, in: Theme.tileCornerRange)
+    {
         didSet { persist(tileCorner, oldValue, to: .tileCorner) }
     }
-    @Published var titleFontSize: Double = Defaults[.titleFontSize] {
+    @Published var titleFontSize: Double = BehaviorStore.clamped(
+        .titleFontSize, in: Theme.titleFontSizeRange)
+    {
         didSet { persist(titleFontSize, oldValue, to: .titleFontSize) }
     }
     /// Font family for tile titles and the caption. Empty = the system font.
@@ -686,17 +694,17 @@ final class BehaviorStore: ObservableObject {
         windowSpaceScope = Defaults[.windowSpaceScope]
         groupWindowsByApp = Defaults[.groupWindowsByApp]
         pinFavoritesFirst = Defaults[.pinFavoritesFirst]
-        showDelay = Defaults[.showDelay]
-        maxColumns = Defaults[.maxColumns]
+        showDelay = Self.clamped(.showDelay, in: Self.showDelayRange)
+        maxColumns = Self.clamped(.maxColumns, in: Self.maxColumnsRange)
         panelMaterial = Defaults[.panelMaterial]
         blurOverride = Defaults[.blurOverride]
-        blurRadius = Defaults[.blurRadius]
+        blurRadius = Self.clamped(.blurRadius, in: Theme.blurRadiusRange)
         showNumbers = Defaults[.showNumbers]
         showDisplayBadges = Defaults[.showDisplayBadges]
         showSpaceBadges = Defaults[.showSpaceBadges]
         notificationBadges = Defaults[.notificationBadges]
-        tileCorner = Defaults[.tileCorner]
-        titleFontSize = Defaults[.titleFontSize]
+        tileCorner = Self.clamped(.tileCorner, in: Theme.tileCornerRange)
+        titleFontSize = Self.clamped(.titleFontSize, in: Theme.titleFontSizeRange)
         titleFontName = Defaults[.titleFontName]
         fade = Defaults[.fade]
         showMenuBarIcon = Defaults[.showMenuBarIcon]
@@ -742,6 +750,36 @@ final class BehaviorStore: ObservableObject {
         return hotkey.isUsableGlobally ? hotkey : nil
     }
 
+    /// The ranges of the two sliders whose numbers `Theme` does not already carry a range for —
+    /// copies of the literals in `SettingsWindow` and `SettingsAppearance`, and must move with them.
+    nonisolated static let showDelayRange: ClosedRange<Double> = 0...400
+    nonisolated static let maxColumnsRange: ClosedRange<Int> = 0...20
+
+    /// A stored number read back inside its slider's range.
+    ///
+    /// The sliders cannot produce a value outside it, but `SettingsIO.apply` checks a value from the
+    /// config file or an import for its *type* only, so `"titleFontSize": 400` typed into the file
+    /// — which iCloud then carries to every Mac — arrived here as typed and drew the 403pt caption
+    /// `Theme.init(from:)` already guards a shared theme against. Clamped on read and not written
+    /// back, like `loadHotkey`: the stored value is left for the user to see and fix.
+    private static func clamped(_ key: Defaults.Key<Double>, in range: ClosedRange<Double>)
+        -> Double
+    {
+        clamp(Defaults[key], in: range, default: key.defaultValue)
+    }
+
+    private static func clamped(_ key: Defaults.Key<Int>, in range: ClosedRange<Int>) -> Int {
+        min(max(Defaults[key], range.lowerBound), range.upperBound)
+    }
+
+    /// `raw` inside `range`, or `fallback` for a NaN — which `min`/`max` pass through untouched, and
+    /// which a property list can hold even though JSON cannot spell one.
+    nonisolated static func clamp(
+        _ raw: Double, in range: ClosedRange<Double>, default fallback: Double
+    ) -> Double {
+        raw.isNaN ? fallback : min(max(raw, range.lowerBound), range.upperBound)
+    }
+
     /// Suppresses per-field `onChange` during a bulk `reload()`, so an import/reset/theme-apply
     /// fires the (expensive) callback once at the end rather than ~27 times.
     private var suppressOnChange = false
@@ -769,11 +807,19 @@ final class BehaviorStore: ObservableObject {
         onChange?()
     }
 
+    /// Writes a value that differs from the key's default and removes the key for one that does not,
+    /// for the reason `isReloading` gives: a stored default is a default no later build can move.
+    /// Applying the Glass theme, which matches the built-in look, used to write every field it
+    /// changed as a user choice, and so did the colour Reset button.
     private func persist<Value: Defaults.Serializable & Equatable>(
         _ new: Value, _ old: Value, to key: Defaults.Key<Value>
     ) {
         guard new != old, !isReloading else { return }
-        Defaults[key] = new
+        if new == key.defaultValue {
+            Defaults.reset(key)
+        } else {
+            Defaults[key] = new
+        }
         notify()
     }
 
@@ -783,7 +829,11 @@ final class BehaviorStore: ObservableObject {
         // hex rather than writing a stand-in, so a one-off conversion failure cannot silently
         // replace the user's choice on the next launch.
         guard let hex = new.hexString else { return }
-        Defaults[.highlightColorHex] = hex
+        if hex == Self.defaultHighlightHex {
+            Defaults.reset(.highlightColorHex)
+        } else {
+            Defaults[.highlightColorHex] = hex
+        }
         notify()
     }
 

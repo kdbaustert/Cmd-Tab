@@ -1,4 +1,5 @@
 import AppIntents
+import AppKit
 import Foundation
 
 // Native Shortcuts actions — the URL scheme's grammar, surfaced as typed, discoverable steps.
@@ -47,6 +48,7 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible {
     case unavailable
     case desktopMovesOff
     case emptyBundleIdentifier
+    case unknownApp(String)
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
@@ -55,6 +57,8 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible {
             "Moving windows between desktops is switched off. Turn it on in Cmd-Tab's Settings."
         case .emptyBundleIdentifier:
             "Enter the bundle identifier of an app, such as com.apple.Safari."
+        case .unknownApp(let bundleID):
+            "No app with the bundle identifier \(bundleID) is running or installed."
         }
     }
 }
@@ -195,6 +199,13 @@ struct ActivateAppIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         let trimmed = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw IntentError.emptyBundleIdentifier }
+        // `GlobalActions.activate` logs an identifier it cannot resolve and returns, so a typo in
+        // one was a step that reported success — the silent no-op `IntentActions.run` exists to
+        // refuse. Checked here because `perform` has no way to say it declined.
+        let isRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: trimmed)
+            .isEmpty
+        guard isRunning || NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed) != nil
+        else { throw IntentError.unknownApp(trimmed) }
         try IntentActions.run(.activate(bundleID: trimmed))
         return .result()
     }

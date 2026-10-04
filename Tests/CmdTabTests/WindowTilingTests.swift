@@ -1,3 +1,4 @@
+import ApplicationServices
 import CoreGraphics
 import XCTest
 
@@ -747,6 +748,41 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertEqual(WindowTilingStore.bindings(stored: stored), bindings)
     }
 
+    // MARK: - Restore defaults
+
+    /// The Tiling tab's button puts its own rows back and leaves the other two window tabs' chords
+    /// exactly as they were — it used to replace the whole table, clearing a focus chord or a
+    /// display move set two tabs away with no confirmation.
+    func testRestoringTilingDefaultsLeavesTheOtherTabsChordsAlone() {
+        let custom = Hotkey(
+            keyCode: 0, modifierRaw: CGEventFlags([.maskCommand, .maskAlternate]).rawValue)
+        var bindings = WindowTilingBindings.defaults
+        bindings.bindings[.leftHalf] = custom
+        // Ships unbound and sits on the Tiling tab, so the reset has to take it back to unbound.
+        bindings.bindings[.nudgeLeft] = custom
+        bindings.bindings[.focusLeft] = custom  // Mouse & Focus
+        bindings.bindings[.previousDisplay] = custom  // Displays & Desktops
+        bindings.bindings[.desktop1] = custom  // Displays & Desktops
+
+        bindings.restoreTilingDefaults()
+
+        XCTAssertEqual(bindings.bindings[.leftHalf], WindowArrangement.leftHalf.defaultHotkey)
+        XCTAssertNil(bindings.bindings[.nudgeLeft])
+        XCTAssertEqual(bindings.bindings[.focusLeft], custom)
+        XCTAssertEqual(bindings.bindings[.previousDisplay], custom)
+        XCTAssertEqual(bindings.bindings[.desktop1], custom)
+    }
+
+    /// The rows the Tiling tab draws and the rows its Restore defaults button resets are one set
+    /// written down twice — the view's group table and the gating predicate the reset reads — and
+    /// an arrangement added to one without the other would either be unresettable or be reset from
+    /// a tab that never shows it.
+    func testTheTilingTabShowsExactlyTheArrangementsRestoreDefaultsResets() {
+        XCTAssertEqual(
+            Set(TilingSettings.groups.flatMap(\.arrangements)),
+            Set(WindowArrangement.allCases.filter { !$0.isUngated }))
+    }
+
     // MARK: - Trigger collisions
 
     /// A chord the switcher trigger claims can never reach the tiling branch — the tap matches the
@@ -778,6 +814,59 @@ final class WindowTilingTests: XCTestCase {
                 WindowTilingBindings.triggerClaiming(chord, in: behavior),
                 "\(arrangement.rawValue) collides with a switcher trigger")
         }
+    }
+
+    /// A scoped trigger is matched ahead of tiling with Shift ignored, exactly like the two
+    /// built-ins — so one on ⌃⌘← takes Left half *and* ⌃⌘⇧← (Move to previous display) with it.
+    /// Every per-row check used to ask about the built-ins alone.
+    @MainActor
+    func testAScopedTriggerClaimsATilingChordWhateverShiftDoes() {
+        let ctrlCmd = CGEventFlags([.maskControl, .maskCommand]).rawValue
+        let ctrlCmdShift = CGEventFlags([.maskControl, .maskCommand, .maskShift]).rawValue
+        var scoped = ScopedTriggers()
+        scoped.triggers = [
+            ScopedTrigger(
+                id: "a", hotkey: Hotkey(keyCode: 123, modifierRaw: ctrlCmd), scope: .allWindows)
+        ]
+        let behavior = BehaviorStore.shared
+
+        XCTAssertEqual(
+            WindowTilingBindings.triggerClaiming(
+                Hotkey(keyCode: 123, modifierRaw: ctrlCmd), in: behavior, scoped: scoped),
+            "the “All windows” shortcut")
+        XCTAssertNotNil(
+            WindowTilingBindings.triggerClaiming(
+                Hotkey(keyCode: 123, modifierRaw: ctrlCmdShift), in: behavior, scoped: scoped))
+        XCTAssertNil(
+            WindowTilingBindings.triggerClaiming(
+                Hotkey(keyCode: 124, modifierRaw: ctrlCmd), in: behavior, scoped: scoped))
+    }
+
+    /// A scoped row is claimed only by the scoped triggers listed ahead of it — the matcher takes
+    /// the first in order, so the ones after lose to it — and an unbound one claims nothing.
+    @MainActor
+    func testOnlyTheScopedTriggersAheadOfARowCanClaimItsChord() {
+        let ctrlCmd = CGEventFlags([.maskControl, .maskCommand]).rawValue
+        let chord = Hotkey(keyCode: 123, modifierRaw: ctrlCmd)
+        var scoped = ScopedTriggers()
+        scoped.triggers = [
+            ScopedTrigger(id: "first", hotkey: chord, scope: .frontApp),
+            ScopedTrigger(id: "second", hotkey: chord, scope: .minimized),
+            ScopedTrigger(id: "unbound", hotkey: Hotkey(keyCode: -1, modifierRaw: 0), scope: .tabs),
+        ]
+        let behavior = BehaviorStore.shared
+
+        XCTAssertNil(
+            WindowTilingBindings.triggerClaiming(
+                chord, in: behavior, scoped: scoped.preceding("first")))
+        XCTAssertEqual(
+            WindowTilingBindings.triggerClaiming(
+                chord, in: behavior, scoped: scoped.preceding("second")),
+            "the “This app's windows” shortcut")
+        XCTAssertEqual(scoped.preceding("unbound").triggers.map(\.id), ["first", "second"])
+        XCTAssertNil(
+            WindowTilingBindings.triggerClaiming(
+                Hotkey(keyCode: 124, modifierRaw: ctrlCmd), in: behavior, scoped: scoped))
     }
 
     /// Every arrangement that ships bound holds a chord no other bound one holds.
@@ -2387,6 +2476,43 @@ final class FinerGridTests: XCTestCase {
 
     func testTheLimitIsTwelve() {
         XCTAssertEqual(ArrangeAll.limit, 12)
+    }
+
+    // MARK: - Which Accessibility window is a window-server entry?
+
+    /// A window somewhere inside `area`, for the tests that need two frames that differ.
+    private let window = CGRect(x: 1600, y: 200, width: 800, height: 600)
+
+    /// `AXUIElementCreateApplication` builds an inert handle; the matcher never messages it.
+    private func listed(_ id: CGWindowID?, _ frame: CGRect) -> AX.ListedWindow {
+        AX.ListedWindow(element: AXUIElementCreateApplication(1), id: id, frame: frame)
+    }
+
+    /// Two windows of one app at one frame — both maximized — used to both resolve to the first.
+    func testASameFrameSiblingIsResolvedByItsIdNotItsFrame() {
+        let windows = [listed(1, area), listed(2, area)]
+        XCTAssertEqual(AX.index(of: 2, bounds: area, in: windows), 1)
+        XCTAssertEqual(AX.index(of: 1, bounds: area, in: windows), 0)
+    }
+
+    func testTheIdWinsOverAnEarlierFrameMatch() {
+        let windows = [listed(nil, window), listed(3, area)]
+        XCTAssertEqual(AX.index(of: 3, bounds: window, in: windows), 1)
+    }
+
+    /// The frame is the fallback for a host whose windows report no id, and within the same
+    /// tolerance the bounds match always used.
+    func testAWindowWithoutAnIdIsMatchedByFrame() {
+        let windows = [listed(nil, window)]
+        XCTAssertEqual(AX.index(of: 5, bounds: window.offsetBy(dx: 3, dy: -3), in: windows), 0)
+        XCTAssertNil(AX.index(of: 5, bounds: window.offsetBy(dx: 5, dy: 0), in: windows))
+    }
+
+    /// A window whose id is known and differs is a different window at that frame, so an entry
+    /// that resolves to nothing by id must skip it for an id-less one — or for nothing at all.
+    func testAKnownDifferentIdIsNeverMatchedByFrame() {
+        XCTAssertEqual(AX.index(of: 7, bounds: area, in: [listed(1, area), listed(nil, area)]), 1)
+        XCTAssertNil(AX.index(of: 7, bounds: area, in: [listed(1, area)]))
     }
 }
 

@@ -167,6 +167,15 @@ struct ScopedTriggers: Equatable {
                 && TriggerModifiers.opens(flags, held: $0.hotkey.heldModifiers)
         })
     }
+
+    /// The triggers matched ahead of `id`. `trigger(code:flags:)` takes the first match in list
+    /// order, so these are the only ones that can take a chord from it — the ones after it lose
+    /// to it instead, and their own rows say so.
+    func preceding(_ id: String) -> ScopedTriggers {
+        var ahead = ScopedTriggers()
+        ahead.triggers = Array(triggers.prefix { $0.id != id })
+        return ahead
+    }
 }
 
 @MainActor
@@ -336,21 +345,25 @@ struct ScopedShortcutRecorder: View {
         .onDisappear { if isRecording { store.stopRecording() } }
     }
 
+    /// Checked against the two built-in triggers and the scoped ones listed *before* this one —
+    /// a later one loses to this row rather than claiming from it.
     private var isBroken: Bool {
         guard let hotkey else { return false }
-        return WindowTilingBindings.triggerClaiming(hotkey, in: .shared) != nil
+        return WindowTilingBindings.triggerClaiming(
+            hotkey, in: .shared, scoped: store.scoped.preceding(trigger.id)) != nil
     }
 
     private func start() {
         store.beginRecording(trigger.id) { candidate in
-            if let claimer = WindowTilingBindings.triggerClaiming(candidate, in: .shared) {
+            if let claimer = WindowTilingBindings.triggerClaiming(
+                candidate, in: .shared, scoped: store.scoped.preceding(trigger.id))
+            {
                 let alert = NSAlert()
                 alert.alertStyle = .warning
                 alert.messageText = "\(candidate.displayString) is already \(claimer)"
                 alert.informativeText =
-                    "Both built-in triggers are matched before scoped ones, so this combination "
-                    + "would open the full switcher instead — the binding would look set and never "
-                    + "fire."
+                    "That shortcut is matched before this one, so the combination would open it "
+                    + "instead — the binding would look set and never fire."
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
                 return false

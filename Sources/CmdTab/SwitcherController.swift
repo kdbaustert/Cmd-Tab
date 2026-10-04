@@ -335,6 +335,10 @@ final class SwitcherController {
     /// reason `appRules` does: `.hide` and `.expand` change what the targets are.
     var titleRules: [CompiledTitleRule] = [] {
         didSet {
+            // Every store write lands here — once per keystroke while a pattern is typed, and
+            // again when the config-file mirror echoes the write back — so an unchanged list is
+            // turned away before it fans out to nine consumers and a rebuild.
+            guard titleRules != oldValue else { return }
             provider.titleRules = titleRules
             preview.titleRules = titleRules
             quickPreview.titleRules = titleRules
@@ -344,7 +348,10 @@ final class SwitcherController {
             launchArrangements.titleRules = titleRules
             displayLayouts.titleRules = titleRules
             desktopAssignments.titleRules = titleRules
-            provider.refresh()
+            // The provider reads nothing of a `.neverTile` rule, so editing one has nothing for a
+            // rebuild to find.
+            let listed = { (rule: CompiledTitleRule) in rule.action != .neverTile }
+            if titleRules.filter(listed) != oldValue.filter(listed) { provider.refresh() }
         }
     }
 
@@ -698,9 +705,8 @@ final class SwitcherController {
         self.tap = tap
         // Alongside the tap, since it feeds the same decision and is only needed once one is live.
         startActiveMirror()
-        panels.onPick = { [weak self] index in self?.pick(index) }
+        panels.onPick = { [weak self] index, flags in self?.clickedTile(index, flags: flags) }
         panels.onClose = { [weak self] index in self?.closeTile(index) }
-        panels.onToggleMark = { [weak self] index in self?.toggleMarkedTile(index) }
         panels.onScroll = { [weak self] step in
             guard let self, self.isVisible else { return }
             // Scroll and hover are the advertised way to move the selection in a stay-open session,
@@ -708,6 +714,14 @@ final class SwitcherController {
             // not use, and dismissed a panel the user was actively browsing with the mouse.
             self.resetStickyIdle()
             self.advance(step)
+        }
+        panels.onHoverSelect = { [weak self] in
+            guard let self, self.isVisible else { return }
+            // Activity, for the reason the scroll above is — and the highlight has moved, so what
+            // follows it (the Space preview, VoiceOver) runs here as it does after a key step. This
+            // used to ride on `onPreviewHover`, which only fires while window previews are on.
+            self.resetStickyIdle()
+            self.scheduleLayout(selectionOnly: true)
         }
         panels.onPreviewHover = { [weak self] target in
             // Deduped upstream to target *changes*, so this is real navigation, not a mouse twitch.
@@ -1148,7 +1162,8 @@ final class SwitcherController {
             guard WindowTiler.homeDisplay(of: window.frame, in: areas) == home else { return nil }
             let id = NSRunningApplication(processIdentifier: window.pid)?.bundleIdentifier
             if let id, appRules[id]?.neverTile == true { return nil }
-            return WindowTiler.Candidate(pid: window.pid, bounds: window.frame, bundleID: id)
+            return WindowTiler.Candidate(
+                id: window.id, pid: window.pid, bounds: window.frame, bundleID: id)
         }
         Log.tap.notice(
             """
@@ -2155,6 +2170,7 @@ final class SwitcherController {
     /// pick never changes the frontmost app, so it never fires one.
     private func focus(_ target: SwitchTarget) {
         if let id = target.windowID { provider.noteFocused(window: id) }
+        focusFollows.pickCommitted()
         let targetID = target.id
         target.focus(onLaunchFailure: { [weak self] in
             self?.provider.launchFailed(targetID: targetID)
@@ -2814,6 +2830,23 @@ final class SwitcherController {
             Log.tap.notice("close button on pid \(target.pid, privacy: .public)")
             self.closeTargets([target], clearsMarks: false)
         }
+    }
+
+    /// A tile was clicked: a pick, or with ⌥ held a mark toggle — unless ⌥ is part of the trigger
+    /// being held. The panel used to read ⌥ itself, so under ⌥-Tab every click carried it and none
+    /// ever picked. The keyboard path subtracts `activeHeld` before reading a key's modifiers (see
+    /// `extra` in `handleKeyDown`); this is the same subtraction for the mouse.
+    private func clickedTile(_ index: Int, flags: NSEvent.ModifierFlags) {
+        if Self.clickTogglesMark(flags: flags, held: activeHeld) {
+            toggleMarkedTile(index)
+        } else {
+            pick(index)
+        }
+    }
+
+    /// Whether a click's modifiers mean "mark" rather than "pick".
+    static func clickTogglesMark(flags: NSEvent.ModifierFlags, held: CGEventFlags) -> Bool {
+        flags.contains(.option) && !held.contains(.maskAlternate)
     }
 
     /// A tile was ⌥-clicked: toggle its mark, the mouse's way of doing what ⌥-Space does from the

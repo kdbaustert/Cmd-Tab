@@ -308,6 +308,32 @@ final class FilteringAndMetricsTests: XCTestCase {
         XCTAssertEqual(model.selection, 2)
     }
 
+    /// A scroll is accelerated into several tiles per event (`PanelGroup.handleScroll`), so a step
+    /// can be larger than the list. Swift's `%` keeps the sign: `(x + delta + n) % n` went negative
+    /// past −n, which left the highlight on no tile.
+    func testStepWrapsADeltaLargerThanTheList() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.selection = 0
+        model.step(-7)
+        XCTAssertEqual(model.selection, 2)
+        model.step(7)
+        XCTAssertEqual(model.selection, 0)
+    }
+
+    /// The same under a filter, where the negative result indexed the match list and crashed.
+    func testStepUnderAFilterWrapsADeltaLargerThanTheMatches() {
+        let model = SwitcherModel()
+        model.begin(sample)
+        model.setQuery("o")
+        XCTAssertEqual(model.matchingIndices.sorted(), [1, 2])
+        XCTAssertEqual(model.selection, 1)
+        model.step(-3)
+        XCTAssertEqual(model.selection, 2)
+        model.step(5)
+        XCTAssertEqual(model.selection, 1)
+    }
+
     func testStepOnEmptyListDoesNotCrash() {
         let model = SwitcherModel()
         model.begin([])

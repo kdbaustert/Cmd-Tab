@@ -280,7 +280,6 @@ extension SwitchTarget {
             // it onto the current one rather than taking you to it, so committing to a window on
             // Desktop 2 used to quietly pull it over and scramble a multi-Desktop layout.
             let parsed = windowID
-            let wasMinimized = isMinimized
             let pid = self.pid
             // For the Window-menu route, which matches a window by title and nothing else. The
             // tile's own title, unless it is the app-name placeholder a window with no title gets —
@@ -302,24 +301,24 @@ extension SwitchTarget {
                 // enqueued while it ran owns the screen from here — including the blind raise
                 // below.
                 guard Self.isCurrent(generation) else { return }
-                guard let id = resolved, !wasMinimized else {
-                    // Either no id to look a Space up with, or a minimized window — which sits in
-                    // the Dock, on no Desktop at all, so there is nothing to switch to first and
-                    // the direct raise is both correct and what this path has always done.
-                    //
-                    // The no-id half of that is *not* safe in the same way: a raise with no Space
-                    // check drags an off-Desktop window onto the current one. The two say different
-                    // things in the log despite sharing a branch, because only one of them is a
-                    // suspect when a window turns up on the wrong Desktop.
-                    if wasMinimized {
-                        Log.general.notice(
-                            "window pick: unminimizing pid \(pid, privacy: .public) (id=\(resolved ?? 0, privacy: .public))"
-                        )
-                    } else {
-                        Log.general.notice(
-                            "window pick: raising pid \(pid, privacy: .public) blind — no window id, Space unchecked"
-                        )
-                    }
+                // No id to look a Space up with. A raise with no Space check drags an off-Desktop
+                // window onto the current one, which is why this says so in the log: it is the one
+                // suspect left when a window turns up on the wrong Desktop.
+                //
+                // A tile whose window was minimized at the last refresh is *not* a reason to stop
+                // here any more. It used to be, on the reasoning that a Dock window is on no Desktop
+                // and so has nothing to switch to — true of the window, wrong about the call: the
+                // branch ended in an app-level `activate`, the one call this file otherwise spends
+                // its length keeping away from a window pick, and it hauled the app's *other*
+                // windows across for a pick that only ever named one. The reading was also seconds
+                // old, so a window un-minimized since — onto another Desktop — was raised blind.
+                // `focusWindow` asks the window server whether the window is still in the Dock and
+                // restores it from there by fronting that one window (`restoreFromDock`), which is
+                // the path the hover preview's minimized thumbnails have always taken.
+                guard let id = resolved else {
+                    Log.general.notice(
+                        "window pick: raising pid \(pid, privacy: .public) blind — no window id, Space unchecked"
+                    )
                     Self.raise(element: window)
                     Self.activate(pid: pid)
                     return
@@ -340,7 +339,6 @@ extension SwitchTarget {
             // title is the *tab's*, and the menu names the window by whichever tab is active in it.
             // `focusWindow` reads the window's own title instead.
             let parsed = windowID
-            let wasMinimized = isMinimized
             let pid = self.pid
             nonisolated(unsafe) let window = ref.window
             nonisolated(unsafe) let tabElement = ref.element
@@ -351,12 +349,21 @@ extension SwitchTarget {
                 // As on the window path: a later pick that arrived during the lookup wins, and that
                 // includes the tab press below, which would otherwise switch tabs under it.
                 guard Self.isCurrent(generation) else { return }
-                if let id = resolved, !wasMinimized {
+                // A minimized reading from the last refresh is no reason to raise blind here either;
+                // the window case above says why, and `focusWindow` restores a Dock window itself.
+                if let id = resolved {
                     Self.focusWindow(id: id, pid: pid, generation: generation)
                 } else {
+                    Log.general.notice(
+                        "window pick: raising pid \(pid, privacy: .public) blind for a tab — no window id, Space unchecked"
+                    )
                     Self.raise(element: window)
                     Self.activate(pid: pid)
                 }
+                // Asked again after the focus, whose synchronous part reads the window's placement
+                // and hops to the main thread: a pick that replaced this one during it must not have
+                // the old window's tab switched under it.
+                guard Self.isCurrent(generation) else { return }
                 AX.performPress(tabElement)
             }
 
@@ -977,28 +984,6 @@ extension SwitchTarget {
         }
     }
 
-    /// `activate`, held until `deadline` when that is still ahead of us.
-    ///
-    /// The one call in this file that can gather an app's windows onto the Desktop in front of the
-    /// user is `activate`, and the one time it does so unbidden is while a Desktop transition is
-    /// still running. Callers that may be inside one hand over the moment it is certainly finished;
-    /// everyone else passes a deadline already in the past and goes straight through, which is why
-    /// this is not simply an `asyncAfter` — a same-Desktop pick must not pick up a queue hop it has
-    /// no reason to wait for.
-    ///
-    /// Deferring rather than dropping: this is a fallback path, reached only once fronting a single
-    /// window has already failed, so skipping it would leave the pick dead. Late is the trade.
-    private static func activate(pid: pid_t, notBefore deadline: DispatchTime, generation: UInt64) {
-        guard DispatchTime.now() < deadline else {
-            activate(pid: pid)
-            return
-        }
-        focusQueue.asyncAfter(deadline: deadline) {
-            guard isCurrent(generation) else { return }
-            activate(pid: pid)
-        }
-    }
-
     /// Counts picks. A `settle` chain captures this at its start and stops the moment it no longer
     /// matches, so a pick still waiting for its Desktop to arrive cannot activate its app up to two
     /// seconds later and yank the user off whatever they picked in the meantime. Activation used to
@@ -1083,7 +1068,15 @@ extension SwitchTarget {
         // below — its history stays readable in blame, and every `return` in it still means "end
         // this pick".
         do {
-            guard isCurrent(generation) else { return }
+            guard isCurrent(generation) else {
+                // The one exit on this path that used to leave no line at all. A pick that ends
+                // here did nothing, and a report of a window turning up on the wrong Desktop has
+                // to be able to rule it out.
+                Log.general.notice(
+                    "focus window \(id, privacy: .public): superseded by a later pick before it started"
+                )
+                return
+            }
 
             // A minimized window sits in the Dock, on no Desktop at all: there is nothing to switch
             // to first, it can never join the on-screen list the gate below waits on, and the
@@ -1116,6 +1109,27 @@ extension SwitchTarget {
             // fresher reading; everything after that point must use the new one.
             var placed = known ?? SpaceMover.windowSpaces()
             var placement = placed[id]
+            // Said before anything is decided on it. Every branch below is chosen by this one
+            // reading, and the two readings that end in no switch — a window the map does not place
+            // at all, which takes the Dock test, and one it places on the Desktop in front — used to
+            // leave no line until the half-second-later verdict, and none at all when that read
+            // came back empty too. A pick that fronted a window nobody could account for was
+            // therefore invisible in the log, which is the worst place for it to be.
+            if let placement {
+                Log.general.notice(
+                    """
+                    focus window \(id, privacy: .public): placed on space \
+                    \(placement.windowSpace, privacy: .public), display showing \
+                    \(placement.currentSpace, privacy: .public) \
+                    (\(known == nil ? "fresh" : "caller's", privacy: .public) map)
+                    """)
+            } else {
+                Log.general.notice(
+                    """
+                    focus window \(id, privacy: .public): not in the Space map \
+                    (\(placed.count, privacy: .public) windows placed)
+                    """)
+            }
             // The window's Window-menu entry, looked up at most once per pick: both menu routes
             // below can be reached by one pick, a decline and then the on-screen veto, and the
             // second lookup can only repeat the first — same app, same titles, a walk of every menu
@@ -1392,7 +1406,8 @@ extension SwitchTarget {
     ///
     /// What the attempt to let macOS travel came to.
     private enum SystemSwitch {
-        /// Arrived on the window's Desktop and the window was fronted there. The pick is over.
+        /// Arrived on the window's Desktop; the window's fronting is queued behind `settle`'s gates.
+        /// Nothing is left for the caller to do.
         case arrived
         /// The system did not travel, or travelled to a different Desktop of the same app. The
         /// caller falls back to the private switch — and must re-read placement first, since
@@ -1476,6 +1491,10 @@ extension SwitchTarget {
         // interval can be set by how promptly we want to notice the arrival rather than by what each
         // check costs. It used to be 50ms, which put up to a full 50ms of pure granularity between
         // macOS landing on the Desktop and this noticing — a fifth of the wait, and none of it work.
+        // Before the first ask, for the reason the private-switch path reads its own before the
+        // switch: the notification the gate below waits on can post while the activation is still
+        // returning, and a count taken after it would wait for a second transition that never comes.
+        let changesBefore = spaceChanges.value
         rounds: for round in 0..<2 {
             if round > 0 {
                 Log.general.notice(
@@ -1515,26 +1534,36 @@ extension SwitchTarget {
                     focus window \(id, privacy: .public): macOS switched to space \
                     \(state.windowSpace, privacy: .public) on its own
                     """)
-                // The app is up and on the right Desktop; this puts the *picked* window in front of
-                // its siblings. Safe here in a way it is not before arrival — see `focusAndActivate`.
+                // The app is up and the display has been told to show the right Desktop. Putting
+                // the *picked* window in front of its siblings is now `settle`'s job, behind the
+                // same two gates every other switched path waits behind, rather than an immediate
+                // `focusAndActivate`.
                 //
-                // "Arrived" is a weaker claim here than on the fallback path, and the deadline is
-                // what accounts for the difference. The gate above is the window server's `Current
-                // Space` field, which `spaceSettleDelay` documents as flipping while the transition
-                // still has several hundred milliseconds to run — so this line can be reached
-                // mid-transition, where the fallback path has waited the delay out before it acts.
+                // "Arrived" is a weak claim here, and the gates are what account for it. The test
+                // above is the window server's `Current Space` field, which `spaceSettleDelay`
+                // documents as flipping while the transition still has several hundred milliseconds
+                // to run — so this line is reached in the first frames of the Dock's animation, not
+                // after it. The raise and the front used to go out right here regardless, on the
+                // reasoning that neither relocates a window: an off-Space `AXRaise` is measured to
+                // do nothing, and `FrontProcess` names one window by id. Both measurements were
+                // taken against a Space that was neither current nor moving. Mid-transition the
+                // record already calls the destination current, so the window server acts on both
+                // calls while it is still compositing the switch — the one thing this app does
+                // inside a transition it did not issue.
                 //
-                // The raise and the front are sent anyway, because neither is what relocates a
-                // window: an off-Space `AXRaise` is measured to do nothing, and `FrontProcess` names
-                // one window by id rather than gathering an app's. Only the *activation fallbacks*
-                // inside are the gathering call, and only those are held until the transition is
-                // certainly over. On the 152 logged picks that reached here `FrontProcess` succeeded
-                // every time, so the deadline costs the common case nothing at all — it is the
-                // failure branch that would otherwise activate into a running transition and haul
-                // the app's other windows over.
-                focusAndActivate(
-                    window: id, pid: pid, generation: generation,
-                    activationNotBefore: .now() + spaceSettleDelay)
+                // Not yet measured, and said so. It is the top candidate for a report this path's
+                // own log could not otherwise explain: a picked window drawn on the Desktop the user
+                // never left, gone again on the next manual switch, with every travel in three days
+                // of log reading `macOS switched … on its own` and then `after activation
+                // windowSpace=X current=X` as though all were well. A window painted onto a
+                // half-finished transition answers to exactly that description, and nothing else
+                // in the log does. The gates cost the common pick nothing visible — the animation is
+                // running for that long anyway. If the report recurs with the `transition=landed
+                // waited=true` line now logged before the front, this was not it.
+                settle(
+                    window: id, pid: pid, attempts: 14, delay: 0.15, generation: generation,
+                    actWhenUnreached: false, awaitingSpaceChange: changesBefore,
+                    notBefore: .now() + spaceSettleDelay)
                 return .arrived
             }
         }
@@ -1721,7 +1750,10 @@ extension SwitchTarget {
         generation: UInt64, actWhenUnreached: Bool, awaitingSpaceChange: UInt64?,
         notBefore: DispatchTime
     ) {
-        guard isCurrent(generation) else { return }  // superseded by a later pick
+        guard isCurrent(generation) else {
+            noteSuperseded(window: id, switched: awaitingSpaceChange != nil)
+            return
+        }
         guard attempts > 0 else {
             guard actWhenUnreached else {
                 // A Space switch really was issued and never landed, so the window is still on
@@ -1741,7 +1773,10 @@ extension SwitchTarget {
             return
         }
         focusQueue.asyncAfter(deadline: .now() + delay) {
-            guard isCurrent(generation) else { return }
+            guard isCurrent(generation) else {
+                noteSuperseded(window: id, switched: awaitingSpaceChange != nil)
+                return
+            }
             // Two gates. The notification says a transition began and landed; `notBefore` says
             // enough of the clock has run for it to be over. Neither is sufficient alone — see
             // `spaceSettleDelay` for what each one was measured to be worth.
@@ -1784,21 +1819,27 @@ extension SwitchTarget {
         }
     }
 
+    /// A `settle` chain ended by a later pick. Only worth a line when a switch was issued: that pick
+    /// moved the display, and ending here leaves that Desktop in front with nothing of the pick's on
+    /// it — which, read back later, is a window that "went nowhere" for no visible reason. A
+    /// same-Desktop pick superseded in its two-hundredths of a second is a fast ⌘-Tab working.
+    private static func noteSuperseded(window id: CGWindowID, switched: Bool) {
+        guard switched else { return }
+        Log.general.notice(
+            "focus window \(id, privacy: .public): superseded while waiting for its Space")
+    }
+
     /// Raises the window and brings its app forward, retrying the raise once the app is up.
     ///
     /// Order matters: the raise goes first, measured to be harmless off-Space and here making the
     /// picked window the app's front one, so the activation that follows has nothing else to
     /// surface. Runs on `focusQueue`.
     ///
-    /// `activationNotBefore` holds the two `activate` fallbacks — and only those — until a Desktop
-    /// transition the caller knows may still be running has certainly finished. Defaults to now,
-    /// which is right for every caller that already waited: `settle` opens on `spaceSettleDelay`,
-    /// and a same-Desktop pick has no transition to sit out. Only `settleBySystemSwitch` passes a
-    /// real one; see the note at its call.
-    private static func focusAndActivate(
-        window id: CGWindowID, pid: pid_t, generation: UInt64,
-        activationNotBefore: DispatchTime = .now()
-    ) {
+    /// Every caller has already waited out any Desktop transition: `settle` opens on
+    /// `spaceSettleDelay`, and a same-Desktop pick has no transition to sit out. That is what makes
+    /// the two `activate` fallbacks below safe to issue at once — the one time activation gathers
+    /// unbidden is inside a transition that is still running.
+    private static func focusAndActivate(window id: CGWindowID, pid: pid_t, generation: UInt64) {
         let raised = raise(window: id, pid: pid)
         // Front *this window*, not its app. `NSRunningApplication.activate()` is app-level, and on a
         // machine with several Desktops that is the very relocation the Space gate above exists to
@@ -1809,10 +1850,9 @@ extension SwitchTarget {
         // activation is wrong about Spaces, but a pick that does nothing at all is worse.
         let fronted = FrontProcess.focus(window: id, pid: pid)
         if !fronted {
-            activate(pid: pid, notBefore: activationNotBefore, generation: generation)
+            activate(pid: pid)
         } else {
-            verifyFront(
-                window: id, pid: pid, generation: generation, notBefore: activationNotBefore)
+            verifyFront(window: id, pid: pid, generation: generation)
         }
         // Where things actually ended up, half a second after the dust settles. The difference that
         // matters: `window == current` on the Desktop we switched *to* means the pick worked, while
@@ -1820,15 +1860,18 @@ extension SwitchTarget {
         focusQueue.asyncAfter(deadline: .now() + 0.5) {
             // A superseded pick's diagnostic is not worth a whole display/Space enumeration on the
             // serial queue the pick that replaced it is waiting to use.
-            guard isCurrent(generation), let state = SpaceMover.spaceState(of: id) else {
-                return
-            }
+            guard isCurrent(generation) else { return }
+            // Logged with zeros rather than skipped when the map does not place the window: that
+            // reading *is* the verdict for a window gathered off every Space, or minimized under
+            // the pick, and it used to end this line before it was written — the one outcome worth
+            // a line was the one that never got one.
+            let state = SpaceMover.spaceState(of: id)
             let stack = onScreenStack()
             Log.general.notice(
                 """
                 focus window \(id, privacy: .public): after activation \
-                windowSpace=\(state.windowSpace, privacy: .public) \
-                current=\(state.currentSpace, privacy: .public) \
+                windowSpace=\(state?.windowSpace ?? 0, privacy: .public) \
+                current=\(state?.currentSpace ?? 0, privacy: .public) \
                 fronted=\(fronted, privacy: .public) \
                 raised=\(raised, privacy: .public) \
                 zrank=\(zRank(of: id, in: stack), privacy: .public) \
@@ -1864,13 +1907,11 @@ extension SwitchTarget {
     /// drag over. That is exactly what makes it usable as a backstop rather than a reintroduction of
     /// the bug the fronting exists to avoid.
     ///
-    /// `notBefore` is the caller's transition deadline. The 0.2s here is time enough for the front
-    /// to take, not time enough for a Desktop transition to end, so the later of the two is what the
-    /// fallback activation waits for.
-    private static func verifyFront(
-        window id: CGWindowID, pid: pid_t, generation: UInt64, notBefore: DispatchTime
-    ) {
-        focusQueue.asyncAfter(deadline: max(DispatchTime.now() + 0.2, notBefore)) {
+    /// The 0.2s is time enough for the front to take. It is not time enough for a Desktop transition
+    /// to end, and does not need to be: every caller reaches `focusAndActivate` with the transition
+    /// already waited out.
+    private static func verifyFront(window id: CGWindowID, pid: pid_t, generation: UInt64) {
+        focusQueue.asyncAfter(deadline: .now() + 0.2) {
             guard isCurrent(generation) else { return }
             // `frontmostApplication` is AppKit state, so it is asked for on the main thread — and
             // the answer is carried back here rather than acted on there.

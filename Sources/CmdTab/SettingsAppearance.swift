@@ -329,7 +329,10 @@ struct AppearanceSettings: View {
     }
 
     private func saveTheme() {
-        guard let name = Self.promptName("Save theme as", default: "My Theme") else { return }
+        // Offered already free, so the collision shows in the field before OK rather than as a
+        // theme that came out named something else.
+        guard let name = Self.promptName("Save theme as", default: themes.uniqueName("My Theme"))
+        else { return }
         themes.saveAs(name)
     }
 

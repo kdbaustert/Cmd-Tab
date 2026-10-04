@@ -58,12 +58,20 @@ struct TitleRule: Identifiable, Equatable {
 /// `@unchecked Sendable`: `NSRegularExpression` is not `Sendable`, but Foundation documents it as
 /// immutable and safe to share across threads once built, which is exactly how this is used — built
 /// once on the main actor, read-only everywhere else.
-struct CompiledTitleRule: @unchecked Sendable {
+struct CompiledTitleRule: @unchecked Sendable, Equatable {
     let bundleID: String?
     let action: TitleRuleAction
     /// nil when the pattern failed to compile. Treated as matching nothing rather than crashing, so
     /// a typo in a regex disables that one rule instead of the feature.
     let regex: NSRegularExpression?
+
+    /// Equal when the two would match the same windows. The regex is compared by pattern, not
+    /// identity: `reload` rebuilds every one from disk when the config-file mirror echoes our own
+    /// write back, and that list is the same list.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.bundleID == rhs.bundleID && lhs.action == rhs.action
+            && lhs.regex?.pattern == rhs.regex?.pattern
+    }
 
     /// Whether `title` matches this rule for `action`, unioning nothing on its own — see
     /// `matches(_:bundleID:title:action:)` for the list-wide check every call site actually uses.
@@ -151,6 +159,13 @@ final class TitleRulesStore: ObservableObject {
     private func recompile() {
         var map: [UUID: NSRegularExpression?] = [:]
         for rule in rules {
+            // A rule whose pattern has not moved keeps its regex. `persist` runs once per keystroke
+            // while a pattern is typed, and every other rule was being rebuilt alongside the one
+            // being edited.
+            if case let regex?? = compiledByID[rule.id], regex.pattern == rule.pattern {
+                map[rule.id] = regex
+                continue
+            }
             map[rule.id] = try? NSRegularExpression(pattern: rule.pattern, options: [.caseInsensitive])
         }
         compiledByID = map

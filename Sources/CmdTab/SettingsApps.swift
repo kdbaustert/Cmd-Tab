@@ -204,6 +204,9 @@ struct AppsSettings: View {
                             title: name(for: bundleID),
                             subtitle: overrideSubtitle(for: bundleID),
                             isTitleVerbatim: true,
+                            // The subtitle quotes the rule's display name, which is the user's
+                            // text: `*Work*` came out in italics. See `isSubtitleVerbatim`.
+                            isSubtitleVerbatim: true,
                             controlWidth: 300
                         ) {
                             AppOverrideControls(bundleID: bundleID, rules: rules)
@@ -795,7 +798,9 @@ private struct TitleRuleRow: View {
             set: { newValue in store.update(rule.id) { $0.action = newValue } })
     }
 
-    private var isValid: Bool { store.isValid(rule) }
+    /// An empty pattern does not compile either, but it is what a freshly added row holds before
+    /// anything has been typed, and a red outline there warns about a mistake nobody has made yet.
+    private var isValid: Bool { rule.pattern.isEmpty || store.isValid(rule) }
 
     /// What the app picker offers: the listed apps, plus the rule's own app when it is not one of
     /// them. The list is running apps, favourites and exclusions, so a rule scoped to an app that

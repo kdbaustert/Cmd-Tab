@@ -67,31 +67,36 @@ enum SystemShortcuts {
     /// set documented in System Settings' Keyboard Shortcuts pane. An id outside both surfaces as
     /// "Unknown macOS shortcut (id N)" rather than being dropped — an unnamed conflict is still
     /// worth warning about.
+    ///
+    /// The odd-numbered partner of a Mission Control or Spaces id is the same action with ⇧ held
+    /// (34 to 32, 35 to 33, 37 to 36, 80 to 79, 82 to 81), so the pairs share a name; the chord
+    /// shown beside it carries the Shift. 60 and 61 are the input-source pair the other way round
+    /// from how they read: 60 is ⌃Space, which System Settings labels "previous".
     static func name(forID id: Int) -> String {
         knownNames[id] ?? "Unknown macOS shortcut (id \(id))"
     }
 
     private static let knownNames: [Int: String] = [
-        27: "Show Dashboard",
+        27: "Move focus to next window",
         28: "Save screenshot of screen to file",
         29: "Copy screenshot of screen to clipboard",
         30: "Save screenshot of selection to file",
         31: "Copy screenshot of selection to clipboard",
         32: "Mission Control",
-        33: "Mission Control",
-        34: "Application windows",
+        33: "Application windows",
+        34: "Mission Control",
         35: "Application windows",
         36: "Show Desktop",
         37: "Show Desktop",
         52: "Turn Dock Hiding On/Off",
-        60: "Select next input source",
-        61: "Select previous input source",
+        60: "Select previous input source",
+        61: "Select next input source",
         64: "Spotlight search",
         65: "Finder search window",
         79: "Move left a space",
-        80: "Move right a space",
-        81: "Switch to Desktop",
-        82: "Switch to Desktop",
+        80: "Move left a space",
+        81: "Move right a space",
+        82: "Move right a space",
         160: "Launchpad",
         163: "Notification Center",
         184: "Screenshot and recording options",

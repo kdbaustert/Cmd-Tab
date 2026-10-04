@@ -287,9 +287,9 @@ final class DisplayLayouts {
     /// Where a queued restore actually happens.
     ///
     /// Off the main thread, and this is the reason the whole function exists rather than being three
-    /// lines in `restore`: each move is `AX.window(ofApplication:matching:)` — a walk of that app's
-    /// window list, reading a frame from each — followed by a frame write, and a desk change can
-    /// queue thirty of them. Run on the main thread that is also the run loop servicing the keyboard
+    /// lines in `restore`: each move is a walk of its app's window list — reading an id and a frame
+    /// from each window — followed by a frame write, and a desk change can queue thirty of them.
+    /// Run on the main thread that is also the run loop servicing the keyboard
     /// event tap, one wedged app in that list is enough to overrun the tap's deadline and have the
     /// system disable it, which costs the user every keystroke on the machine.
     ///
@@ -298,11 +298,17 @@ final class DisplayLayouts {
     private static func write(_ moves: [Move], titleRules: [CompiledTitleRule]) {
         queue.async {
             var unmatched = 0
+            // One walk per app rather than per move — a desk change moves several windows of one
+            // app at once. A window a move has claimed leaves the list, so two moves whose windows
+            // macOS piled onto the same frame cannot both land on it.
+            var byApp: [pid_t: [AX.ListedWindow]] = [:]
             for move in moves {
-                guard
-                    let element = AX.window(
-                        ofApplication: move.window.pid, matching: move.window.frame)
-                else {
+                let pid = move.window.pid
+                var listed = byApp[pid] ?? AX.listedWindows(ofApplication: pid)
+                let element = AX.index(of: move.window.id, bounds: move.window.frame, in: listed)
+                    .map { listed.remove(at: $0).element }
+                byApp[pid] = listed
+                guard let element else {
                     unmatched += 1
                     continue
                 }
@@ -316,8 +322,8 @@ final class DisplayLayouts {
                 AX.setFrame(element, move.frame, sizing: true, repositionAfterSizing: true)
             }
             // Said, because the line above it in the log has already promised a number of windows,
-            // and a window whose Accessibility frame has drifted from the window server's cannot be
-            // matched and is quietly left where macOS put it.
+            // and a window that reports no id and whose Accessibility frame has drifted from the
+            // window server's cannot be matched and is quietly left where macOS put it.
             if unmatched > 0 {
                 Log.general.notice(
                     """

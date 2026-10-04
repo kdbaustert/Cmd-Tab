@@ -37,6 +37,19 @@ final class ShortcutsMenuTests: XCTestCase {
         XCTAssertEqual(groups.map(\.kind), [.directActivation])
     }
 
+    /// A chord whose family is switched off goes the way of an unbound one: the menu says what is
+    /// live, and a tiling row shown while tiling is off names a combination that does nothing.
+    func testEntriesOfASwitchedOffFamilyAreDropped() {
+        let entries = [
+            entry(.tiling, "tiling.leftHalf", active: false),
+            entry(.mouseGesture, "mouse.move", active: false),
+            entry(.appWindowCycle, "sameApp", active: false),
+            entry(.directActivation, "activate.com.apple.Safari"),
+        ]
+        XCTAssertEqual(
+            ShortcutsMenuModel.groups(from: entries).map(\.kind), [.directActivation])
+    }
+
     func testGroupsAppearInKindDeclarationOrderRegardlessOfEntryOrder() {
         let entries = [
             entry(.tiling, "tiling.leftHalf"),

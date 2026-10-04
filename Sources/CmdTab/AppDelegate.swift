@@ -116,6 +116,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // so a step and a `cmdtab://` URL cannot drift apart in what they do — see AppIntents.swift.
         IntentActions.perform = { [weak self] command in self?.controller.perform(command) }
 
+        // The menu's status line reads `SystemSwitcher.isNativeDisabled` as the menu is built, and
+        // the menu is rebuilt on a behaviour change — so after Restore in Settings it went on saying
+        // the system ⌘-Tab was still taken over. Never removed: this object lives as long as the
+        // process does.
+        _ = NotificationCenter.default.addObserver(
+            forName: SystemSwitcher.didChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshMenu() }
+        }
+
         installSignalHandlers()
 
         Log.general.notice(
@@ -215,8 +225,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Not a controller field: the tracing is spread across types that have no view of the
         // stores, so the level lives on `Log` and is pushed here with everything else.
         Log.isVerbose = behavior.verboseLogging
-        updateStatusItem(behavior)
+        // Only when something it reads has moved. `updateStatusItem` allocates a fresh menu-bar
+        // image and rebuilds the menu, and this method runs once per slider tick; of the whole
+        // store it reads the icon switch, and the menu carries a line that follows the trigger.
+        let inputs = (showIcon: behavior.showMenuBarIcon, hotkey: behavior.hotkey)
+        if statusItemInputs.map({ $0 != inputs }) ?? true {
+            statusItemInputs = inputs
+            updateStatusItem(behavior)
+        }
     }
+
+    /// What `applyBehavior` last handed `updateStatusItem`.
+    private var statusItemInputs: (showIcon: Bool, hotkey: Hotkey)?
 
     private func applyGlobalActions(_ store: GlobalActionsStore) {
         controller.activations = store.activations

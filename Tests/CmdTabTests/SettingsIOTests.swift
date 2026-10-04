@@ -304,4 +304,21 @@ final class SettingsIOTests: XCTestCase {
         XCTAssertEqual(defaults.bundleIDs(forKey: "excludedBundleIDs"), [])
         XCTAssertEqual(defaults.bundleIDs(forKey: "neverSet"), [])
     }
+
+    // MARK: - Numbers outside their sliders
+
+    /// `apply` checks a number's type and nothing else, so `"titleFontSize": 400` in the file
+    /// reaches `BehaviorStore` as typed; it reads the value back inside the slider's range, the way
+    /// `Theme.init(from:)` already does for a shared theme file.
+    func testAStoredNumberIsReadBackInsideItsSlider() {
+        let size = Theme.titleFontSizeRange
+        XCTAssertEqual(BehaviorStore.clamp(400, in: size, default: 10), size.upperBound)
+        XCTAssertEqual(BehaviorStore.clamp(-20, in: size, default: 10), size.lowerBound)
+        XCTAssertEqual(BehaviorStore.clamp(12, in: size, default: 10), 12)
+        XCTAssertEqual(
+            BehaviorStore.clamp(1e9, in: BehaviorStore.showDelayRange, default: 0),
+            BehaviorStore.showDelayRange.upperBound)
+        // NaN compares false against everything, so `min`/`max` would hand it straight back.
+        XCTAssertEqual(BehaviorStore.clamp(.nan, in: size, default: 10), 10)
+    }
 }

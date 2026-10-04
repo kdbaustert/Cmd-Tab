@@ -112,4 +112,18 @@ final class ThemeCodingTests: XCTestCase {
         renamed.iconSize = 128
         XCTAssertTrue(base.sameLook(as: renamed))
     }
+
+    /// A save or an import under a name that is taken lands beside the existing theme, not on top
+    /// of it: the prompt's default is always "My Theme", so a second save with it used to destroy
+    /// the first without a word.
+    func testUniqueNameStepsPastTakenNames() {
+        XCTAssertEqual(ThemeStore.uniqueName("My Theme", among: []), "My Theme")
+        XCTAssertEqual(ThemeStore.uniqueName("My Theme", among: ["My Theme"]), "My Theme 2")
+        XCTAssertEqual(
+            ThemeStore.uniqueName("My Theme", among: ["My Theme", "My Theme 2", "My Theme 3"]),
+            "My Theme 4")
+        // A gap is filled rather than counted past.
+        XCTAssertEqual(
+            ThemeStore.uniqueName("My Theme", among: ["My Theme", "My Theme 3"]), "My Theme 2")
+    }
 }

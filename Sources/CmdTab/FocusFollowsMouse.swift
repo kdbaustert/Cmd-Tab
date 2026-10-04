@@ -52,6 +52,22 @@ final class FocusFollowsMouse {
         didSet { if isSwitcherVisible { disarm() } }
     }
 
+    /// Told by the controller that a pick was just handed to `SwitchTarget`.
+    ///
+    /// A pick that travels to another Desktop settles over as much as a second — `SwitchTarget`'s
+    /// settle and verify waits — under the same newest-pick generation this watcher claims when it
+    /// focuses. So a nudge and a rest over whatever lay under the pointer in that window started a
+    /// newer pick, and the switch gave up at its next check: you arrived on the Desktop with focus
+    /// on the window under the cursor, or were pulled back. A rest inside `settleGrace` of a pick is
+    /// ignored instead.
+    func pickCommitted() {
+        lastPick = DispatchTime.now().uptimeNanoseconds
+    }
+
+    /// When the switcher last committed a pick, in `DispatchTime` nanoseconds.
+    private var lastPick: UInt64 = 0
+    private static let settleGrace: UInt64 = 1_500_000_000
+
     private var monitor: Any?
     /// When the pointer last moved, in `DispatchTime` nanoseconds.
     private var lastMove: UInt64 = 0
@@ -160,6 +176,8 @@ final class FocusFollowsMouse {
         // pointer under a held key is not a hover.
         guard NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
         else { return }
+        // A switcher pick still landing — see `pickCommitted`.
+        guard DispatchTime.now().uptimeNanoseconds &- lastPick > Self.settleGrace else { return }
 
         let point = Self.cursorInWindowSpace()
         // Resting on something drawn *over* the windows — an open menu, the Dock, the menu bar, a

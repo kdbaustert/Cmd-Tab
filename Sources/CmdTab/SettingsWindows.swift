@@ -18,6 +18,26 @@ private func tilingAnchor(for title: String) -> String {
     "\(SettingsAnchor.tiling).\(title.lowercased())"
 }
 
+extension WindowArrangement {
+    /// The card this arrangement is recorded on, as a section jump — where the Overview's collision
+    /// popover lands for it. Every arrangement is one `ShortcutEntry.Kind`, but the rows live on
+    /// three tabs, so the kind's one anchor sent a focus chord's collision to the top of Tiling,
+    /// two tabs from its recorder.
+    ///
+    /// The Tiling tab's own groups all answer `SettingsAnchor.tiling`: that is the one of its cards
+    /// `SettingsIndex` lists, and a jump to an unlisted anchor silently does nothing — see
+    /// `SettingsRootView.consumePendingAnchor`.
+    var settingsAnchor: String {
+        if isFocus { return tilingAnchor(for: MouseFocusSettings.focusGroup.0) }
+        if isDesktopMove { return tilingAnchor(for: DisplaysDesktopsSettings.desktopGroup.0) }
+        if displayIndex != nil {
+            return tilingAnchor(for: DisplaysDesktopsSettings.sendToDisplayTitle)
+        }
+        if displayStep != nil { return tilingAnchor(for: DisplaysDesktopsSettings.moveGroup.0) }
+        return SettingsAnchor.tiling
+    }
+}
+
 // MARK: - Tiling
 
 /// The Tiling tab: global hotkeys that snap the focused window to a half, a corner, the whole
@@ -31,8 +51,10 @@ struct TilingSettings: View {
     /// that arrange every window on the display instead of the focused one.
     ///
     /// Every group here is governed by the tiling switch. The families that are not — the display
-    /// and Desktop moves, and the focus chords — have tabs of their own.
-    private static let groups: [(title: String, arrangements: [WindowArrangement])] = [
+    /// and Desktop moves, and the focus chords — have tabs of their own. Which is also what the
+    /// Restore defaults button below resets, and a test holds the two to the same set — see
+    /// `WindowTilingBindings.restoreTilingDefaults`.
+    static let groups: [(title: String, arrangements: [WindowArrangement])] = [
         ("Halves", [.leftHalf, .rightHalf, .topHalf, .bottomHalf]),
         (
             "Thirds",
@@ -224,11 +246,17 @@ struct DisplaysDesktopsSettings: View {
     }
 
     /// The send-it-elsewhere group. Ungoverned by the tiling switch, and the footer has to say so.
-    private static let moveGroup = ("Displays", [WindowArrangement.previousDisplay, .nextDisplay])
+    fileprivate nonisolated static let moveGroup = (
+        "Displays", [WindowArrangement.previousDisplay, .nextDisplay]
+    )
+
+    /// The absolute display targets' card. Named once because its anchor is spelled from it in two
+    /// places — the section and `WindowArrangement.settingsAnchor`.
+    fileprivate nonisolated static let sendToDisplayTitle = "Send to a display"
 
     /// The Desktop moves: the one family with a switch of its own, and the footer has to explain
     /// what that switch is protecting the user from.
-    private static let desktopGroup = (
+    fileprivate nonisolated static let desktopGroup = (
         "Desktops", [WindowArrangement.previousDesktop, .nextDesktop]
     )
 
@@ -312,7 +340,8 @@ struct DisplaysDesktopsSettings: View {
             // Only when there is more than one display — see `displayTargets(count:)`.
             if !Self.displayTargets(count: displayCount).isEmpty {
                 SettingsSection(
-                    title: "Send to a display", anchor: tilingAnchor(for: "Send to a display"),
+                    title: Self.sendToDisplayTitle,
+                    anchor: tilingAnchor(for: Self.sendToDisplayTitle),
                     footer: "Names the destination instead of counting to it: on three displays "
                         + "\"next display\" is two presses and a guess about which way round they "
                         + "are, where these land on the same screen every time. The numbers are the "
@@ -447,7 +476,7 @@ struct MouseFocusSettings: View {
 
     /// The focus chords: not governed by the tiling switch, and a card whose rows quietly answered
     /// to a checkbox captioned about resizing would be the confusion that split exists to prevent.
-    private static let focusGroup = ("Focus", WindowArrangement.focusMoves)
+    fileprivate nonisolated static let focusGroup = ("Focus", WindowArrangement.focusMoves)
 
     private var mouseDragEnabled: Binding<Bool> {
         Binding(get: { store.mouseDrag.isEnabled }, set: { store.mouseDragEnabled = $0 })

@@ -31,14 +31,17 @@ final class PanelGroup {
     private let model: SwitcherModel
     private var panels: [SwitcherPanel] = []
 
-    /// Invoked when a tile is clicked, with its index.
-    var onPick: ((Int) -> Void)?
+    /// Invoked when a tile is clicked, with its index and the click's modifiers.
+    var onPick: ((Int, NSEvent.ModifierFlags) -> Void)?
     /// Invoked when a tile's close button is clicked, with its index.
     var onClose: ((Int) -> Void)?
-    /// Invoked when a tile is ⌥-clicked, with its index.
-    var onToggleMark: ((Int) -> Void)?
     /// Invoked with a step (+1/-1) when the scroll wheel moves over any panel.
     var onScroll: ((Int) -> Void)?
+    /// Fires when the cursor moves the highlight to another tile. Unlike `onPreviewHover`, not gated
+    /// on window previews: the controller has follow-ups that belong to *every* selection change —
+    /// activity for the stay-open idle timer, the Space preview, VoiceOver — which the keyboard path
+    /// runs after each step and this path otherwise skipped.
+    var onHoverSelect: (() -> Void)?
     /// Fires when what the cursor points at changes. Only while window previews are on.
     var onPreviewHover: ((PreviewTarget) -> Void)?
     /// Whether a screen point is over the floating preview — answered by the controller, so the
@@ -389,9 +392,8 @@ final class PanelGroup {
         panel.positionMode = positionMode
         panel.maxColumns = maxColumns
         panel.fade = fade
-        panel.onPick = { [weak self] index in self?.onPick?(index) }
+        panel.onPick = { [weak self] index, flags in self?.onPick?(index, flags) }
         panel.onClose = { [weak self] index in self?.onClose?(index) }
-        panel.onToggleMark = { [weak self] index in self?.onToggleMark?(index) }
         panel.onScrollEvent = { [weak self] event in self?.handleScroll(event) }
         panel.onGeometryChange = { [weak self] in self?.refreshPreview() }
         return panel
@@ -452,7 +454,10 @@ final class PanelGroup {
         // The highlight follows the tile under the cursor — but not while the cursor is over the
         // strip, so the tile the strip belongs to stays highlighted while its windows are picked.
         let index = overPreview ? nil : tileIndex(at: location)
-        if let index, model.selection != index { model.selection = index }
+        if let index, model.selection != index {
+            model.selection = index
+            onHoverSelect?()
+        }
         // What the cursor is actually on, which is a different fact from what is selected: the
         // close button is drawn on the tile under the pointer, and the pointer being *somewhere
         // else* is exactly when it must not be. Held while the cursor is on the strip, so crossing

@@ -107,6 +107,26 @@ final class SystemShortcutsTests: XCTestCase {
         XCTAssertEqual(SystemShortcuts.name(forID: 32), "Mission Control")
     }
 
+    /// 60 and 61 were the wrong way round: 60 is ⌃Space (measured from `com.apple.symbolichotkeys`
+    /// on the machine this was written on), which the Keyboard pane labels the *previous* source.
+    func testInputSourceIDsReadTheWayTheKeyboardPaneDoes() {
+        XCTAssertEqual(SystemShortcuts.name(forID: 60), "Select previous input source")
+        XCTAssertEqual(SystemShortcuts.name(forID: 61), "Select next input source")
+    }
+
+    /// The ⇧ partner of a Mission Control or Spaces id is the same action, so it carries the same
+    /// name; the chord shown beside it is what carries the Shift.
+    func testShiftPartnersShareTheirActionsName() {
+        for (plain, shifted) in [(32, 34), (33, 35), (36, 37), (79, 80), (81, 82)] {
+            XCTAssertEqual(
+                SystemShortcuts.name(forID: plain), SystemShortcuts.name(forID: shifted),
+                "\(plain) and \(shifted) name different actions")
+        }
+        XCTAssertEqual(SystemShortcuts.name(forID: 33), "Application windows")
+        XCTAssertEqual(SystemShortcuts.name(forID: 79), "Move left a space")
+        XCTAssertEqual(SystemShortcuts.name(forID: 81), "Move right a space")
+    }
+
     func testUnknownIDFallsBackToAGenericLabel() {
         XCTAssertEqual(SystemShortcuts.name(forID: 999_999), "Unknown macOS shortcut (id 999999)")
     }

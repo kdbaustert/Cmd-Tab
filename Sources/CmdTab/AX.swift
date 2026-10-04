@@ -132,10 +132,78 @@ enum AX {
             hasMinimizeButton: hasMinimizeButton(window))
     }
 
+    /// The same decision for a caller that already holds the window's `WindowFacts`. Only the
+    /// minimize-button probe is left to pay for, and only the `AXDialog` case pays it.
+    static func isSwitchableWindow(_ window: AXUIElement, _ facts: WindowFacts) -> Bool {
+        WindowClassification.isSwitchable(
+            role: facts.role,
+            subrole: facts.subrole,
+            isMinimized: facts.isMinimized,
+            hasMinimizeButton: hasMinimizeButton(window))
+    }
+
     /// Whether the window carries a minimize control — the discriminator that tells a real window
     /// misreporting its subrole from an actual dialog. See `WindowClassification.isSwitchable`.
     private static func hasMinimizeButton(_ window: AXUIElement) -> Bool {
         copyElement(window, kAXMinimizeButtonAttribute as String) != nil
+    }
+
+    /// What a window walk asks of every window it lists, read in one message.
+    ///
+    /// Each attribute read is a message to the owning app, and `TargetProvider.windowTargets` was
+    /// sending five or six per window on every refresh — role and subrole for the switchable test,
+    /// then minimized, title, position and size for the tile. `copyAttributes` carries them all in
+    /// one. Measured over ten windows: six single reads cost 290-400µs per window, the one batch
+    /// 80-130µs. The optional fields are nil where the window did not answer, exactly as the single
+    /// readers are.
+    struct WindowFacts {
+        var role: String?
+        var subrole: String?
+        /// False when unanswered — see `isMinimized(_:)`.
+        var isMinimized: Bool
+        /// Only read when asked for; nil otherwise, and nil for a window that has none.
+        var title: String?
+        /// Only read when asked for.
+        var frame: CGRect?
+    }
+
+    /// `title` and `frame` are opt-in: the title has a cache in front of it and the frame is only
+    /// wanted with more than one display, so neither is asked for unless the caller says so.
+    static func windowFacts(_ window: AXUIElement, title: Bool, frame: Bool) -> WindowFacts {
+        var attributes = [kAXRoleAttribute, kAXSubroleAttribute, kAXMinimizedAttribute]
+        if title { attributes.append(kAXTitleAttribute) }
+        if frame { attributes += [kAXPositionAttribute, kAXSizeAttribute] }
+        let values = copyAttributes(window, attributes)
+        let origin = cgPoint(values[kAXPositionAttribute])
+        let size = cgSize(values[kAXSizeAttribute])
+        return WindowFacts(
+            role: values[kAXRoleAttribute] as? String,
+            subrole: values[kAXSubroleAttribute] as? String,
+            isMinimized: values[kAXMinimizedAttribute] as? Bool ?? false,
+            title: values[kAXTitleAttribute] as? String,
+            frame: origin.flatMap { origin in size.map { CGRect(origin: origin, size: $0) } })
+    }
+
+    /// Several attributes of one element in one message. An attribute the element would not answer
+    /// is absent from the result — the API fills its slot with an `AXValue` carrying the error — so
+    /// a lookup here reads exactly like a failed single read.
+    private static func copyAttributes(_ element: AXUIElement, _ attributes: [String])
+        -> [String: CFTypeRef]
+    {
+        onOwningThread(element) {
+            var values: CFArray?
+            guard
+                AXUIElementCopyMultipleAttributeValues(
+                    element, attributes as CFArray, [], &values) == .success,
+                let values = values as? [CFTypeRef], values.count == attributes.count
+            else { return [:] }
+            var answered: [String: CFTypeRef] = [:]
+            for (attribute, value) in zip(attributes, values) {
+                if let marker = axValue(value), AXValueGetType(marker) == .axError { continue }
+                answered[attribute] = value
+            }
+            return answered
+        }
     }
 
     /// A window that does not answer is treated as not minimized: the fallback should be to leave
@@ -234,15 +302,11 @@ enum AX {
 
     /// The window's on-screen origin (top-left, Quartz global coordinates).
     static func position(_ window: AXUIElement) -> CGPoint? {
-        guard let value = copyAXValue(window, kAXPositionAttribute) else { return nil }
-        var point = CGPoint.zero
-        return AXValueGetValue(value, .cgPoint, &point) ? point : nil
+        cgPoint(copyAXValue(window, kAXPositionAttribute))
     }
 
     static func size(_ window: AXUIElement) -> CGSize? {
-        guard let value = copyAXValue(window, kAXSizeAttribute) else { return nil }
-        var size = CGSize.zero
-        return AXValueGetValue(value, .cgSize, &size) ? size : nil
+        cgSize(copyAXValue(window, kAXSizeAttribute))
     }
 
     static func setPosition(_ window: AXUIElement, _ point: CGPoint) {
@@ -261,12 +325,14 @@ enum AX {
         }
     }
 
-    /// Position and size as one rectangle, read in a single hop. See `onOwningThread`.
+    /// Position and size as one rectangle, in one message and one hop — see `copyAttributes` and
+    /// `onOwningThread`.
     static func frame(_ window: AXUIElement) -> CGRect? {
-        onOwningThread(window) {
-            guard let origin = position(window), let size = size(window) else { return nil }
-            return CGRect(origin: origin, size: size)
-        }
+        let values = copyAttributes(window, [kAXPositionAttribute, kAXSizeAttribute])
+        guard let origin = cgPoint(values[kAXPositionAttribute]),
+            let size = cgSize(values[kAXSizeAttribute])
+        else { return nil }
+        return CGRect(origin: origin, size: size)
     }
 
     /// Writes a frame in a single hop.
@@ -340,13 +406,81 @@ enum AX {
         }
     }
 
+    /// One of an app's windows read ahead for `index(of:bounds:in:)`: the element, the window
+    /// number it reports (nil on hosts whose windows resolve to none), and where it is.
+    struct ListedWindow {
+        let element: AXUIElement
+        let id: CGWindowID?
+        let frame: CGRect
+    }
+
+    /// Every window of the app with its id and frame, read in one hop so a caller matching several
+    /// window-server entries against one app walks its list once rather than once per entry.
+    static func listedWindows(ofApplication pid: pid_t) -> [ListedWindow] {
+        let app = application(pid)
+        return onOwningThread(app) {
+            windows(of: app).compactMap { window in
+                frame(window).map {
+                    ListedWindow(element: window, id: TargetProvider.windowID(window), frame: $0)
+                }
+            }
+        }
+    }
+
+    /// Which of `listed` the window-server entry `id` at `bounds` is.
+    ///
+    /// By id first: a frame is not an identity, and two windows of one app at the same frame — both
+    /// maximized, both tiled to the same half, both dropped on the laptop screen when a display went
+    /// away — matched by frame alone both resolve to whichever is first in the list, so the second
+    /// is either skipped or written twice. The frame is the fallback for windows that report no id,
+    /// and only for those: a listed window whose id is known and differs is a different window that
+    /// happens to sit there, however exactly its frame matches.
+    static func index(
+        of id: CGWindowID, bounds: CGRect, in listed: [ListedWindow], tolerance: CGFloat = 4
+    ) -> Int? {
+        if let exact = listed.firstIndex(where: { $0.id == id }) { return exact }
+        return listed.firstIndex { window in
+            window.id == nil
+                && abs(window.frame.minX - bounds.minX) < tolerance
+                && abs(window.frame.minY - bounds.minY) < tolerance
+                && abs(window.frame.width - bounds.width) < tolerance
+                && abs(window.frame.height - bounds.height) < tolerance
+        }
+    }
+
+    /// `window(ofApplication:matching:)` for a caller that also knows the window's id, which is the
+    /// match to prefer — see `index(of:bounds:in:)`.
+    static func window(ofApplication pid: pid_t, id: CGWindowID, matching bounds: CGRect)
+        -> AXUIElement?
+    {
+        let listed = listedWindows(ofApplication: pid)
+        return index(of: id, bounds: bounds, in: listed).map { listed[$0].element }
+    }
+
     private static func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
         onOwningThread(element) {
             var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
-                let value, CFGetTypeID(value) == AXValueGetTypeID()
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
             else { return nil }
-            return (value as! AXValue)
+            return axValue(value)
         }
+    }
+
+    /// `value` as an `AXValue`, or nil when it is anything else — a string, a boolean, nothing.
+    private static func axValue(_ value: CFTypeRef?) -> AXValue? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        return (value as! AXValue)
+    }
+
+    private static func cgPoint(_ value: CFTypeRef?) -> CGPoint? {
+        guard let value = axValue(value) else { return nil }
+        var point = CGPoint.zero
+        return AXValueGetValue(value, .cgPoint, &point) ? point : nil
+    }
+
+    private static func cgSize(_ value: CFTypeRef?) -> CGSize? {
+        guard let value = axValue(value) else { return nil }
+        var size = CGSize.zero
+        return AXValueGetValue(value, .cgSize, &size) ? size : nil
     }
 }

@@ -158,6 +158,40 @@ final class ShortcutAuditTests: XCTestCase {
         }
     }
 
+    /// The tiling family's rows are spread over three tabs, so each arrangement names the card it
+    /// is recorded on rather than the family's first — and every one of those has to be indexed
+    /// too, for the reason above.
+    @MainActor
+    func testEveryArrangementAnchorsToTheIndexedCardItIsRecordedOn() {
+        let indexed = Set(SettingsIndex.items.map(\.anchor))
+        for arrangement in WindowArrangement.allCases {
+            XCTAssertTrue(
+                indexed.contains(arrangement.settingsAnchor),
+                "\(arrangement.rawValue) anchors to \(arrangement.settingsAnchor), which "
+                    + "SettingsIndex does not list")
+        }
+        let tiling = SettingsAnchor.tiling
+        XCTAssertEqual(WindowArrangement.focusLeft.settingsAnchor, "\(tiling).focus")
+        XCTAssertEqual(WindowArrangement.previousDesktop.settingsAnchor, "\(tiling).desktops")
+        XCTAssertEqual(WindowArrangement.desktop3.settingsAnchor, "\(tiling).desktops")
+        XCTAssertEqual(WindowArrangement.nextDisplay.settingsAnchor, "\(tiling).displays")
+        XCTAssertEqual(WindowArrangement.display2.settingsAnchor, "\(tiling).send to a display")
+        XCTAssertEqual(WindowArrangement.leftHalf.settingsAnchor, tiling)
+    }
+
+    /// A collision row jumps to the entry's own card when it names one, and to the family's
+    /// otherwise.
+    func testAnEntryJumpsToItsOwnCardBeforeTheKinds() {
+        let own = ShortcutEntry(
+            id: "tiling.focusLeft", kind: .tiling, label: "", display: "", chord: nil,
+            isActive: true, cardAnchor: "card")
+        XCTAssertEqual(own.anchor, "card")
+        let plain = ShortcutEntry(
+            id: "activate.a", kind: .directActivation, label: "", display: "", chord: nil,
+            isActive: true)
+        XCTAssertEqual(plain.anchor, ShortcutEntry.Kind.directActivation.anchor)
+    }
+
     /// The two namespaces never meet: an action is matched with the trigger held, in a state where
     /// no global binding is consulted at all.
     func testAGlobalChordAndAnActionChordAreNotInCompetition() {

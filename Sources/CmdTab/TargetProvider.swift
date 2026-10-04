@@ -127,6 +127,10 @@ final class TargetProvider {
     private var titleCache: [CGWindowID: (title: String, expiry: Date)] = [:]
     private nonisolated static let titleCacheTTL: TimeInterval = 2
 
+    /// The Dock badges the last pass that read them found, reused by every pass nobody is waiting
+    /// on — see `performRefresh`.
+    private var badges: [String: String] = [:]
+
     /// Upper bound on both MRU lists.
     ///
     /// Nothing past the switcher's own list length affects ordering, so the tail is dead weight —
@@ -380,6 +384,14 @@ final class TargetProvider {
         let sortOrder = self.sortOrder
         let hideEmptyApps = self.hideEmptyApps
         let wantsBadges = self.notificationBadges
+        // The Dock is walked only on a pass someone is waiting for. A handler is registered by a
+        // session about to draw the list — `showWith`'s fold-in, the warm-up at start, a display
+        // change under an open panel — and those are the only passes whose badges anyone sees. The
+        // bare refresh every activation, launch, quit, hide and unhide posts was paying a walk of
+        // the Dock's whole Accessibility tree (55 calls for 53 items, 1-2ms warm, 9ms cold) for a
+        // decoration nobody was looking at; it keeps the last badges read instead.
+        let readsBadges = wantsBadges && !handlers.isEmpty
+        let lastBadges = wantsBadges ? badges : [:]
         let mode = self.mode
         // The app list is walked on `axQueue` below, not here: 85-odd `activationPolicy` reads and a
         // first-time icon fault per app were 3-9ms of main thread on every refresh. These are the
@@ -417,7 +429,7 @@ final class TargetProvider {
                 "refresh", id: Signpost.targets.makeSignpostID())
 
             // On the background queue: reading the Dock is Accessibility IPC to another process.
-            let badges = wantsBadges ? DockBadges.current() : [:]
+            let badges = readsBadges ? DockBadges.current() : lastBadges
             let (apps, prunedIcons) = Self.enumerateApps(
                 excluded: excluded, rules: rules, iconCache: icons)
             let expandingByRule = mode == .apps
@@ -527,6 +539,12 @@ final class TargetProvider {
                 targets = Self.withSpaceBadges(built.targets)
             }
             freshTitles.merge(walkedTitles) { current, _ in current }
+            // Expired entries go here, in every mode. `windowTargets` prunes to the windows it saw,
+            // but in app mode it only runs for an app something expanded — so with an `.expand`
+            // rule that matched nothing, the cache kept a title for every window ever walked, for
+            // the life of the process.
+            let cutoff = Date()
+            freshTitles = freshTitles.filter { $0.value.expiry > cutoff }
             if pinning {
                 // The favourites take the front of the list, each running one bringing its own
                 // tiles with it and each one that isn't running contributing its launch tile, so
@@ -550,6 +568,7 @@ final class TargetProvider {
                     guard let self else { return }
                     self.cache = targets
                     self.titleCache = freshTitles
+                    self.badges = badges
                     self.iconCache = prunedIcons
                     self.isRefreshing = false
                     handlers.forEach { $0(targets) }
@@ -1226,14 +1245,21 @@ final class TargetProvider {
             // Keep the AX index as a stable tiebreak, and the MRU rank to reorder within the app.
             var rows: [Row] = []
             for (index, window) in windows.enumerated() {
-                guard AX.isSwitchableWindow(window) else { continue }
-
                 let wid = windowID(window)
+                let cachedTitle = wid.flatMap { freshTitles[$0] }.flatMap {
+                    $0.expiry > now ? $0.title : nil
+                }
+                // One message per window for everything the tile needs — see `AX.WindowFacts`.
+                // The id is read first because the cache decides whether the title is in it.
+                let facts = AX.windowFacts(
+                    window, title: cachedTitle == nil, frame: !screenFrames.isEmpty)
+                guard AX.isSwitchableWindow(window, facts) else { continue }
+
                 let title: String
-                if let wid, let cached = freshTitles[wid], cached.expiry > now {
-                    title = cached.title
+                if let cachedTitle {
+                    title = cachedTitle
                 } else {
-                    title = AX.copyString(window, kAXTitleAttribute) ?? ""
+                    title = facts.title ?? ""
                     if let wid {
                         freshTitles[wid] = (title, now.addingTimeInterval(titleCacheTTL))
                     }
@@ -1245,9 +1271,8 @@ final class TargetProvider {
                 if CompiledTitleRule.matches(
                     titleRules, bundleID: app.bundleID, title: title, action: .hide
                 ) { continue }
-                let minimized = AX.isMinimized(window)
                 let id = wid.map { "win:\($0)" } ?? "win:\(app.pid):\(index)"
-                let display = screenFrames.isEmpty ? nil : displayIndex(of: window, in: screenFrames)
+                let display = facts.frame.flatMap { displayIndex(of: $0, in: screenFrames) }
 
                 let target = SwitchTarget(
                     id: id,
@@ -1255,7 +1280,7 @@ final class TargetProvider {
                     title: title.isEmpty ? app.name : title,
                     appName: app.name,
                     icon: app.icon,
-                    isMinimized: minimized,
+                    isMinimized: facts.isMinimized,
                     isHidden: app.isHidden,
                     displayIndex: display,
                     badge: app.bundleID.flatMap { badges[$0] },
@@ -1326,13 +1351,11 @@ final class TargetProvider {
     /// all — dragged half off an edge, or stranded where a monitor used to be — and answering "no
     /// display" for those dropped them from the current-display scope entirely, which is a list
     /// whose whole job is to show the windows over there.
-    private nonisolated static func displayIndex(of window: AXUIElement, in frames: [CGRect]) -> Int? {
-        guard let origin = AX.position(window), let size = AX.size(window) else { return nil }
+    private nonisolated static func displayIndex(of frame: CGRect, in frames: [CGRect]) -> Int? {
         // Shared with the in-switcher move and the tiling chords, so the badge on a tile and the
         // display the move counts from can no longer disagree. Full frames here rather than visible
         // areas — see `screenCGFrames` — but the rule applied to them is the one rule.
-        return WindowTiler.homeDisplay(
-            of: CGRect(origin: origin, size: size), in: frames)
+        WindowTiler.homeDisplay(of: frame, in: frames)
     }
 
     /// Every display's full frame in Quartz (top-left) coordinates, to match AX window positions.

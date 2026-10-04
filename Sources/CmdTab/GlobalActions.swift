@@ -279,9 +279,9 @@ enum GlobalActions {
     /// where the app is already right there.
     static func activate(bundleID: String) {
         DispatchQueue.main.async {
-            if let running = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == bundleID && !$0.isTerminated
-            }) {
+            if let running = NSRunningApplication.runningApplications(
+                withBundleIdentifier: bundleID
+            ).first(where: { !$0.isTerminated }) {
                 if running.isHidden { running.unhide() }
                 SwitchTarget.focusApp(
                     pid: running.processIdentifier, bundleURL: running.bundleURL)

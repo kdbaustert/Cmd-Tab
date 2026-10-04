@@ -37,6 +37,17 @@ final class MarkedTilesTests: XCTestCase {
 
     // MARK: - Toggling
 
+    /// ⌥ on a click means "mark" only when ⌥ is not part of the trigger being held: under ⌥-Tab
+    /// every click carries ⌥, and reading it as a mark left clicks picking nothing.
+    func testAClickMarksOnlyWhenOptionIsNotPartOfTheTrigger() {
+        XCTAssertTrue(SwitcherController.clickTogglesMark(flags: [.option], held: [.maskCommand]))
+        XCTAssertFalse(SwitcherController.clickTogglesMark(flags: [], held: [.maskCommand]))
+        XCTAssertFalse(
+            SwitcherController.clickTogglesMark(
+                flags: [.option], held: [.maskCommand, .maskAlternate]))
+        XCTAssertFalse(SwitcherController.clickTogglesMark(flags: [.option], held: [.maskAlternate]))
+    }
+
     func testTogglingAtAnIndexMarksAndUnmarksThatTile() {
         let model = model(with: [app("Safari", pid: 1), app("Mail", pid: 2)])
         XCTAssertFalse(model.isMarked(at: 0))

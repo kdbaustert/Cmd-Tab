@@ -163,14 +163,30 @@ struct HotkeyRecorder: View {
             """
 
         let free = SwitcherShortcuts.freeModifier(under: candidate)
-        if let free {
+        let rebound = free.map { store.shortcuts.rebindingShadowed(by: candidate, to: $0) }
+        if let free, let rebound {
             alert.addButton(withTitle: "Rebind to \(Self.name(for: free))")
+            // Said before the button is pressed: a binding whose new chord another action already
+            // holds is left where it is (see `rebindingShadowed`), and "Rebind" reads as "fix all
+            // of them" unless the alert says which it cannot.
+            let left = rebound.actionsShadowed(by: candidate)
+            if !left.isEmpty {
+                let one = left.count == 1
+                let names = left.map(\.title).joined(separator: ", ")
+                alert.informativeText += """
+
+
+                    \(names) would stay put and still not fire: the \(Self.name(for: free)) \
+                    combination\(one ? "" : "s") \(one ? "it" : "they") would move to already \
+                    belong\(one ? "s" : "") to \(one ? "another action" : "other actions").
+                    """
+            }
         }
         alert.addButton(withTitle: "Cancel")
 
         let response = alert.runModal()
-        guard let free, response == .alertFirstButtonReturn else { return }
-        store.replaceAll(with: store.shortcuts.rebindingShadowed(by: candidate, to: free))
+        guard let rebound, response == .alertFirstButtonReturn else { return }
+        store.replaceAll(with: rebound)
         hotkey = candidate
     }
 

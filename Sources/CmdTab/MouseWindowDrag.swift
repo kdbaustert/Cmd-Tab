@@ -732,6 +732,10 @@ final class MouseWindowDrag: @unchecked Sendable {
             let press: UInt64 = lock.withLock {
                 isArmed = true
                 session = nil
+                // A frame the last gesture had not written yet is dropped here, and only here — the
+                // release keeps it so the drop lands where the mouse let go (see `write`); a new
+                // press is the one event after which it is certainly stale.
+                pending = nil
                 generation &+= 1
                 return generation
             }
@@ -894,9 +898,11 @@ final class MouseWindowDrag: @unchecked Sendable {
                         return pending
                     }
                     // Released only here — under the same lock that established there is nothing
-                    // left to write, which is what makes the ordering above hold. `end()` clears
-                    // `pending`, so a released gesture drops out on its next turn rather than
-                    // spinning on frames the user can no longer be producing.
+                    // left to write, which is what makes the ordering above hold. `end()` leaves
+                    // `pending` alone: the frame waiting there is the last one before the release,
+                    // and clearing it put the window one write short of where it was dropped — the
+                    // same failure as above, by another route. Nothing arrives after it, since the
+                    // tap stops posting once the session is gone, so the loop ends a turn later.
                     self.isWriting = false
                     return nil
                 }
@@ -914,7 +920,6 @@ final class MouseWindowDrag: @unchecked Sendable {
             let had = zone != nil
             isArmed = false
             session = nil
-            pending = nil
             zone = nil
             zoneArea = nil
             return (true, had)

@@ -250,14 +250,16 @@ enum WindowNavigator {
             return
         }
         queue.async {
-            // Resolved by frame, not by "the app's front window": the neighbour is by definition not
-            // the focused window, and for an app with several windows open the two come apart in
-            // exactly the case this chord exists for. No fallback to the front window either, unlike
-            // the tiler's — a swap that could not find one of its two windows must move neither,
-            // where a tile that misses has only one window to be wrong about.
+            // Resolved by id (frame as the fallback), not by "the app's front window": the
+            // neighbour is by definition not the focused window, and for an app with several windows
+            // open the two come apart in exactly the case this chord exists for. No fallback to the
+            // front window either, unlike the tiler's — a swap that could not find one of its two
+            // windows must move neither, where a tile that misses has only one window to be wrong
+            // about.
             guard
-                let source = AX.window(ofApplication: from.pid, matching: from.frame),
-                let destination = AX.window(ofApplication: target.pid, matching: target.frame)
+                let source = AX.window(ofApplication: from.pid, id: from.id, matching: from.frame),
+                let destination = AX.window(
+                    ofApplication: target.pid, id: target.id, matching: target.frame)
             else {
                 Log.tap.notice("swap: could not resolve both windows over Accessibility")
                 return

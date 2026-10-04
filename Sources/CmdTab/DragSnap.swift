@@ -101,19 +101,19 @@ final class DragSnap {
     // MARK: - Monitors
 
     private func install() {
-        // Global monitors only — local ones would fire for our own windows, and the settings window
-        // is the one place we must not snap.
+        // Global and local monitors, in pairs. A global monitor sees only events bound for *other*
+        // applications, so on its own a drag of our Settings window — the one ordinary window of
+        // ours, which `topWindow` lists like any other — never armed. The local handlers hand the
+        // event straight back, so nothing of ours is swallowed.
         // Our own synthetic drags are skipped throughout. `DesktopMover` moves a window between
         // Desktops by performing a real drag, and its route to Mission Control's Spaces Bar crosses
         // the top-edge snap zone — so without this, dropping a window on another Desktop also reads
         // as "maximize it", and the window arrives resized or inset by the gap. See `SyntheticEvent`.
-        let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) {
-            [weak self] event in
+        let down: (NSEvent) -> Void = { [weak self] event in
             guard !SyntheticEvent.isOurs(event.cgEvent) else { return }
             MainActor.assumeIsolated { self?.mouseDown(at: NSEvent.mouseLocation, event: event) }
         }
-        let dragged = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) {
-            [weak self] event in
+        let dragged: (NSEvent) -> Void = { [weak self] event in
             // The cheap test first: `cgEvent` builds an object, this fires on every drag event on
             // the machine, and nearly all of them belong to a press that never armed anything.
             MainActor.assumeIsolated {
@@ -122,14 +122,30 @@ final class DragSnap {
                 self.mouseDragged(to: NSEvent.mouseLocation)
             }
         }
-        let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+        let up: (NSEvent) -> Void = { [weak self] event in
             MainActor.assumeIsolated {
                 guard let self, self.pressOrigin != nil, !SyntheticEvent.isOurs(event.cgEvent)
                 else { return }
                 self.mouseUp()
             }
         }
-        monitors = [down, dragged, up].compactMap { $0 }
+        monitors = [
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown], handler: down),
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged], handler: dragged),
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp], handler: up),
+            NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { event in
+                down(event)
+                return event
+            },
+            NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged]) { event in
+                dragged(event)
+                return event
+            },
+            NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { event in
+                up(event)
+                return event
+            },
+        ].compactMap { $0 }
     }
 
     private func uninstall() {

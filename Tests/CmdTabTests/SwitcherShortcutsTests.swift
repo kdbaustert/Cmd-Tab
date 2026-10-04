@@ -125,10 +125,44 @@ final class SwitcherShortcutsTests: XCTestCase {
 
     // MARK: - Rebinding
 
-    func testRebindingClearsTheConflict() {
+    /// Every action whose binding can move does, and the ones left shadowed are exactly those
+    /// whose new chord another action already holds: ⌥←/→ (the display moves) would land on
+    /// ⌃←/→, where the tile halves live. Nothing ends up on one chord twice — that is a conflict
+    /// no row has words for, where a shadowed action's row already says what is wrong.
+    func testRebindingClearsTheConflictExceptWhereTheChordIsTaken() {
         let trigger = hotkey([.maskCommand, .maskAlternate])
         let rebound = SwitcherShortcuts.defaults.rebindingShadowed(by: trigger, to: control)
-        XCTAssertTrue(rebound.actionsShadowed(by: trigger).isEmpty)
+        XCTAssertEqual(
+            Set(rebound.actionsShadowed(by: trigger)), [.moveDisplayPrev, .moveDisplayNext])
+        XCTAssertEqual(
+            rebound.bindings[.moveDisplayPrev], SwitcherAction.moveDisplayPrev.defaultShortcut)
+        XCTAssertEqual(rebound.bindings[.tileLeftHalf], SwitcherAction.tileLeftHalf.defaultShortcut)
+        XCTAssertEqual(rebound.bindings[.quit]?.extras, control)
+        assertNoTwoActionsShareAChord(rebound)
+    }
+
+    /// The other way round: a ⌃ trigger moves the tiles onto ⌥, where ↑/↓ are free and ←/→ belong
+    /// to the display moves.
+    func testRebindingAControlTriggerMovesOnlyTheTilesWithAFreeChord() {
+        let trigger = hotkey([.maskCommand, .maskControl])
+        let rebound = SwitcherShortcuts.defaults.rebindingShadowed(by: trigger, to: option)
+        XCTAssertEqual(
+            Set(rebound.actionsShadowed(by: trigger)), [.tileLeftHalf, .tileRightHalf])
+        XCTAssertEqual(rebound.bindings[.tileTopHalf]?.extras, option)
+        XCTAssertEqual(rebound.bindings[.tileBottomHalf]?.extras, option)
+        XCTAssertEqual(
+            rebound.bindings[.moveDisplayPrev], SwitcherAction.moveDisplayPrev.defaultShortcut)
+        assertNoTwoActionsShareAChord(rebound)
+    }
+
+    private func assertNoTwoActionsShareAChord(_ shortcuts: SwitcherShortcuts, line: UInt = #line) {
+        var seen: Set<String> = []
+        for action in SwitcherAction.allCases {
+            guard let binding = shortcuts.bindings[action] else { continue }
+            XCTAssertTrue(
+                seen.insert("\(binding.keyCode):\(binding.extras.rawValue)").inserted,
+                "\(action.title) shares a chord with an earlier action", line: line)
+        }
     }
 
     /// ⇧ has to survive the move, or ⌥Q and ⌥⇧Q both collapse onto ⌃Q and one action becomes
@@ -196,5 +230,21 @@ final class SwitcherShortcutsTests: XCTestCase {
 
     func testHeldModifiersMasksOutShift() {
         XCTAssertEqual(hotkey([.maskCommand, .maskShift]).heldModifiers, .maskCommand)
+    }
+
+    // MARK: - Persistence
+
+    /// Only what differs from the defaults is written. The store used to write all fifteen bindings
+    /// on any single rebind, pinning that build's defaults for the other fourteen so no later change
+    /// to one could reach the install — the trap `WindowTilingStore.persist` documents.
+    func testOnlyBindingsThatDifferFromTheDefaultsAreEncoded() {
+        XCTAssertTrue(SwitcherShortcutsStore.encoded(.defaults).isEmpty)
+
+        var shortcuts = SwitcherShortcuts.defaults
+        shortcuts.bindings[.quit] = ActionShortcut(keyCode: 12, modifierRaw: control.rawValue)
+        let encoded = SwitcherShortcutsStore.encoded(shortcuts)
+        XCTAssertEqual(encoded.count, 1)
+        XCTAssertEqual(
+            encoded[SwitcherAction.quit.rawValue], [12, Int(bitPattern: UInt(control.rawValue))])
     }
 }

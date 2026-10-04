@@ -234,33 +234,63 @@ final class ThemeStore: ObservableObject {
 
     // MARK: - Custom theme management
 
+    /// Saves the current look under `name`, or under the nearest free name when that one is taken —
+    /// see `uniqueName`. It used to replace a same-named custom theme instead, and the prompt always
+    /// offers "My Theme", so a second save with the default quietly destroyed the first.
     func saveAs(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        var theme = captureCurrent(name: trimmed)
+        let unique = uniqueName(trimmed)
+        var theme = captureCurrent(name: unique)
         theme.builtIn = false
-        custom.removeAll { $0.name == trimmed }  // overwrite a same-named custom theme
         custom.append(theme)
-        selected = trimmed  // saving is choosing — the new theme is the one you are now on
+        selected = unique  // saving is choosing — the new theme is the one you are now on
         persist()
     }
 
     func delete(_ theme: Theme) {
-        guard !theme.builtIn else { return }
-        custom.removeAll { $0.name == theme.name }
+        guard !theme.builtIn, let index = custom.firstIndex(where: { $0.name == theme.name })
+        else { return }
+        // One entry, not every one carrying the name: a file saved before names were kept unique
+        // can still hold two, and the button says delete *this* theme.
+        custom.remove(at: index)
         // The settings are unchanged, but the theme that described them is gone, so there is no
         // longer a selection to hold; the picker falls back to recognising the look.
         if selected == theme.name { selected = nil }
         persist()
     }
 
+    /// Refuses a name another theme already has, presets included: `id` is the name, so two themes
+    /// sharing one are a single row to the picker, and `delete` would have taken both. Refused in an
+    /// alert rather than ignored, for the reason `importTheme` gives about a button doing nothing.
     func rename(_ theme: Theme, to newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
-        guard !theme.builtIn, !trimmed.isEmpty,
+        guard !theme.builtIn, !trimmed.isEmpty, trimmed != theme.name,
               let index = custom.firstIndex(where: { $0.name == theme.name }) else { return }
+        if all.contains(where: { $0.name == trimmed }) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "A theme called “\(trimmed)” already exists"
+            alert.informativeText = "Choose another name."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
         custom[index].name = trimmed
         if selected == theme.name { selected = trimmed }  // the selection follows the rename
         persist()
+    }
+
+    /// `base` when no theme has it, otherwise the first of `base 2`, `base 3`, … that none does.
+    func uniqueName(_ base: String) -> String {
+        Self.uniqueName(base, among: Set(all.map(\.name)))
+    }
+
+    nonisolated static func uniqueName(_ base: String, among taken: Set<String>) -> String {
+        guard taken.contains(base) else { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
     }
 
     // MARK: - Share
@@ -317,7 +347,8 @@ final class ThemeStore: ObservableObject {
         if theme.name.trimmingCharacters(in: .whitespaces).isEmpty { theme.name = "Imported theme" }
         // Avoid clobbering a preset's name.
         if Self.presets.contains(where: { $0.name == theme.name }) { theme.name += " (imported)" }
-        custom.removeAll { $0.name == theme.name }
+        // And a saved theme's: a friend's "My Theme" used to replace yours.
+        theme.name = uniqueName(theme.name)
         custom.append(theme)
         persist()
         apply(theme)  // also records the selection

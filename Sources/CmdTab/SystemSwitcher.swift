@@ -63,12 +63,24 @@ enum SystemSwitcher {
     /// `setNativeEnabled` treats as a no-op.
     private(set) nonisolated(unsafe) static var isNativeDisabled = false
 
+    /// Posted when `isNativeDisabled` changes, on whichever thread changed it. The Settings Recovery
+    /// row and the menu-bar status line both read the flag directly, and nothing told them it had
+    /// moved: after Restore the button stayed enabled and the subtitle went on saying the system
+    /// switcher was off until some unrelated change happened to redraw them.
+    static let didChange = Notification.Name("SystemSwitcher.didChange")
+
     @discardableResult
     static func setNativeEnabled(_ enabled: Bool) -> Bool {
         guard let setEnabled else { return false }
         let tab = setEnabled(commandTab, enabled)
         let shiftTab = setEnabled(commandShiftTab, enabled)
         let ok = tab == 0 && shiftTab == 0
+        let wasDisabled = isNativeDisabled
+        defer {
+            if isNativeDisabled != wasDisabled {
+                NotificationCenter.default.post(name: didChange, object: nil)
+            }
+        }
         // The bookkeeping is asymmetric on purpose, because the cost of being wrong is asymmetric.
         //
         // Taking over: *either* key changing hands means the system switcher has been altered and

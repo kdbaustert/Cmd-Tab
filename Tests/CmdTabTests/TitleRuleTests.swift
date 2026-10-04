@@ -71,6 +71,31 @@ final class TitleRuleTests: XCTestCase {
         XCTAssertFalse(CompiledTitleRule.matches([rule], bundleID: nil, title: "anything at all", action: .hide))
     }
 
+    // MARK: - Equality
+
+    /// `SwitcherController.titleRules` turns away an unchanged list before fanning it out, and the
+    /// list it is handed is rebuilt from disk when the config-file mirror echoes our own write back
+    /// — so two rules compiled separately from the same pattern have to compare equal, and only a
+    /// change to what they would match may tell them apart.
+    func testRulesCompiledFromTheSamePatternAreEqual() {
+        XCTAssertEqual(
+            compile(bundleID: nil, pattern: "Zoom", action: .hide),
+            compile(bundleID: nil, pattern: "Zoom", action: .hide))
+        XCTAssertEqual(
+            compile(bundleID: nil, pattern: "(unclosed", action: .hide),
+            compile(bundleID: nil, pattern: "(unclosed", action: .hide),
+            "two rules that failed to compile both match nothing")
+        XCTAssertNotEqual(
+            compile(bundleID: nil, pattern: "Zoom", action: .hide),
+            compile(bundleID: nil, pattern: "Zoom Meeting", action: .hide))
+        XCTAssertNotEqual(
+            compile(bundleID: nil, pattern: "Zoom", action: .hide),
+            compile(bundleID: nil, pattern: "Zoom", action: .expand))
+        XCTAssertNotEqual(
+            compile(bundleID: nil, pattern: "Zoom", action: .hide),
+            compile(bundleID: "us.zoom.xos", pattern: "Zoom", action: .hide))
+    }
+
     // MARK: - Union with an app rule
 
     /// Neither call site replaces the other's answer — see every place `AppRule.neverTile` is
