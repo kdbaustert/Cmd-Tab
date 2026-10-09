@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.1</string>
+	<string>1.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>147</string>
+	<string>169</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Cmd-Tab. All rights reserved.</string>
 	<key>LSMinimumSystemVersion</key>
