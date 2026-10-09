@@ -259,11 +259,12 @@ struct ColorSettingControl: View {
         }
         .onAppear { text = color.hexString ?? "" }
         // Follows the well, and the picker panel while it is open.
-        .onChange(of: color) { _, new in text = new.hexString ?? text }
+        .onChange(of: color) { new in text = new.hexString ?? text }
         // Focus leaving the field is a commit: clicking straight onto another control should apply
         // what was typed, not discard it.
-        .onChange(of: editing) { wasEditing, isEditing in
-            if wasEditing, !isEditing { commit() }
+        .onChange(of: editing) { isEditing in
+            // Only fires on a change, so a Bool that is now false was true a moment ago.
+            if !isEditing { commit() }
         }
     }
 

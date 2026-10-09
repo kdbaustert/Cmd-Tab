@@ -470,7 +470,7 @@ struct SettingsRootView: View {
         // time — `.onChange` alone never fires for a value a view already held at its first
         // render — and `.onChange` catches every jump asked for while the window stays open.
         .onAppear { consumePendingAnchor(navigator.pendingAnchor) }
-        .onChange(of: navigator.pendingAnchor) { _, anchor in consumePendingAnchor(anchor) }
+        .onChange(of: navigator.pendingAnchor) { anchor in consumePendingAnchor(anchor) }
     }
 
     /// Resolves an anchor the same way a search hit does — `SettingsIndex` is the one table that
@@ -603,7 +603,7 @@ struct SettingsRootView: View {
     private var detail: some View {
         ScrollViewReader { proxy in
             content
-                .onChange(of: jump) { _, anchor in
+                .onChange(of: jump) { anchor in
                     guard let anchor else { return }
                     // The tab changed in the same turn, so the section being scrolled to does not
                     // exist yet; let SwiftUI build the new pane before asking for it.
@@ -615,7 +615,7 @@ struct SettingsRootView: View {
                         jump = nil
                     }
                 }
-                .onChange(of: flash) { _, anchor in
+                .onChange(of: flash) { anchor in
                     guard anchor != nil else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         if flash == anchor { flash = nil }
@@ -1420,7 +1420,7 @@ struct PreviewSettings: View {
                             + "tiles show icons until each capture lands, so the panel never waits.",
                     isOn: $behavior.windowThumbnailTiles)
                     .disabled(behavior.mode == .apps)
-                    .onChange(of: behavior.windowThumbnailTiles) {
+                    .onChange(of: behavior.windowThumbnailTiles) { _ in
                         if behavior.windowThumbnailTiles {
                             Permissions.ensureScreenCaptureForPreview()
                         }
@@ -1434,7 +1434,7 @@ struct PreviewSettings: View {
                             + "it. Needs Screen Recording permission.",
                     isOn: $behavior.windowPreview)
                     .disabled(behavior.mode == .windows)
-                    .onChange(of: behavior.windowPreview) {
+                    .onChange(of: behavior.windowPreview) { _ in
                         if behavior.windowPreview { Permissions.ensureScreenCaptureForPreview() }
                     }
                 SettingsToggle(
@@ -1443,7 +1443,7 @@ struct PreviewSettings: View {
                         + "highlighted tile — press it again or Escape to put it away. Needs "
                         + "Screen Recording permission.",
                     isOn: $behavior.quickPreview)
-                    .onChange(of: behavior.quickPreview) {
+                    .onChange(of: behavior.quickPreview) { _ in
                         if behavior.quickPreview { Permissions.ensureScreenCaptureForPreview() }
                     }
                 if behavior.windowPreview || behavior.windowThumbnailTiles

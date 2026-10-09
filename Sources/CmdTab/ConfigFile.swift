@@ -402,16 +402,21 @@ final class ConfigFile: ObservableObject {
     /// responses, and treating the second as the first is how setting up a second Mac would
     /// overwrite the settings of the first.
     ///
-    /// Asked of iCloud's own download status rather than looked for as a `.name.icloud`
-    /// placeholder. Placeholders went with the move of iCloud Drive to File Provider in macOS 14,
-    /// this app's floor: an undownloaded item now sits at its real path as a *dataless* file, so
-    /// the placeholder test never fired, `fileExists` said yes, and reading it blocked the main
-    /// thread on the download — or failed outright offline, after which the next write replaced
-    /// the cloud copy. Measured on macOS 27: no placeholders anywhere in iCloud Drive, and this key
-    /// reading `.notDownloaded` for every dataless file there.
+    /// Asked of iCloud's own download status, and looked for as a `.name.icloud` placeholder too.
+    /// Placeholders went with the move of iCloud Drive to File Provider in macOS 14: an
+    /// undownloaded item now sits at its real path as a *dataless* file, so a placeholder test
+    /// alone never fired there, `fileExists` said yes, and reading it blocked the main thread on
+    /// the download — or failed outright offline, after which the next write replaced the cloud
+    /// copy. Measured on macOS 27: no placeholders anywhere in iCloud Drive, and this key reading
+    /// `.notDownloaded` for every dataless file there. macOS 13 is the other way round, with
+    /// nothing at the real path for the key to be read from, so the placeholder check stays for it;
+    /// on 14 and later it is one `stat` that never matches. Unmeasured on macOS 13 itself.
     private var pendingDownload: URL? {
         guard location == .iCloud else { return nil }
         let url = Self.url
+        let placeholder = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).icloud")
+        if FileManager.default.fileExists(atPath: placeholder.path) { return url }
         let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
             .ubiquitousItemDownloadingStatus
         return status == .notDownloaded ? url : nil

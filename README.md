@@ -5,7 +5,7 @@
 # Cmd-Tab
 
 A ⌘-Tab replacement for macOS, in the spirit of Command-Tab Plus 2. Switches between
-**applications** or between **individual windows**. Runs on macOS 14 and later, on Apple silicon
+**applications** or between **individual windows**. Runs on macOS 13 and later, on Apple silicon
 and Intel.
 
 Download the latest build from [Releases](https://github.com/kdbaustert/Cmd-Tab/releases). The

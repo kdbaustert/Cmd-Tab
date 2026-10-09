@@ -8,7 +8,12 @@ let package = Package(
     // Required for any target carrying a String Catalog. English is the base: the catalogue is the
     // infrastructure, and every entry currently translates to itself.
     defaultLocalization: "en",
-    platforms: [.macOS(.v14)],
+    // macOS 13, not 14, so the app reaches the 2017 Macs Sonoma dropped. 13 is as far down as it
+    // goes without losing anything: App Intents and `SMAppService` both start there. The one
+    // macOS 14 API in use, `SCScreenshotManager`, has a fallback in `WindowPreview.capture`.
+    // Keep `LSMinimumSystemVersion` in Resources/Info.plist and the App Intents deployment target
+    // in build.sh in step with this.
+    platforms: [.macOS(.v13)],
     dependencies: [
         // Typed `UserDefaults` keys. Each setting's storage key and default value are declared once
         // in `Defaults.Keys` instead of being repeated across the key table, `init`, `reload()` and

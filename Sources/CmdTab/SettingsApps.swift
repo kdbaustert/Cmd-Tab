@@ -287,8 +287,8 @@ struct AppsSettings: View {
         }
         // An app that is not running needs a row of its own once it is favourited or excluded, so
         // the list is rebuilt rather than just re-rendered.
-        .onChange(of: store.excluded) { apps.setNeedsReload() }
-        .onChange(of: favorites.favorites) { apps.setNeedsReload() }
+        .onChange(of: store.excluded) { _ in apps.setNeedsReload() }
+        .onChange(of: favorites.favorites) { _ in apps.setNeedsReload() }
     }
 
     @ViewBuilder

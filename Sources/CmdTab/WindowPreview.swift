@@ -846,15 +846,44 @@ actor WindowCapture {
     /// would be retuned in one of them.
     nonisolated static func capture(_ window: SCWindow, maxHeight: CGFloat) async throws -> CGImage?
     {
+        let scale = min(1, maxHeight / max(window.frame.height, 1))
+        let width = max(Int(window.frame.width * scale), 1)
+        let height = max(Int(window.frame.height * scale), 1)
+        guard #available(macOS 14.0, *) else {
+            return legacyCapture(window.windowID, width: width, height: height)
+        }
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
         // Rendered straight to thumbnail size rather than captured full-res and scaled after.
-        let scale = min(1, maxHeight / max(window.frame.height, 1))
-        config.width = max(Int(window.frame.width * scale), 1)
-        config.height = max(Int(window.frame.height * scale), 1)
+        config.width = width
+        config.height = height
         config.showsCursor = false
         return try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: config)
+    }
+
+    /// The macOS 13 capture. `SCScreenshotManager` starts at 14, and ScreenCaptureKit's only other
+    /// route to one frame is a whole stream. The CoreGraphics call is deprecated in 14 and gone in
+    /// 15, which is exactly the range that never gets here. It captures at full size, so the image
+    /// is scaled down to what the macOS 14 path renders straight to, at one pixel per point like
+    /// that path. A window on another Desktop can come back blank, which `isBlankImage` already
+    /// turns into an icon.
+    private nonisolated static func legacyCapture(_ id: CGWindowID, width: Int, height: Int)
+        -> CGImage?
+    {
+        guard let full = CGWindowListCreateImage(
+            .null, .optionIncludingWindow, id, [.boundsIgnoreFraming, .nominalResolution])
+        else { return nil }
+        guard full.height > height,
+            let ctx = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                    | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return full }
+        ctx.interpolationQuality = .high
+        ctx.draw(full, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return ctx.makeImage()
     }
 
     /// Shared with `TileThumbnails`, which needs the identical verdict: the phantom windows this

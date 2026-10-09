@@ -15,7 +15,7 @@ A ⌘-Tab replacement for macOS, in the spirit of Command-Tab Plus 2. Switches b
 ```
 
 Requires Xcode. Built against the macOS 26.5 SDK with Swift 6.3; verified running on macOS 27.0.
-Deployment floor is macOS 14 (`Package.swift`).
+Deployment floor is macOS 13 (`Package.swift`).
 
 ## First run
 

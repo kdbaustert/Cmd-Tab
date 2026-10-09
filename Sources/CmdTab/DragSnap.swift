@@ -531,7 +531,7 @@ final class SnapAppearance {
 
     /// Matching Rectangle's ladder, minus the rungs this app cannot reach: 16 on macOS 26, 10
     /// below it. Rectangle also has a 5 for pre-Big-Sur, which is dead here — `Package.swift` sets
-    /// the deployment target to macOS 14, so the app cannot launch anywhere that would use it.
+    /// the deployment target to macOS 13, so the app cannot launch anywhere that would use it.
     ///
     /// A snap preview whose corners disagree with the system's window corners reads as a misdrawn
     /// window. That reasoning applies to the *destination* block, which is a rectangle this app

@@ -109,8 +109,8 @@ xcrun appintentsmetadataprocessor \
     --sdk-root "$(xcrun --show-sdk-path --sdk macosx)" \
     --xcode-version "$(xcodebuild -version | tail -1 | awk '{print $3}')" \
     --platform-family macOS \
-    --deployment-target 14.0 \
-    --target-triple "$HOST_ARCH-apple-macos14.0" \
+    --deployment-target 13.0 \
+    --target-triple "$HOST_ARCH-apple-macos13.0" \
     --source-file-list "$INTENTS_DIR/sources.txt" \
     --swift-const-vals-list "$INTENTS_DIR/constvals.txt" \
     --force --quiet-warnings >/dev/null
