@@ -481,8 +481,14 @@ actor WindowCapture {
         // property of `NSRunningApplication` — see `TargetProvider.iconCache` — it has to be read
         // on the main actor, and most strips are all real captures and never draw it.
         let needsIcon = built.contains { if case .icon = $0.1 { true } else { false } }
-        let icon = needsIcon
-            ? await MainActor.run { NSRunningApplication(processIdentifier: pid)?.icon } : nil
+        // Sent back as a `Captured` rather than a bare `NSImage`, which counts as `Sendable` only
+        // from macOS 14, above this app's floor. One compiler warns about that; Xcode 26.6's
+        // refuses to build.
+        let iconRead = needsIcon
+            ? await MainActor.run {
+                NSRunningApplication(processIdentifier: pid)?.icon.map(Captured.image)
+            } : nil
+        let icon: NSImage? = if case .image(let image)? = iconRead { image } else { nil }
         let fallback =
             icon ?? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) ?? NSImage()
         return built.sorted { $0.0 < $1.0 }.map { index, captured in
