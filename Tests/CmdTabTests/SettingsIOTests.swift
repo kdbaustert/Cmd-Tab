@@ -299,6 +299,15 @@ final class SettingsIOTests: XCTestCase {
             defaults.bundleIDs(forKey: "favoriteBundleIDs"), ["com.apple.Safari", "com.apple.Mail"])
     }
 
+    /// An import or a hand edit can list a favourite twice, which put two tiles with one id into
+    /// the switcher.
+    func testABundleIDListedTwiceIsReadOnceInItsFirstPlace() {
+        defaults.set(
+            ["com.apple.Safari", "com.apple.Mail", "com.apple.Safari"], forKey: "favoriteBundleIDs")
+        XCTAssertEqual(
+            defaults.bundleIDs(forKey: "favoriteBundleIDs"), ["com.apple.Safari", "com.apple.Mail"])
+    }
+
     func testABundleIDListThatIsNotAListReadsAsEmpty() {
         defaults.set("com.apple.Safari", forKey: "excludedBundleIDs")
         XCTAssertEqual(defaults.bundleIDs(forKey: "excludedBundleIDs"), [])
@@ -320,5 +329,16 @@ final class SettingsIOTests: XCTestCase {
             BehaviorStore.showDelayRange.upperBound)
         // NaN compares false against everything, so `min`/`max` would hand it straight back.
         XCTAssertEqual(BehaviorStore.clamp(.nan, in: size, default: 10), 10)
+    }
+
+    /// The Appearance sliders read `AppearanceStore` directly, and a theme file's
+    /// `"iconSpacing": 1e19` reached the slider's label unclamped and trapped converting to `Int`.
+    func testAnAppearanceValueIsHeldInsideItsSlider() {
+        let spacing = Metrics.iconSpacingRange
+        XCTAssertEqual(AppearanceStore.held(1e19, in: spacing, default: 2), spacing.upperBound)
+        XCTAssertEqual(AppearanceStore.held(-1e19, in: spacing, default: 2), spacing.lowerBound)
+        XCTAssertEqual(AppearanceStore.held(.nan, in: spacing, default: 2), 2)
+        XCTAssertEqual(AppearanceStore.held(.infinity, in: spacing, default: 2), spacing.upperBound)
+        XCTAssertEqual(AppearanceStore.held(10, in: spacing, default: 2), 10)
     }
 }

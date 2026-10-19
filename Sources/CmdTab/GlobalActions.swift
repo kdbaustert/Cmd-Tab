@@ -198,17 +198,31 @@ final class GlobalActionsStore: ObservableObject {
     private func load() {
         let defaults = UserDefaults.standard
         var loaded = DirectActivations()
-        if let raw = defaults.array(forKey: Key.directActivation) as? [[Any]] {
-            for row in raw {
-                guard row.count == 3, let bundleID = row[0] as? String,
-                    let keyCode = row[1] as? Int, let mods = row[2] as? Int
-                else { continue }
-                loaded.entries.append(
-                    DirectActivation(
-                        bundleID: bundleID,
-                        hotkey: Hotkey(
-                            keyCode: keyCode, modifierRaw: UInt64(bitPattern: Int64(mods)))))
+        // Row by row, as `FavoritesStore.bundleIDs` reads its list. Cast whole to `[[Any]]`, one
+        // entry that was not a list — a hand-edited config — answered nil for the lot: every
+        // activation vanished with nothing logged, and the next edit here (recording a Hide-all
+        // chord is enough) persisted the empty list over the real one. At least three fields
+        // rather than exactly three, so a row a newer build has widened still loads.
+        var skipped = 0
+        for entry in defaults.array(forKey: Key.directActivation) ?? [] {
+            guard let row = entry as? [Any], row.count >= 3, let bundleID = row[0] as? String,
+                let keyCode = row[1] as? Int, let mods = row[2] as? Int
+            else {
+                skipped += 1
+                continue
             }
+            loaded.entries.append(
+                DirectActivation(
+                    bundleID: bundleID,
+                    hotkey: Hotkey(
+                        keyCode: keyCode, modifierRaw: UInt64(bitPattern: Int64(mods)))))
+        }
+        if skipped > 0 {
+            Log.general.error(
+                """
+                \(Key.directActivation, privacy: .public): ignored \(skipped, privacy: .public) \
+                entries that are not [bundle id, key code, modifiers]
+                """)
         }
         activations = loaded
         allWindows = AllWindowsShortcuts(

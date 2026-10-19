@@ -182,6 +182,35 @@ enum MouseDragGeometry {
         }
         return CGRect(x: left, y: top, width: right - left, height: bottom - top)
     }
+
+    /// Where the origin has to go when a resize from a left or top corner came back a different size
+    /// than `target` asked for, or nil when it need not move.
+    ///
+    /// The origin is written for the size asked for, so an app that refuses it — a minimum width, a
+    /// terminal's character grid — keeps that origin and grows or shrinks from it, and the edge the
+    /// gesture pins moves instead: an 800pt window with a 500pt minimum, dragged 400pt inward from
+    /// the left, landed 400pt over at 500pt wide, its right edge pushed 100pt out. So the dragged
+    /// axis is re-anchored on the pinned edge. Right and bottom corners pin the origin itself and
+    /// never need this.
+    ///
+    /// nil unless `actual`'s origin is `target`'s, the same guard as `WindowTiler.corrected` and for
+    /// its reason: a host that applies writes late still reports the frame from before, and
+    /// "correcting" against that would move a window that is about to land where it was asked to.
+    static func reanchored(
+        _ target: CGRect, actual: CGRect, corner: ResizeCorner
+    ) -> CGPoint? {
+        let slack: CGFloat = 2
+        guard abs(actual.minX - target.minX) <= slack, abs(actual.minY - target.minY) <= slack
+        else { return nil }
+        var origin = actual.origin
+        if corner == .topLeft || corner == .bottomLeft, abs(actual.width - target.width) > slack {
+            origin.x = target.maxX - actual.width
+        }
+        if corner == .topLeft || corner == .topRight, abs(actual.height - target.height) > slack {
+            origin.y = target.maxY - actual.height
+        }
+        return origin == actual.origin ? nil : origin
+    }
 }
 
 // MARK: - Hit testing
@@ -277,6 +306,13 @@ enum WindowHitTest {
 private final class TapThread: Thread, @unchecked Sendable {
     private let ready = DispatchSemaphore(value: 0)
     private(set) var runLoop: CFRunLoop?
+    /// The tap's source, added by the thread itself before it reports ready — see `main()`.
+    private let source: CFRunLoopSource
+
+    init(source: CFRunLoopSource) {
+        self.source = source
+        super.init()
+    }
 
     /// How long a slice of the run loop lasts before `isCancelled` is re-tested.
     ///
@@ -288,13 +324,19 @@ private final class TapThread: Thread, @unchecked Sendable {
     private static let slice: CFTimeInterval = 30
 
     override func main() {
-        runLoop = CFRunLoopGetCurrent()
+        let loop = CFRunLoopGetCurrent()
+        // Added here, before the signal, so the loop below never runs without it. A run loop with no
+        // sources returns `.finished` at once, and the source used to be added by `install` a moment
+        // *after* this signalled: the first slice found the loop empty, the break below took it,
+        // and the thread was gone before its source arrived. The tap was then attached to a run
+        // loop nothing ran, and its callback never fired — every modifier-drag did nothing. Adding
+        // it on this thread also keeps every touch of this loop on the thread that owns it.
+        CFRunLoopAddSource(loop, source, .defaultMode)
+        runLoop = loop
         ready.signal()
-        // A run loop with no sources returns immediately, and the source is added by the caller a
-        // moment after this signals — so the loop is run in slices rather than left to exit.
         while !isCancelled {
             // `.finished` means the loop has no sources left and returns at once, so looping on it
-            // would spin a core; only reached if the source is removed without `cancel()`.
+            // would spin a core; only reached once the source is removed or its port invalidated.
             if CFRunLoopRunInMode(.defaultMode, Self.slice, false) == .finished { break }
         }
     }
@@ -364,8 +406,9 @@ final class MouseWindowDrag: @unchecked Sendable {
     }
     private var storedTitleRules: [CompiledTitleRule] = []
 
-    /// Called when a press claims the chord for a drag, so the hold-and-point gesture — which is
-    /// armed by the very same chord — stands down instead of firing a second snap of its own.
+    /// Called when a press arrives with a drag chord held — whether or not the drag then takes it —
+    /// so the hold-and-point gesture, which is armed by the very same chord, stands down instead of
+    /// firing a second snap of its own.
     ///
     /// It has to be told rather than left to notice, and that is the whole reason this exists: the
     /// press is *swallowed* by the tap below, so it never reaches the window server's delivery to
@@ -538,12 +581,19 @@ final class MouseWindowDrag: @unchecked Sendable {
             Log.general.error("mouse drag: could not create the event tap")
             return
         }
-        let thread = TapThread()
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            Log.general.error("mouse drag: could not create the tap's run-loop source")
+            CFMachPortInvalidate(tap)
+            return
+        }
+        let thread = TapThread(source: source)
         thread.qualityOfService = .userInteractive
         thread.name = "com.cmdtab.mousedrag.tap"
         thread.start()
         guard thread.waitUntilReady(), let runLoop = thread.runLoop else {
             Log.general.error("mouse drag: tap thread has no run loop")
+            // Invalidating the port invalidates its source too, so a thread that starts late adds
+            // a dead source, finds its loop empty, and exits.
             CFMachPortInvalidate(tap)
             thread.cancel()
             return
@@ -577,7 +627,6 @@ final class MouseWindowDrag: @unchecked Sendable {
             if !kept { NotificationCenter.default.removeObserver(observer) }
         }
 
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         // The setting can have been switched off while the thread was starting — `waitUntilReady`
         // is up to a second of it. `uninstall` running in that window finds the fields still nil,
         // tears nothing down, and returns; storing unconditionally here would then leave a live
@@ -592,8 +641,10 @@ final class MouseWindowDrag: @unchecked Sendable {
             return true
         }
         guard kept else {
-            // Never added to a run loop, so there is nothing to remove — just give the port and the
-            // thread back, and withdraw the observer request this install made on its way in.
+            // The thread has already added the source, so it comes off first, in `uninstall`'s
+            // order and for its reason — then the port and the thread go back, and the observer
+            // request this install made on its way in is withdrawn.
+            CFRunLoopRemoveSource(runLoop, source, .defaultMode)
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
             thread.cancel()
@@ -608,7 +659,6 @@ final class MouseWindowDrag: @unchecked Sendable {
             Log.general.notice("mouse drag: install abandoned, the gesture was switched off")
             return
         }
-        CFRunLoopAddSource(runLoop, source, .defaultMode)
         CGEvent.tapEnable(tap: tap, enable: true)
         let current = settings
         Log.general.notice(
@@ -702,6 +752,12 @@ final class MouseWindowDrag: @unchecked Sendable {
                 }
                 return false
             }
+            // The chord was pressed with a click, which is a click gesture and not pointing, so the
+            // hold-and-point gesture stands down here — before the two refusals below, not only once
+            // the press is taken. Both of them pass the press on, and a passed press is no more
+            // visible to that gesture than a swallowed one: ⌃⌥-clicking the desktop or a never-tile
+            // app left it armed on the window it had been offering, and letting go snapped that.
+            onClaimChord?()
             guard let target = Self.window(at: location) else {
                 Log.general.notice(
                     """
@@ -739,9 +795,6 @@ final class MouseWindowDrag: @unchecked Sendable {
                 generation &+= 1
                 return generation
             }
-            // Before the resolve, which is asynchronous: the other gesture has to be out of the way
-            // from the press onwards, not from whenever Accessibility gets back to us.
-            onClaimChord?()
             resolve(
                 target: target, bundleID: bundleID, action: action, at: location, press: press)
             // Swallowed from the press onwards. Letting the press through and taking only the drags
@@ -760,7 +813,7 @@ final class MouseWindowDrag: @unchecked Sendable {
                 session.action == .move
                 ? MouseDragGeometry.moved(session.startFrame, by: delta)
                 : MouseDragGeometry.resized(session.startFrame, corner: session.corner, by: delta)
-            write(frame, isMove: session.action == .move)
+            write(frame, resizing: session.action == .move ? nil : session.corner)
             // The window follows the cursor either way; the overlay says where letting go will
             // actually put it. Both gestures snap, but not to the same zones — see `snapZones`.
             updatePreview(at: location, zones: Self.snapZones(for: session.action))
@@ -860,7 +913,9 @@ final class MouseWindowDrag: @unchecked Sendable {
     /// Without the coalescing a 120Hz trackpad queues frames faster than an app can accept them, and
     /// the window keeps travelling for a second after the mouse has stopped. Only the newest target
     /// matters: every frame in between is a position the user has already dragged past.
-    private func write(_ frame: CGRect, isMove: Bool) {
+    ///
+    /// `corner` is the corner a resize carries, nil for a move.
+    private func write(_ frame: CGRect, resizing corner: ResizeCorner?) {
         let go: Bool = lock.withLock {
             guard !isWriting else {
                 pending = frame
@@ -890,7 +945,16 @@ final class MouseWindowDrag: @unchecked Sendable {
                     // origin set before the size that makes room for it. A move writes the origin
                     // alone. Both go through `setFrame` so a drag of this app's own window costs one
                     // hop onto the main thread per frame rather than two — see `AX.onOwningThread`.
-                    AX.setFrame(window, frame, sizing: !isMove)
+                    AX.setFrame(window, frame, sizing: corner != nil)
+                    // A left or top corner moves the origin, so a refused size moves the pinned
+                    // edge — see `reanchored`. One read per write, and only for those three
+                    // corners; a move or a bottom-right resize never pays for it.
+                    if let corner, corner != .bottomRight, let actual = AX.frame(window),
+                        let origin = MouseDragGeometry.reanchored(
+                            frame, actual: actual, corner: corner)
+                    {
+                        AX.setPosition(window, origin)
+                    }
                 }
                 let next: CGRect? = self.lock.withLock {
                     if let pending = self.pending {

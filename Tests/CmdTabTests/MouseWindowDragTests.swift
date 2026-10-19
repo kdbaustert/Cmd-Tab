@@ -122,6 +122,51 @@ final class MouseWindowDragTests: XCTestCase {
         XCTAssertEqual(resized.height, MouseDragGeometry.minimumSize.height)
     }
 
+    // MARK: - Re-anchoring a refused size
+
+    /// An app with a 500pt minimum, dragged 400pt inward from the left, keeps the origin it was
+    /// given and stays 500 wide — so the origin goes back 100pt to keep the right edge where it was.
+    func testARefusedWidthFromTheLeftKeepsTheRightEdgePinned() {
+        let target = MouseDragGeometry.resized(
+            frame, corner: .topLeft, by: CGSize(width: 400, height: 0))
+        let actual = CGRect(origin: target.origin, size: CGSize(width: 500, height: 600))
+        let origin = MouseDragGeometry.reanchored(target, actual: actual, corner: .topLeft)
+        XCTAssertEqual(origin, CGPoint(x: frame.maxX - 500, y: target.minY))
+    }
+
+    /// The same refusal on the vertical axis, from a top corner, pins the bottom edge.
+    func testARefusedHeightFromTheTopKeepsTheBottomEdgePinned() {
+        let target = MouseDragGeometry.resized(
+            frame, corner: .topRight, by: CGSize(width: 0, height: 400))
+        let actual = CGRect(origin: target.origin, size: CGSize(width: 800, height: 300))
+        let origin = MouseDragGeometry.reanchored(target, actual: actual, corner: .topRight)
+        XCTAssertEqual(origin, CGPoint(x: target.minX, y: frame.maxY - 300))
+    }
+
+    /// Only the dragged axis moves: a top-right corner pins the left edge, so a refused width there
+    /// is the right edge falling short, which moving the origin cannot fix.
+    func testAPinnedOriginAxisIsLeftAlone() {
+        let target = CGRect(x: 200, y: 100, width: 400, height: 600)
+        let actual = CGRect(x: 200, y: 100, width: 500, height: 600)
+        XCTAssertNil(MouseDragGeometry.reanchored(target, actual: actual, corner: .topRight))
+        XCTAssertNil(MouseDragGeometry.reanchored(target, actual: actual, corner: .bottomRight))
+    }
+
+    /// A host that has not applied the write yet still reports its old frame, at the old origin.
+    /// Correcting against that would move a window that is about to land where it was asked to.
+    func testAFrameThatHasNotLandedIsNotCorrected() {
+        let target = MouseDragGeometry.resized(
+            frame, corner: .topLeft, by: CGSize(width: 50, height: 50))
+        XCTAssertNil(MouseDragGeometry.reanchored(target, actual: frame, corner: .topLeft))
+    }
+
+    /// A size that came back as asked needs nothing.
+    func testAnAcceptedSizeIsNotCorrected() {
+        let target = MouseDragGeometry.resized(
+            frame, corner: .topLeft, by: CGSize(width: 50, height: 50))
+        XCTAssertNil(MouseDragGeometry.reanchored(target, actual: target, corner: .topLeft))
+    }
+
     // MARK: - Modifier matching
 
     func testDisabledMatchesNothing() {

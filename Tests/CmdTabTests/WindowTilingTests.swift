@@ -773,6 +773,25 @@ final class WindowTilingTests: XCTestCase {
         XCTAssertEqual(bindings.bindings[.desktop1], custom)
     }
 
+    /// A default chord recorded since on another tab's row stays with that row: restoring it
+    /// would put it on a Tiling row that comes first in case order, and the other row's chord would
+    /// stop firing.
+    func testRestoringTilingDefaultsLeavesAChordAnotherTabNowHolds() {
+        guard let leftDefault = WindowArrangement.leftHalf.defaultHotkey else {
+            return XCTFail("Left half ships bound")
+        }
+        var bindings = WindowTilingBindings.defaults
+        bindings.bindings[.leftHalf] = nil
+        bindings.bindings[.focusLeft] = leftDefault  // Mouse & Focus
+
+        bindings.restoreTilingDefaults()
+
+        XCTAssertNil(bindings.bindings[.leftHalf])
+        XCTAssertEqual(bindings.bindings[.focusLeft], leftDefault)
+        XCTAssertEqual(bindings.bindings[.rightHalf], WindowArrangement.rightHalf.defaultHotkey)
+        XCTAssertTrue(bindings.conflicts(with: .focusLeft).isEmpty)
+    }
+
     /// The rows the Tiling tab draws and the rows its Restore defaults button resets are one set
     /// written down twice — the view's group table and the gating predicate the reset reads — and
     /// an arrangement added to one without the other would either be unresettable or be reset from

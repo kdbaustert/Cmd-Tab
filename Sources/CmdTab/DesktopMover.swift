@@ -187,6 +187,8 @@ enum DesktopMover {
             return nil
         }
         guard let plan = plan(pid: pid, to: destination) else { return nil }
+        // Read here, the first time, so the string tables are not parsed while the button is down.
+        _ = missionControlLabels
 
         // The gesture takes the window by its title bar with the pointer, so the window has to be
         // on the Desktop its display is showing — and the window `DesktopAssignments` sends here
@@ -215,14 +217,34 @@ enum DesktopMover {
         // and where the pointer was last put.
         var grabbed = false
         var point = grabs[0]
+        // Whether this gesture asked for Mission Control, and whether anything of it — the bar or a
+        // Desktop's thumbnail — was ever recognised: what the close below needs when its usual
+        // test, the bar's title, cannot be made.
+        var openedMissionControl = false
+        var sawMissionControl = false
         defer {
             // Only if the gesture did not get as far as its own release. A second `leftMouseUp` is
             // not free — it lands wherever the pointer is, which after a follow is the menu bar —
             // and posting one for tidiness on the path that already released is how a stray click
             // gets into somebody's session.
             if !released { release(at: CGEvent(source: nil)?.location ?? point) }
-            closeMissionControlIfOpen()
-            awaitMissionControlGone()
+            if openedMissionControl, !sawMissionControl {
+                // We opened it and never once recognised it, so the bar's title is no use as the
+                // "still showing" test either: on a Mac whose Mission Control speaks words
+                // `missionControlLabels` does not know, the guarded close below found nothing and
+                // left Mission Control standing after every move. Toggled shut on the strength of
+                // having opened it instead. The cost is the case the guard exists for — Mission
+                // Control that closed itself (an Escape during the wait) is opened again — which is
+                // the rarer failure, and the one the user can dismiss. Waited out blind for the
+                // same reason: there is no bar to watch leave.
+                Log.general.notice(
+                    "desktop move: never found the Spaces Bar; closing Mission Control anyway")
+                dockNotify(missionControl as CFString, 0)
+                usleep(useconds_t(closeTimeout * 1_000_000))
+            } else {
+                closeMissionControlIfOpen()
+                awaitMissionControlGone()
+            }
             // Every path that picked the window up puts it back, not just the one that finished.
             // The engage drag nudges the window before Mission Control is even asked for, so a
             // gesture that gives up after that — the Spaces Bar never appearing is the realistic
@@ -274,12 +296,13 @@ enum DesktopMover {
         }
 
         dockNotify(missionControl as CFString, 0)
+        openedMissionControl = true
         // Polled rather than slept. Mission Control's open animation is not a fixed cost — it is
         // slower with many windows on the Desktop, and a fixed wait long enough for the worst case
         // is a wait everyone pays. The drag has to be kept alive while we wait, or the window server
         // drops it.
         guard let target = awaitSpacesBar(
-            holdingAt: point, index: plan.destination, on: plan.display)
+            holdingAt: point, index: plan.destination, on: plan.display, saw: &sawMissionControl)
         else {
             Log.general.notice("desktop move: Mission Control's Spaces Bar never appeared")
             return nil
@@ -714,9 +737,10 @@ enum DesktopMover {
     }
 
     /// Waits for Mission Control's Spaces Bar and returns the point to drop on, keeping the drag
-    /// alive while it waits. nil if it never appears, or has no such Desktop.
+    /// alive while it waits. nil if it never appears, or has no such Desktop. `saw` is set once
+    /// the bar or any Desktop's thumbnail has been recognised — what the gesture's close goes on.
     private static func awaitSpacesBar(
-        holdingAt point: CGPoint, index: Int, on display: CGRect?
+        holdingAt point: CGPoint, index: Int, on display: CGRect?, saw: inout Bool
     ) -> CGPoint? {
         for _ in 0..<Int(spacesBarTimeout / spacesBarPoll) {
             post(.leftMouseDragged, point)
@@ -726,6 +750,7 @@ enum DesktopMover {
             // what an x-only match did on displays stacked one above the other.
             let bar = spacesBarFrame(on: display)
             let all = spacesBarButtons()
+            if bar != nil || all.contains(where: \.isDesktop) { saw = true }
             let buttons = desktopButtons(in: all, on: display, bar: bar)
             guard buttons.indices.contains(index) else { continue }
             // The button's own rectangle is the *label* under the thumbnail, and its reported y sits
@@ -796,11 +821,6 @@ enum DesktopMover {
 
     // MARK: - Mission Control's Accessibility tree
 
-    /// Every "Desktop N" thumbnail in the Spaces Bar, in the order they are shown.
-    ///
-    /// Matched on the `AXDescription` — "exit to Desktop 3" — rather than the title, because the
-    /// title is localized and the description has proved the stable one. Both come from whichever
-    /// process draws Mission Control — see `missionControlHosts`.
     /// The display a frame sits on, by its centre, falling back to the largest overlap.
     ///
     /// `CGDisplayBounds` rather than `NSScreen`, because everything here is already in the window
@@ -889,7 +909,8 @@ enum DesktopMover {
     ///
     /// The non-Desktop ones are kept too, for the centring alone: a full-screen app's Space sits in
     /// the same row under a button of its own — see `thumbnailCentres`. Only the Desktop ones are
-    /// ever indexed or pressed.
+    /// ever indexed or pressed. A Desktop is told by its `AXDescription`, "exit to Desktop 3", in
+    /// whatever language the host draws it — see `MissionControlLabels`.
     private static func spacesBarButtons() -> [SpacesBarButton] {
         var out: [SpacesBarButton] = []
         for host in missionControlHosts() where !out.contains(where: \.isDesktop) {
@@ -899,7 +920,7 @@ enum DesktopMover {
                 out.append(
                     SpacesBarButton(
                         element: element, frame: frame,
-                        isDesktop: description.hasPrefix(exitToDesktop)))
+                        isDesktop: missionControlLabels.isDesktopButton(description)))
             }
         }
         return out
@@ -929,7 +950,8 @@ enum DesktopMover {
         for host in missionControlHosts() where found.isEmpty {
             walk(host) { element, role, _ in
                 guard role == "AXGroup",
-                    AX.copyString(element, kAXTitleAttribute as String) == spacesBarTitle,
+                    let title = AX.copyString(element, kAXTitleAttribute as String),
+                    missionControlLabels.isSpacesBar(title),
                     let frame = elementFrame(element)
                 else { return }
                 found.append(frame)
@@ -1166,6 +1188,193 @@ enum DesktopMover {
     /// standard display; only ever used to keep the drop on screen rather than at y = 0.
     private static let defaultSpacesBarHeight: CGFloat = 78
     private static let maximumDepth = 12
-    private static let exitToDesktop = "exit to Desktop"
-    private static let spacesBarTitle = "Spaces Bar"
+
+    // MARK: - Mission Control's words
+
+    /// Read once, on the first move — `perform` touches it before the button goes down.
+    private static let missionControlLabels = MissionControlLabels.load()
+
+    /// What Mission Control's Accessibility tree is matched on, in the language it is drawn in.
+    ///
+    /// Read from the host's own string tables rather than written down here. The Spaces Bar's
+    /// title and every thumbnail's "exit to Desktop N" description are localized — "Barre Spaces"
+    /// and "quitter vers Bureau 3" on a French Mac, "Spaces-Leiste" and "Zu Schreibtisch 3
+    /// wechseln" on a German one — and the English constants this replaced found nothing there: no
+    /// thumbnail to aim at, the button held down for the whole wait, and Mission Control left
+    /// standing because the close looked for the same bar. Translating here instead would be a
+    /// table to keep, and the hosts do not even agree with each other: on 27.2 WindowManager's
+    /// French table leaves "Exit To %@" in English, and its English one capitalises a "To" the
+    /// Dock's does not.
+    ///
+    /// English is kept whatever the language, and every comparison ignores case: a tree that does
+    /// not follow its own table costs nothing to try.
+    struct MissionControlLabels: Equatable, Sendable {
+        /// Titles the Spaces Bar group may carry.
+        var bars: [String]
+        /// The descriptions a Desktop's thumbnail may carry.
+        var desktops: [Desktop]
+
+        /// "exit to Desktop N", as the text on either side of the N. The two sides, not a prefix:
+        /// German puts the verb after the Desktop's name ("Zu Schreibtisch 3 wechseln").
+        struct Desktop: Equatable, Sendable {
+            let head: String
+            let tail: String
+
+            /// From the host's two formats: the button's ("exit to %@") and the Desktop name that
+            /// fills it ("Desktop %@"). Composed rather than matched on the button's alone, because
+            /// the Desktop's name is what tells it from a full-screen app's thumbnail, whose button
+            /// fills the same kind of format with "full screen Safari" — the word "Desktop" was
+            /// doing that work in the old English prefix. nil for a format with no placeholder, or
+            /// more than one, or no words at all to match on.
+            init?(exit: String, desktop: String) {
+                guard let (exitHead, exitTail) = Self.split(exit),
+                    let (nameHead, nameTail) = Self.split(desktop)
+                else { return nil }
+                self.init(head: exitHead + nameHead, tail: nameTail + exitTail)
+                guard !(head + tail).allSatisfy(\.isWhitespace) else { return nil }
+            }
+
+            init(head: String, tail: String) {
+                self.head = head
+                self.tail = tail
+            }
+
+            /// Whether `description` is this format with something — the Desktop's number — in
+            /// the middle.
+            func matches(_ description: String) -> Bool {
+                let options: String.CompareOptions = [.caseInsensitive, .anchored]
+                guard let start = description.range(of: head, options: options)?.upperBound
+                else { return false }
+                let end =
+                    tail.isEmpty
+                    ? description.endIndex
+                    : description.range(of: tail, options: options.union(.backwards))?.lowerBound
+                guard let end else { return false }
+                return start < end
+            }
+
+            /// The text before and after a format's one placeholder — `%@`, `%1$@` or `%d`.
+            static func split(_ format: String) -> (String, String)? {
+                let placeholder = "%(?:[0-9]+\\$)?(?:@|l?d)"
+                guard let range = format.range(of: placeholder, options: .regularExpression),
+                    format[range.upperBound...].range(of: placeholder, options: .regularExpression)
+                        == nil
+                else { return nil }
+                return (String(format[..<range.lowerBound]), String(format[range.upperBound...]))
+            }
+        }
+
+        static let english = MissionControlLabels(
+            bars: ["Spaces Bar"], desktops: [Desktop(head: "exit to Desktop ", tail: "")])
+
+        func isSpacesBar(_ title: String) -> Bool {
+            bars.contains { title.caseInsensitiveCompare($0) == .orderedSame }
+        }
+
+        func isDesktopButton(_ description: String) -> Bool {
+            desktops.contains { $0.matches(description) }
+        }
+
+        /// Adds what one host's table says, skipping what is already known.
+        mutating func add(bar: String?, exit: String?, desktop: String?) {
+            if let bar, !isSpacesBar(bar) { bars.append(bar) }
+            guard let exit, let desktop, let label = Desktop(exit: exit, desktop: desktop) else {
+                return
+            }
+            let known = desktops.contains {
+                $0.head.caseInsensitiveCompare(label.head) == .orderedSame
+                    && $0.tail.caseInsensitiveCompare(label.tail) == .orderedSame
+            }
+            if !known { desktops.append(label) }
+        }
+
+        /// English, plus both hosts' tables in the language the system is drawn in. Both, for the
+        /// reason `missionControlHosts` walks both: the tree moved from the Dock to WindowManager
+        /// in macOS 27, and either may be the one drawing it.
+        static func load() -> MissionControlLabels {
+            var labels = english
+            var read: [String] = []
+            let languages = systemLanguages()
+            if let (language, table) = windowManagerTable(languages) {
+                labels.add(
+                    bar: table["Spaces Bar"], exit: table["Exit To %@"],
+                    desktop: table["Desktop %@"])
+                read.append("WindowManager \(language)")
+            }
+            if let (language, accessibility, localizable) = dockTables(languages) {
+                labels.add(
+                    bar: accessibility["AXMissionControlSpacesBarGroup"],
+                    exit: accessibility["AXExitToDesktop"], desktop: localizable["DesktopNum"])
+                read.append("Dock \(language)")
+            }
+            guard !read.isEmpty else {
+                Log.general.notice(
+                    "desktop move: no Mission Control string table readable; matching English only")
+                return labels
+            }
+            let sources = read.joined(separator: ", ")
+            let bars = labels.bars.joined(separator: " | ")
+            let desktops = labels.desktops.map { "\($0.head)…\($0.tail)" }.joined(separator: " | ")
+            Log.general.notice(
+                """
+                desktop move: Mission Control labels from \(sources, privacy: .public): \
+                bars \(bars, privacy: .public); desktops \(desktops, privacy: .public)
+                """)
+            return labels
+        }
+
+        /// The languages the *system* is drawn in, which is what the Dock and WindowManager speak.
+        /// Not `Locale.preferredLanguages`: that answers for this process, and System Settings can
+        /// give an app a language of its own — Cmd-Tab set to English on a French Mac would read
+        /// the English table and miss the French tree.
+        private static func systemLanguages() -> [String] {
+            let global = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)
+            return global?["AppleLanguages"] as? [String] ?? Locale.preferredLanguages
+        }
+
+        /// WindowManager keeps every language in one `.loctable`, a dictionary per language keyed
+        /// by the English string. Its `LocProvenance` entry is not a table and drops out of the
+        /// language list by its type.
+        private static func windowManagerTable(_ languages: [String])
+            -> (String, [String: String])?
+        {
+            guard
+                let app = NSWorkspace.shared.urlForApplication(
+                    withBundleIdentifier: "com.apple.WindowManager"),
+                let all = NSDictionary(
+                    contentsOf: app.appendingPathComponent(
+                        "Contents/Resources/Localizable.loctable")) as? [String: Any]
+            else { return nil }
+            let available = all.keys.filter { all[$0] is [String: String] }
+            guard
+                let language = Bundle.preferredLocalizations(
+                    from: available, forPreferences: languages
+                ).first,
+                let table = all[language] as? [String: String]
+            else { return nil }
+            return (language, table)
+        }
+
+        /// The Dock's two `.lproj` tables: the Accessibility one holds the bar's title and the
+        /// button's format, the ordinary one the Desktop's name.
+        private static func dockTables(_ languages: [String])
+            -> (String, [String: String], [String: String])?
+        {
+            guard
+                let app = NSWorkspace.shared.urlForApplication(
+                    withBundleIdentifier: "com.apple.dock"),
+                let bundle = Bundle(url: app),
+                let language = Bundle.preferredLocalizations(
+                    from: bundle.localizations, forPreferences: languages
+                ).first
+            else { return nil }
+            func table(_ name: String) -> [String: String] {
+                bundle.url(
+                    forResource: name, withExtension: "strings", subdirectory: nil,
+                    localization: language
+                ).flatMap { NSDictionary(contentsOf: $0) as? [String: String] } ?? [:]
+            }
+            return (language, table("Accessibility"), table("Localizable"))
+        }
+    }
 }

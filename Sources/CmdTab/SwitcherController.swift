@@ -960,7 +960,9 @@ final class SwitcherController {
         // logging.
         let isAppActive = NSApp.isActive
         let decision = TapRouting.idle(
-            TapRouting.Event(keyCode: code, flags: flags, isAutorepeat: isAutorepeat),
+            TapRouting.Event(
+                keyCode: code, flags: flags, isAutorepeat: isAutorepeat,
+                pressWasWithheld: keyPairing.isWithheld(code)),
             bindings: routingBindings(),
             isAppActive: isAppActive,
             isRecording: KeyRecorder.isArmed)
@@ -2170,7 +2172,6 @@ final class SwitcherController {
     /// pick never changes the frontmost app, so it never fires one.
     private func focus(_ target: SwitchTarget) {
         if let id = target.windowID { provider.noteFocused(window: id) }
-        focusFollows.pickCommitted()
         let targetID = target.id
         target.focus(onLaunchFailure: { [weak self] in
             self?.provider.launchFailed(targetID: targetID)
@@ -2836,8 +2837,11 @@ final class SwitcherController {
     /// being held. The panel used to read ⌥ itself, so under ⌥-Tab every click carried it and none
     /// ever picked. The keyboard path subtracts `activeHeld` before reading a key's modifiers (see
     /// `extra` in `handleKeyDown`); this is the same subtraction for the mouse.
+    ///
+    /// Marking is an in-switcher action, so with those off an ⌥-click is an ordinary click. The
+    /// gate used to sit only inside `toggleMarkedTile`, which made the click neither mark nor pick.
     private func clickedTile(_ index: Int, flags: NSEvent.ModifierFlags) {
-        if Self.clickTogglesMark(flags: flags, held: activeHeld) {
+        if actionsEnabled, Self.clickTogglesMark(flags: flags, held: activeHeld) {
             toggleMarkedTile(index)
         } else {
             pick(index)
@@ -2850,10 +2854,11 @@ final class SwitcherController {
     }
 
     /// A tile was ⌥-clicked: toggle its mark, the mouse's way of doing what ⌥-Space does from the
-    /// keyboard. Gated on `actionsEnabled` like every other in-switcher action — an ⌥-click with the
-    /// feature off is an ordinary click's modifier going unnoticed, not a mark appearing unbidden.
+    /// keyboard. Only reached with in-switcher actions on — `clickedTile` sends the click to a pick
+    /// otherwise, since an ⌥-click with the feature off is an ordinary click's modifier going
+    /// unnoticed, not a mark appearing unbidden.
     private func toggleMarkedTile(_ index: Int) {
-        guard isVisible, actionsEnabled, model.targets.indices.contains(index) else { return }
+        guard isVisible, model.targets.indices.contains(index) else { return }
         model.toggleMark(at: index)
         scheduleLayout()
     }

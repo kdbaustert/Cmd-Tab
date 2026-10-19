@@ -113,12 +113,35 @@ final class TapRoutingTests: XCTestCase {
     }
 
     /// A trigger, by contrast, is not repeat-guarded here: holding it is how the classic cycle
-    /// advances, and the controller's armed/visible states own that behaviour.
+    /// advances, and the controller's armed/visible states own that behaviour. A repeat that does
+    /// reach this path with its press not withheld — a trigger held since before the tap saw it go
+    /// down — still opens.
     func testAnAutorepeatedTriggerStillOpens() {
         let bindings = TapRouting.Bindings(openerMatches: { c, _ in c == self.tab })
         XCTAssertEqual(
             TapRouting.idle(down(tab, cmd, repeat: true), bindings: bindings, isAppActive: false),
             .open(backwards: false))
+    }
+
+    /// …but not when the press was withheld. That repeat arrives here only once the session that
+    /// took the press has ended with the key still down: Escape with Tab held re-opened the panel,
+    /// and a held ⌘3 that committed went on typing into the app it had just fronted.
+    func testARepeatOfAWithheldPressIsSwallowedAndNotActedOn() {
+        let withheldRepeat = TapRouting.Event(
+            keyCode: tab, flags: cmd, isAutorepeat: true, pressWasWithheld: true)
+        let opener = TapRouting.Bindings(openerMatches: { c, _ in c == self.tab })
+        XCTAssertEqual(
+            TapRouting.idle(withheldRepeat, bindings: opener, isAppActive: false), .consume)
+
+        let nothing = TapRouting.Bindings()
+        let decision = TapRouting.idle(withheldRepeat, bindings: nothing, isAppActive: false)
+        XCTAssertEqual(decision, .consume)
+        XCTAssertTrue(decision.swallows)
+
+        // The first press is never a repeat, so this is the only case the flag changes.
+        let fresh = TapRouting.Event(keyCode: tab, flags: cmd, pressWasWithheld: true)
+        XCTAssertEqual(
+            TapRouting.idle(fresh, bindings: opener, isAppActive: false), .open(backwards: false))
     }
 
     // MARK: - Inert while Cmd-Tab is frontmost
@@ -253,8 +276,7 @@ final class KeyPairingTests: XCTestCase {
     }
 
     /// Once any key-down of a press reaches the app, the receiver has the key down, so the key-up
-    /// has to follow — including a repeat let through after the session that withheld the first
-    /// press has ended.
+    /// has to follow, however the press began.
     func testARepeatThatReachesTheAppReleasesTheKeyUp() {
         var pairing = KeyPairing()
         pairing.keyDown(tab, isAutorepeat: false, swallowed: true)
@@ -269,6 +291,17 @@ final class KeyPairingTests: XCTestCase {
         pairing.keyDown(tab, isAutorepeat: false, swallowed: false)
         pairing.keyDown(tab, isAutorepeat: true, swallowed: true)
         XCTAssertFalse(pairing.keyUp(tab))
+    }
+
+    /// What idle routing asks to keep a withheld press's repeats away from the app.
+    func testIsWithheldReportsWithoutSettling() {
+        var pairing = KeyPairing()
+        XCTAssertFalse(pairing.isWithheld(tab))
+        pairing.keyDown(tab, isAutorepeat: false, swallowed: true)
+        XCTAssertTrue(pairing.isWithheld(tab))
+        XCTAssertTrue(pairing.isWithheld(tab))
+        XCTAssertTrue(pairing.keyUp(tab))
+        XCTAssertFalse(pairing.isWithheld(tab))
     }
 
     /// Each key-up settles its own press, so the next press starts clean.

@@ -1068,9 +1068,19 @@ struct WindowTilingBindings: Equatable {
     /// replacing the whole table from here silently cleared a chord set two tabs away, with no
     /// confirmation, every time someone undid a half-tile change. An arrangement that ships unbound
     /// goes back to unbound.
+    ///
+    /// A default that one of those other rows now holds is not restored; its row is left unbound
+    /// instead. Clear Left half, record ⌃⌘← for Focus left on Mouse & Focus, and the reset put
+    /// ⌃⌘← back on Left half — which comes first in case order, so the focus chord the user had
+    /// just recorded stopped firing, broken by a button on a tab that never shows it.
     mutating func restoreTilingDefaults() {
+        let heldElsewhere = WindowArrangement.allCases.filter(\.isUngated).compactMap {
+            bindings[$0]
+        }
         for arrangement in WindowArrangement.allCases where !arrangement.isUngated {
-            bindings[arrangement] = arrangement.defaultHotkey
+            bindings[arrangement] = arrangement.defaultHotkey.flatMap {
+                heldElsewhere.contains($0) ? nil : $0
+            }
         }
     }
 

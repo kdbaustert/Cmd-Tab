@@ -360,7 +360,7 @@ struct SettingsSlider<V: BinaryFloatingPoint>: View where V.Stride: BinaryFloati
         SettingsRow(title: title, subtitle: subtitle, controlWidth: 190) {
             HStack(spacing: 8) {
                 Slider(value: stepped, in: range)
-                Text(format?(value) ?? "\(Int(Double(value)))")
+                Text(label)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(width: 30, alignment: .trailing)
@@ -372,8 +372,21 @@ struct SettingsSlider<V: BinaryFloatingPoint>: View where V.Stride: BinaryFloati
             // Spoken rather than the raw fraction: several of these are pixel sizes, and "40
             // percent" is not what the setting is measured in. `format` is what the row shows
             // sighted users for exactly the same reason.
-            .accessibilityValue(format?(value) ?? "\(Int(Double(value)))")
+            .accessibilityValue(label)
         }
+    }
+
+    /// The number beside the track, read from the value held inside `range` first.
+    ///
+    /// `Int(_:)` traps on anything past `Int`'s range and on NaN, and the bound value is not always
+    /// one this slider produced: a theme file or config value arrives through its store, and a
+    /// store that missed a clamp put `"iconSpacing": 1e19` here — which crashed the Appearance tab
+    /// on every visit, with its Reset button on the same tab. The track already draws the value
+    /// pinned to its ends, so the label now says the same thing the track shows.
+    private var label: String {
+        let shown =
+            value.isNaN ? range.lowerBound : min(max(value, range.lowerBound), range.upperBound)
+        return format?(shown) ?? "\(Int(Double(shown)))"
     }
 
     /// The value snapped to `step` on the way in, rather than by handing `step` to the `Slider`.

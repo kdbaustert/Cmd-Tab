@@ -1418,13 +1418,8 @@ struct PreviewSettings: View {
                             + "with the app's icon inset in the corner. Five identical Chrome icons "
                             + "become five recognisable windows. Needs Screen Recording permission; "
                             + "tiles show icons until each capture lands, so the panel never waits.",
-                    isOn: $behavior.windowThumbnailTiles)
+                    isOn: askingForCapture($behavior.windowThumbnailTiles))
                     .disabled(behavior.mode == .apps)
-                    .onChange(of: behavior.windowThumbnailTiles) { _ in
-                        if behavior.windowThumbnailTiles {
-                            Permissions.ensureScreenCaptureForPreview()
-                        }
-                    }
                 SettingsToggle(
                     title: "Preview windows",
                     subtitle: behavior.mode == .windows
@@ -1432,26 +1427,36 @@ struct PreviewSettings: View {
                         : "Pause on a tile — with the pointer or with the keyboard — to float live "
                             + "thumbnails of that app's windows, and click one to go straight to "
                             + "it. Needs Screen Recording permission.",
-                    isOn: $behavior.windowPreview)
+                    isOn: askingForCapture($behavior.windowPreview))
                     .disabled(behavior.mode == .windows)
-                    .onChange(of: behavior.windowPreview) { _ in
-                        if behavior.windowPreview { Permissions.ensureScreenCaptureForPreview() }
-                    }
                 SettingsToggle(
                     title: "Full-size preview",
                     subtitle: "Space, with nothing typed, floats one large live capture of the "
                         + "highlighted tile — press it again or Escape to put it away. Needs "
                         + "Screen Recording permission.",
-                    isOn: $behavior.quickPreview)
-                    .onChange(of: behavior.quickPreview) { _ in
-                        if behavior.quickPreview { Permissions.ensureScreenCaptureForPreview() }
-                    }
+                    isOn: askingForCapture($behavior.quickPreview))
                 if behavior.windowPreview || behavior.windowThumbnailTiles
                     || behavior.quickPreview {
                     ScreenRecordingWarning()
                 }
             }
         }
+    }
+
+    /// A toggle's binding that asks for Screen Recording when the user switches it on.
+    ///
+    /// Asked from the setter rather than from `onChange`, because `onChange` also fires for a value
+    /// that changed underneath the view — `BehaviorStore.reload()` after a config-file edit, an
+    /// iCloud sync or an import. Another Mac turning thumbnails on put the system's permission
+    /// prompt, or the "Enable Screen Recording" alert, in front of someone who had touched nothing.
+    /// The setter runs only for a click on the toggle.
+    private func askingForCapture(_ binding: Binding<Bool>) -> Binding<Bool> {
+        Binding(
+            get: { binding.wrappedValue },
+            set: { on in
+                binding.wrappedValue = on
+                if on { Permissions.ensureScreenCaptureForPreview() }
+            })
     }
 }
 

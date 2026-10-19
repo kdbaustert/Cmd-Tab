@@ -264,3 +264,68 @@ final class DesktopMoveCompletionTests: XCTestCase {
         wait(for: [calledBack], timeout: 2)
     }
 }
+
+/// How a Desktop's thumbnail is told apart in Mission Control's tree, in the languages the tree is
+/// drawn in. The strings are the hosts' own, copied from the Dock's and WindowManager's tables on
+/// macOS 27.2: the English-only match found nothing on a French or German Mac.
+final class MissionControlLabelTests: XCTestCase {
+    private typealias Labels = DesktopMover.MissionControlLabels
+
+    func testTheDocksEnglishFormatMatchesADesktopAndNotAFullScreenApp() throws {
+        let label = try XCTUnwrap(Labels.Desktop(exit: "exit to %@", desktop: "Desktop %@"))
+        XCTAssertTrue(label.matches("exit to Desktop 3"))
+        XCTAssertTrue(label.matches("exit to Desktop 12"))
+        XCTAssertFalse(label.matches("exit to full screen Safari"))
+        XCTAssertFalse(label.matches("exit to Desktop "), "a name with no number is not a Desktop")
+    }
+
+    func testWindowManagersCapitalisedEnglishMatchesWithoutCase() throws {
+        let label = try XCTUnwrap(Labels.Desktop(exit: "Exit To %@", desktop: "Desktop %@"))
+        XCTAssertTrue(label.matches("Exit To Desktop 2"))
+        XCTAssertTrue(label.matches("exit to Desktop 2"))
+        XCTAssertFalse(label.matches("Exit To Fullscreen Safari"))
+    }
+
+    func testFrench() throws {
+        let dock = try XCTUnwrap(Labels.Desktop(exit: "quitter vers %@", desktop: "Bureau %@"))
+        XCTAssertTrue(dock.matches("quitter vers Bureau 2"))
+        XCTAssertFalse(dock.matches("quitter vers Safari en plein écran"))
+        // WindowManager's French table leaves the button's own words in English.
+        let windowManager = try XCTUnwrap(Labels.Desktop(exit: "Exit To %@", desktop: "Bureau %@"))
+        XCTAssertTrue(windowManager.matches("Exit To Bureau 2"))
+    }
+
+    func testGermanPutsTheVerbAfterTheName() throws {
+        let label = try XCTUnwrap(
+            Labels.Desktop(exit: "Zu %@ wechseln", desktop: "Schreibtisch %@"))
+        XCTAssertTrue(label.matches("Zu Schreibtisch 3 wechseln"))
+        XCTAssertFalse(label.matches("Zu Vollbildmodus Safari wechseln"))
+        XCTAssertFalse(label.matches("Zu Schreibtisch 3"), "the tail is part of the format")
+    }
+
+    func testAFormatNeedsExactlyOnePlaceholderAndSomeWords() {
+        XCTAssertNil(Labels.Desktop(exit: "exit", desktop: "Desktop %@"))
+        XCTAssertNil(Labels.Desktop(exit: "%@ to %@", desktop: "Desktop %@"))
+        XCTAssertNil(Labels.Desktop(exit: "%@", desktop: "%@"), "would match every button")
+        XCTAssertNotNil(Labels.Desktop(exit: "exit to %1$@", desktop: "Desktop %d"))
+    }
+
+    func testAddedLanguagesKeepEnglish() {
+        var labels = Labels.english
+        labels.add(bar: "Barre Spaces", exit: "quitter vers %@", desktop: "Bureau %@")
+        labels.add(bar: "spaces bar", exit: "Exit To %@", desktop: "Desktop %@")
+        XCTAssertTrue(labels.isSpacesBar("Barre Spaces"))
+        XCTAssertTrue(labels.isSpacesBar("Spaces Bar"))
+        XCTAssertEqual(labels.bars.count, 2, "the same title in another case is not a new one")
+        XCTAssertEqual(labels.desktops.count, 2, "the same format in another case is not a new one")
+        XCTAssertTrue(labels.isDesktopButton("quitter vers Bureau 1"))
+        XCTAssertTrue(labels.isDesktopButton("exit to Desktop 1"))
+    }
+
+    /// Whatever this Mac's tables say, English is always in.
+    func testLoadingAlwaysKeepsEnglish() {
+        let labels = Labels.load()
+        XCTAssertTrue(labels.isSpacesBar("Spaces Bar"))
+        XCTAssertTrue(labels.isDesktopButton("exit to Desktop 1"))
+    }
+}

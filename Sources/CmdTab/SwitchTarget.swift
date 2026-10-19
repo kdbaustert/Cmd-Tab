@@ -1003,20 +1003,35 @@ extension SwitchTarget {
     private final class GenerationCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var value: UInt64 = 0
+        private var stamp: UInt64 = 0
 
-        func next() -> UInt64 {
+        func next(stamping: Bool) -> UInt64 {
             lock.withLock {
                 value &+= 1
+                if stamping { stamp = DispatchTime.now().uptimeNanoseconds }
                 return value
             }
         }
 
         func isCurrent(_ generation: UInt64) -> Bool { lock.withLock { value == generation } }
+
+        var lastStamp: UInt64 { lock.withLock { stamp } }
     }
 
-    private static func beginFocus() -> UInt64 {
-        focusGeneration.next()
+    /// - Parameter stamping: false only for focus-follows-mouse's own pick — see `lastPickClaimed`.
+    private static func beginFocus(stamping: Bool = true) -> UInt64 {
+        focusGeneration.next(stamping: stamping)
     }
+
+    /// When the newest pick other than focus-follows-mouse's own was claimed, in `DispatchTime`
+    /// nanoseconds.
+    ///
+    /// The watcher holds its rests off for a moment after this, so a pick still travelling to its
+    /// Desktop is not superseded by a nudge of the pointer — see `FocusFollowsMouse.settleGrace`.
+    /// Stamped here, where every pick claims its generation, rather than by each caller, because the
+    /// callers that forgot were the bug: a thumbnail click, a direct-activation chord, a URL. Its
+    /// own picks are left out, or every focus it made would hold off the next one.
+    static var lastPickClaimed: UInt64 { focusGeneration.lastStamp }
 
     /// Whether `generation` is still the latest pick — false once any later one has been enqueued.
     private static func isCurrent(_ generation: UInt64) -> Bool {
@@ -1038,12 +1053,15 @@ extension SwitchTarget {
     /// app's *other* windows: whether any of them is already on screen is what decides whether macOS
     /// travels to this one or drags it here. It is the same single enumeration either way — `spaceState`
     /// builds the map, answers for one window and throws the rest away.
+    ///
+    /// `byPointer` is focus-follows-mouse's own pick, which claims a generation like any other but
+    /// does not stamp `lastPickClaimed`.
     static func focusWindow(
         id: CGWindowID, pid: pid_t, placement known: [CGWindowID: SpaceMover.SpaceState]? = nil,
-        title: String? = nil
+        title: String? = nil, byPointer: Bool = false
     ) {
         // Claimed on the caller's thread, before the hop: see `focusGeneration`.
-        let generation = beginFocus()
+        let generation = beginFocus(stamping: !byPointer)
         focusQueue.async {
             focusWindow(id: id, pid: pid, placement: known, title: title, generation: generation)
         }

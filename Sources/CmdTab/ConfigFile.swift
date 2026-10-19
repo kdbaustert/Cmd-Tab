@@ -79,6 +79,10 @@ final class ConfigFile: ObservableObject {
     private var fileWatcher: DispatchSourceFileSystemObject?
     private var writeWorkItem: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
+    /// A write `writeToDisk` held back because iCloud had not sent the file down yet, made once the
+    /// file lands — see `readFromDisk`. `publishOwed` when the held write was to publish over it.
+    private var writeOwed = false
+    private var publishOwed = false
 
     /// Where the mirrored file lives. The mechanism is identical either way — the same JSON, the same
     /// watcher, the same two-way mirroring — so this only ever picks a directory.
@@ -339,6 +343,8 @@ final class ConfigFile: ObservableObject {
         guard isEnabled else {
             stopWatching()
             stopObservingSettingsChanges()
+            writeOwed = false
+            publishOwed = false
             // The file is deliberately left on disk. It may be a symlink into a repo, or the copy
             // the *other* Macs are still syncing against, and deleting either because a checkbox
             // was unticked is not ours to do.
@@ -348,6 +354,8 @@ final class ConfigFile: ObservableObject {
         guard !before.enabled || before.location != location else { return }
         stopWatching()
         lastSynced = nil  // a different file entirely; nothing about the old one's bytes applies
+        writeOwed = false  // nor does a write held for it
+        publishOwed = false
         if adopting, Self.destinationWins(wasMirroring: before.enabled, leaving: before.location) {
             adopt(
                 destination: Self.url,
@@ -491,9 +499,23 @@ final class ConfigFile: ObservableObject {
     ///   the file on disk is checked first; see the body.
     private func writeToDisk(publishing: Bool = false) {
         // Never over a copy iCloud is still sending down: that is this Mac's settings overwriting
-        // the ones it is in the middle of receiving. Self-correcting — once the file lands, the
-        // status moves on and writes resume.
-        guard pendingDownload == nil else { return }
+        // the ones it is in the middle of receiving. Held rather than dropped, and the file asked
+        // for. This used to return and nothing more, on the understanding that writes resume once
+        // the file lands — but only `start` and `adopt` ever asked iCloud for it. An import onto a
+        // Mac whose copy had not come down yet, or a file iCloud evicted while the app ran, was
+        // never requested: every change in between was dropped, and when the file did arrive, with
+        // nothing synced, it won as a whole and took the import back with it.
+        guard pendingDownload == nil else {
+            if !writeOwed { requestDownload() }
+            writeOwed = true
+            publishOwed = publishOwed || publishing
+            return
+        }
+        // A publish held while the file was on its way down is still a publish, whichever write
+        // gets here first once it has landed — the debounce timer can beat the file watcher.
+        let publishes = publishing || publishOwed
+        writeOwed = false
+        publishOwed = false
         // Reading, encoding and a filesystem write, on the main thread, from a debounced timer — so
         // it lands in a run-loop turn with no user input anywhere near it. That is the shape of the
         // one stall this app has recorded that nothing could account for (236ms, "unlabelled work",
@@ -510,7 +532,7 @@ final class ConfigFile: ObservableObject {
             // replacing it would throw away every other line they changed alongside the typo.
             let disk = try? Data(contentsOf: Self.url)
             let onDisk = disk.flatMap(SettingsIO.decode)
-            if let disk, disk != lastSynced, !publishing {
+            if let disk, disk != lastSynced, !publishes {
                 guard let onDisk else {
                     Log.general.error(
                         """
@@ -577,10 +599,13 @@ final class ConfigFile: ObservableObject {
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // Written in place rather than atomically. An atomic write replaces the file with a new
-            // inode, which would silently break a symlink into a dotfiles repo — turning the whole
-            // feature into a one-shot export the first time any setting changed.
-            try data.write(to: url, options: [])
+            // Atomically, to wherever the path finally points. An atomic write to the link's own
+            // path would replace the link with a plain file and quietly turn a dotfiles setup into
+            // a one-shot export; resolved first, the rename lands on the repo's file and the link
+            // is left alone. It used to be written in place for that reason, and a crash or a full
+            // disk part-way through left a torn file — which the next write took for the user's own
+            // typo and refused to overwrite, so the mirror stopped until someone deleted it.
+            try data.write(to: url.resolvingSymlinksInPath(), options: .atomic)
             lastSynced = data
         } catch {
             Log.general.error(
@@ -595,6 +620,17 @@ final class ConfigFile: ObservableObject {
         // download finished, or fail outright offline. The file watcher brings us back once it
         // lands.
         guard pendingDownload == nil else { return }
+        // Landed with a publish held for it: the settings here are the newer statement — an import
+        // is what holds one — so they go over the file rather than the file over them.
+        if publishOwed {
+            writeToDisk()
+            return
+        }
+        // Landed with an ordinary write held for it. Read first, so whatever another Mac changed
+        // meanwhile is taken in, then write what changed here on top — the merge every write does.
+        let owesWrite = writeOwed
+        writeOwed = false
+        defer { if owesWrite { scheduleWrite() } }
         let data: Data
         do {
             data = try Data(contentsOf: Self.url)

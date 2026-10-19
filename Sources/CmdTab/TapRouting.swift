@@ -28,6 +28,10 @@ import CoreGraphics
 ///   front — but a trigger recorder asked for the chord the *other* trigger holds never saw it.
 /// - **Key repeat is swallowed but not acted on.** Cycling ½ → ⅔ → ⅓ under autorepeat would strobe
 ///   a window through every width in a fraction of a second.
+/// - **A repeat of a withheld press is never acted on, openers included.** It reaches this path
+///   only after the session that took the press has ended with the key still held: Escape with Tab
+///   down re-opened the panel on the next repeat, and a held ⌘3 that committed went on typing 3s
+///   into the app it had just brought forward, which never saw the press.
 ///
 /// Lookups come in as closures rather than the stores themselves, which is what lets a test state a
 /// binding table in a line and ask what a keystroke does.
@@ -38,14 +42,20 @@ enum TapRouting {
         var keyCode: Int
         var flags: CGEventFlags
         var isAutorepeat: Bool
+        /// Whether this key's press was withheld from the app in front — see `KeyPairing`.
+        var pressWasWithheld: Bool
 
         /// ⇧ on a trigger means "go the other way round the list".
         var backwards: Bool { flags.contains(.maskShift) }
 
-        init(keyCode: Int, flags: CGEventFlags, isAutorepeat: Bool = false) {
+        init(
+            keyCode: Int, flags: CGEventFlags, isAutorepeat: Bool = false,
+            pressWasWithheld: Bool = false
+        ) {
             self.keyCode = keyCode
             self.flags = flags
             self.isAutorepeat = isAutorepeat
+            self.pressWasWithheld = pressWasWithheld
         }
     }
 
@@ -121,6 +131,9 @@ enum TapRouting {
     static func idle(
         _ event: Event, bindings: Bindings, isAppActive: Bool, isRecording: Bool = false
     ) -> Decision {
+        // Ahead of everything, the openers too, and swallowed so the key's two edges still pair:
+        // the app never saw this press, so it must not start seeing the key part-way through it.
+        if event.isAutorepeat, event.pressWasWithheld { return .consume }
         // Openers first. Not guarded by `isAppActive` alone: they are recorded by a different
         // control from everything below, and opening the switcher from the settings window is
         // long-standing behaviour. They stand down while a recorder is listening, though, or the
@@ -205,5 +218,10 @@ struct KeyPairing {
     /// Whether to withhold this key-up, which is whether its key-down was withheld.
     mutating func keyUp(_ code: Int) -> Bool {
         withheld.remove(code) != nil
+    }
+
+    /// Whether this key's press so far has been withheld, without settling it.
+    func isWithheld(_ code: Int) -> Bool {
+        withheld.contains(code)
     }
 }

@@ -59,6 +59,8 @@ final class PanelGroup {
     /// Live only while the panels are up — see `startScreenTracking`.
     private var screenObserver: NSObjectProtocol?
     private var scrollAccumulator: CGFloat = 0
+    /// Whether a trackpad scroll gesture began while the panels were up — see `handleScroll`.
+    private var scrollGestureBegan = false
     /// The last target emitted, so nothing re-fires while the cursor sits on the same tile.
     private var lastPreviewTarget: PreviewTarget = .away
     /// Whether the cursor has moved at all this session.
@@ -433,6 +435,7 @@ final class PanelGroup {
         if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
         scrollMonitor = nil
         scrollAccumulator = 0
+        scrollGestureBegan = false
         lastHoverLocation = nil
         // Reset unconditionally rather than through `emitPreview`, which is gated on the setting, so
         // the next session starts clean. The controller takes the strip down itself on hide.
@@ -548,6 +551,14 @@ final class PanelGroup {
     private static let scrollStep: CGFloat = 20
 
     private func handleScroll(_ event: NSEvent) {
+        // A trackpad flick goes on posting momentum deltas for a second or more after the fingers
+        // lift, and the global monitor hears them wherever they land. So a flick in Safari just
+        // before ⌘-Tab kept stepping the highlight off the app it opened on, and letting go
+        // switched to wherever the tail stopped. Momentum counts only when the gesture it carries
+        // on from began during this session. A notched wheel posts no phases at all, so it is
+        // untouched, and so is a scroll the user is still making with their fingers down.
+        if event.phase.contains(.began) { scrollGestureBegan = true }
+        if !event.momentumPhase.isEmpty, !scrollGestureBegan { return }
         // A trackpad or Magic Mouse posts many tiny *point* deltas; accumulate until a full step
         // has landed. A notched wheel reports in *lines* instead — about one per notch — and fed
         // through the same threshold it took twenty notches to move the highlight once. So a line

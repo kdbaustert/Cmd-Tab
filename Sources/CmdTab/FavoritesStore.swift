@@ -117,6 +117,11 @@ extension UserDefaults {
                 entries that are not bundle identifiers
                 """)
         }
-        return ids
+        // First occurrence kept, order otherwise untouched. `add` refuses a duplicate, but an
+        // import or a hand-edited config does not go through it, and a favourite listed twice put
+        // two tiles with one id into the switcher — which `ForEach` and the selection anchor both
+        // assume cannot happen.
+        var seen = Set<String>()
+        return ids.filter { seen.insert($0).inserted }
     }
 }

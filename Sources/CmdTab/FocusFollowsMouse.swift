@@ -52,20 +52,19 @@ final class FocusFollowsMouse {
         didSet { if isSwitcherVisible { disarm() } }
     }
 
-    /// Told by the controller that a pick was just handed to `SwitchTarget`.
+    /// How long after another pick a rest waits before it may focus anything.
     ///
     /// A pick that travels to another Desktop settles over as much as a second — `SwitchTarget`'s
     /// settle and verify waits — under the same newest-pick generation this watcher claims when it
     /// focuses. So a nudge and a rest over whatever lay under the pointer in that window started a
     /// newer pick, and the switch gave up at its next check: you arrived on the Desktop with focus
-    /// on the window under the cursor, or were pulled back. A rest inside `settleGrace` of a pick is
-    /// ignored instead.
-    func pickCommitted() {
-        lastPick = DispatchTime.now().uptimeNanoseconds
-    }
-
-    /// When the switcher last committed a pick, in `DispatchTime` nanoseconds.
-    private var lastPick: UInt64 = 0
+    /// on the window under the cursor, or were pulled back. A rest inside the grace waits it out
+    /// instead.
+    ///
+    /// Measured from `SwitchTarget.lastPickClaimed`, which every pick stamps but this watcher's own.
+    /// It used to be stamped by the switcher's commit alone, so a thumbnail click, a
+    /// direct-activation chord, a `cmdtab://activate` URL or a Shortcuts action — every one of them
+    /// able to travel — could still be superseded by a rest.
     private static let settleGrace: UInt64 = 1_500_000_000
 
     private var monitor: Any?
@@ -176,8 +175,17 @@ final class FocusFollowsMouse {
         // pointer under a held key is not a hover.
         guard NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
         else { return }
-        // A switcher pick still landing — see `pickCommitted`.
-        guard DispatchTime.now().uptimeNanoseconds &- lastPick > Self.settleGrace else { return }
+        // A pick still landing — see `settleGrace`. Deferred to the end of the grace rather than
+        // dropped: `wake` disarmed on its way here, so returning left nothing scheduled, and a
+        // pointer parked over a window inside the grace never focused it until it moved again.
+        // The re-check on landing goes through `wake`, so a pointer that moved in the meantime
+        // still has to rest for the full delay.
+        let sincePick = DispatchTime.now().uptimeNanoseconds &- SwitchTarget.lastPickClaimed
+        guard sincePick > Self.settleGrace else {
+            isArmed = true
+            schedule(after: Self.settleGrace - sincePick)
+            return
+        }
 
         let point = Self.cursorInWindowSpace()
         // Resting on something drawn *over* the windows — an open menu, the Dock, the menu bar, a
@@ -211,7 +219,7 @@ final class FocusFollowsMouse {
         // among other things, is what shifts the switcher's own list by one.
         guard target.pid != ProcessInfo.processInfo.processIdentifier else { return }
 
-        SwitchTarget.focusWindow(id: target.id, pid: target.pid)
+        SwitchTarget.focusWindow(id: target.id, pid: target.pid, byPointer: true)
     }
 
     /// The cursor in the window server's top-left space, which is what `CGWindowListCopyWindowInfo`
