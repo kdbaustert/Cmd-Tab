@@ -261,6 +261,55 @@ final class AccessibilityHarnessTests: XCTestCase {
         assertFrame(landed, expected, "left half")
     }
 
+    func testATitleRulePreventsMovingAWindow() async throws {
+        let window = try openWindow(
+            at: NSRect(x: 180, y: 180, width: 600, height: 400), title: "Protected")
+        let other = try openWindow(
+            at: NSRect(x: 240, y: 240, width: 500, height: 360), title: "Other")
+        let area = try homeArea(of: window)
+        let before = try XCTUnwrap(AX.frame(window))
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let rules = [CompiledTitleRule(
+            bundleID: nil, action: .neverTile,
+            regex: try NSRegularExpression(pattern: "^Protected$"))]
+
+        WindowTiler.apply(
+            .leftHalf, pid: pid, areas: [area], cycleWidths: false,
+            target: .element(window), titleRules: rules)
+        let finished = expectation(description: "the next unprotected tile was written")
+        WindowTiler.apply(
+            .center, pid: pid, areas: [area], cycleWidths: false,
+            target: .element(other), titleRules: rules
+        ) { finished.fulfill() }
+        await fulfillment(of: [finished], timeout: 3)
+        assertFrame(AX.frame(window), before)
+    }
+
+    func testADisplayOnlyPlacementKeepsTheWindowsSize() async throws {
+        let window = try openWindow(
+            at: NSRect(x: 180, y: 180, width: 600, height: 400), title: "Display only")
+        let areas = WindowTiler.visibleAreas()
+        let before = try XCTUnwrap(AX.frame(window))
+        let home = try XCTUnwrap(WindowTiler.homeDisplay(of: before, in: areas))
+        try XCTSkipUnless(areas.count > 1, "this test needs a second display")
+        let destination = areas[(home + 1) % areas.count]
+        let expected = WindowTiler.carried(before, from: areas[home], to: destination)
+        let finished = expectation(description: "the display move was written")
+        WindowTiler.apply(
+            nil, pid: ProcessInfo.processInfo.processIdentifier, areas: areas,
+            cycleWidths: false, target: .element(window), destination: destination
+        ) { finished.fulfill() }
+        await fulfillment(of: [finished], timeout: 3)
+        let landed = try waitFor("the display move to land") { () -> CGRect? in
+            guard let frame = AX.frame(window),
+                abs(frame.minX - expected.minX) <= tolerance,
+                abs(frame.minY - expected.minY) <= tolerance
+            else { return nil }
+            return frame
+        }
+        assertFrame(landed, expected)
+    }
+
     /// The position → size → position dance exists because hosts clamp one against the other. A
     /// window that has to both move and grow is the case that catches a host doing it.
     func testAWindowThatMustMoveAndGrowLandsInOneGo() throws {

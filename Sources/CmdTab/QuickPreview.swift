@@ -155,7 +155,10 @@ final class QuickPreview {
     func selectionChanged(_ target: SwitchTarget?) {
         guard isShowing else { return }
         updateWork?.cancel()
-        guard let target else { return }
+        guard let target, !target.isLaunchable else {
+            dismiss()
+            return
+        }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.isShowing else { return }

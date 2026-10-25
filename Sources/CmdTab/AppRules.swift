@@ -34,7 +34,12 @@ struct AppRule: Equatable {
     /// goes, and a rule that forgot its number the moment it was disconnected would need
     /// re-entering every time it was plugged back in. Unplugged, the move is skipped and the
     /// arrangement still applies wherever the window actually opened.
-    var launchDisplay: Int?
+    var launchDisplay: Int? {
+        get { storedLaunchDisplay }
+        set { storedLaunchDisplay = newValue.flatMap { $0 > 0 ? $0 : nil } }
+    }
+
+    private var storedLaunchDisplay: Int?
 
     var isDefault: Bool { self == AppRule() }
 

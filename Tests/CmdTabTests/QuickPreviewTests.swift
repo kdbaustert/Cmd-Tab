@@ -31,6 +31,30 @@ final class QuickPreviewTests: XCTestCase {
         XCTAssertNil(QuickPreview.pick([], windowID: nil))
     }
 
+    @MainActor
+    func testSelectingATileWithoutAWindowDismissesThePreview() {
+        _ = NSApplication.shared
+        let switcher = PanelGroup(model: SwitcherModel())
+        let preview = QuickPreview(switcher: switcher, isActive: { false })
+        let running = SwitchTarget(
+            id: "running", kind: .app(ProcessInfo.processInfo.processIdentifier),
+            title: "Running", appName: "Running", icon: nil, isMinimized: false, isHidden: false)
+        let launch = SwitchTarget(
+            id: "launch", kind: .launch(URL(fileURLWithPath: "/Applications/Notes.app")),
+            title: "Notes", appName: "Notes", icon: nil, isMinimized: false, isHidden: false)
+        let fallback = SwitchTarget(
+            id: "fallback", kind: .fallback(.shellCommand("preview")),
+            title: "Search", appName: "Search", icon: nil, isMinimized: false, isHidden: false)
+
+        for target: SwitchTarget? in [launch, fallback, nil] {
+            preview.toggle(for: running)
+            XCTAssertTrue(preview.isShowing)
+            preview.selectionChanged(target)
+            XCTAssertFalse(preview.isShowing)
+            XCTAssertFalse(preview.isOnScreen)
+        }
+    }
+
     // MARK: - Where the panel lands
 
     private let screen = NSRect(x: 0, y: 0, width: 1600, height: 1000)

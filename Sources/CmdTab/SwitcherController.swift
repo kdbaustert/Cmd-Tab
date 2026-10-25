@@ -1055,6 +1055,7 @@ final class SwitcherController {
         // reads, which the class invariant keeps off the tap callback — and there is nothing to
         // report back, since the key is already swallowed by the time this runs.
         let rules = appRules
+        let titleRules = self.titleRules
         // `[self]` stated: this one-shot block holds `self` for its own life anyway, and the inner
         // `[weak self]` on the mover's completion reads as a lie next to an implicit strong capture
         // — which is the warning the compiler raised about it.
@@ -1094,7 +1095,7 @@ final class SwitcherController {
             // can express — so it never reaches the tiler either. It re-checks `neverTile` for both
             // ends; see `WindowNavigator.swap`.
             if let direction = arrangement.swapStep {
-                WindowNavigator.swap(direction, from: pid, rules: rules)
+                WindowNavigator.swap(direction, from: pid, rules: rules, titleRules: titleRules)
                 return
             }
             // A Desktop move is not geometry, so it does not go to the tiler. `WindowTiler.apply`
@@ -1114,7 +1115,9 @@ final class SwitcherController {
                         "desktop move: pid \(pid, privacy: .public), step \(step, privacy: .public)")
                     destination = .step(step)
                 }
-                DesktopMover.move(pid: pid, to: destination, follow: follows) { [weak self] in
+                DesktopMover.move(
+                    pid: pid, to: destination, follow: follows, titleRules: titleRules
+                ) { [weak self] in
                     // The gesture activates Mission Control, so the activation notifications it
                     // fires rebuild the list while the window is between Desktops — and nothing
                     // rebuilds it again once the window has landed. Under a Desktop order that
@@ -1129,7 +1132,7 @@ final class SwitcherController {
                 "tiling: applying to pid \(pid, privacy: .public), gap \(Int(gap), privacy: .public)")
             WindowTiler.apply(
                 arrangement, pid: pid, areas: WindowTiler.visibleAreas(),
-                cycleWidths: cycleWidths, gap: gap, warpsPointer: warpsPointer)
+                cycleWidths: cycleWidths, gap: gap, warpsPointer: warpsPointer, titleRules: titleRules)
         }
     }
 
@@ -2782,7 +2785,7 @@ final class SwitcherController {
                 Log.tap.notice("tiling: \(id ?? target.title, privacy: .public) is set to never tile")
                 continue
             }
-            target.tileWindow(slot, visibleAreas: area, cycleWidths: tiling.cycleWidths, gap: tiling.gap)
+            target.tileWindow(slot, visibleAreas: area, cycleWidths: false, gap: tiling.gap)
         }
         model.clearMarks()
         scheduleLayout()

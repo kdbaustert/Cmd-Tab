@@ -993,8 +993,7 @@ into per-window tiles rather than singling out just the matching window — an a
 window shows all of its windows individually, not that one alone, because the switcher's per-app
 expansion has no finer-grained way to say "this one, not its siblings". And **never tile** matched by
 title protects a window from the tiling chords, the titlebar drag, the modifier-drag, a restored
-display layout, a launch arrangement and a Desktop assignment — it does not yet reach the
-window-swap chord, which still checks only the per-app override.
+display layout, a launch arrangement, a Desktop assignment and either window in a swap.
 
 **Direct activation** gives an app its own chord: pressing it jumps straight there, launching the
 app if it isn't running. For the handful of apps you reach for all day the switcher is pure

@@ -38,6 +38,22 @@ final class AppRuleTests: XCTestCase {
         XCTAssertFalse(displayed.isDefault)
     }
 
+    func testNonpositiveLaunchDisplaysAreIgnored() {
+        var rule = AppRule()
+        for display in [Int.min, -1, 0] {
+            rule.launchDisplay = 2
+            rule.launchDisplay = display
+            XCTAssertNil(rule.launchDisplay)
+            XCTAssertEqual(rule, AppRule())
+        }
+    }
+
+    func testAnUnpluggedDisplayChoiceIsPreservedWithoutAnUpperBound() {
+        var rule = AppRule()
+        rule.launchDisplay = Int.max
+        XCTAssertEqual(rule.launchDisplay, Int.max)
+    }
+
     // MARK: - Display name
 
     func testLabelFallsBackToTheAppsOwnName() {

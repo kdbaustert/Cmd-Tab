@@ -83,6 +83,8 @@ final class ConfigFile: ObservableObject {
     /// file lands — see `readFromDisk`. `publishOwed` when the held write was to publish over it.
     private var writeOwed = false
     private var publishOwed = false
+    /// Local settings before the download, so edits made while waiting survive its arrival.
+    private var downloadBaseline: [String: Any]?
 
     /// Where the mirrored file lives. The mechanism is identical either way — the same JSON, the same
     /// watcher, the same two-way mirroring — so this only ever picks a directory.
@@ -345,6 +347,7 @@ final class ConfigFile: ObservableObject {
             stopObservingSettingsChanges()
             writeOwed = false
             publishOwed = false
+            downloadBaseline = nil
             // The file is deliberately left on disk. It may be a symlink into a repo, or the copy
             // the *other* Macs are still syncing against, and deleting either because a checkbox
             // was unticked is not ours to do.
@@ -356,6 +359,7 @@ final class ConfigFile: ObservableObject {
         lastSynced = nil  // a different file entirely; nothing about the old one's bytes applies
         writeOwed = false  // nor does a write held for it
         publishOwed = false
+        downloadBaseline = nil
         if adopting, Self.destinationWins(wasMirroring: before.enabled, leaving: before.location) {
             adopt(
                 destination: Self.url,
@@ -434,6 +438,10 @@ final class ConfigFile: ObservableObject {
     @discardableResult
     private func requestDownload() -> Bool {
         guard let url = pendingDownload else { return false }
+        if downloadBaseline == nil {
+            downloadBaseline = lastSynced.flatMap(SettingsIO.decode)
+                ?? SettingsIO.currentPayload(ignoring: Self.mirrorKeys)
+        }
         do {
             try FileManager.default.startDownloadingUbiquitousItem(at: url)
             Log.general.notice("config file: waiting for iCloud to send the file down")
@@ -514,6 +522,7 @@ final class ConfigFile: ObservableObject {
         // A publish held while the file was on its way down is still a publish, whichever write
         // gets here first once it has landed — the debounce timer can beat the file watcher.
         let publishes = publishing || publishOwed
+        defer { downloadBaseline = nil }
         writeOwed = false
         publishOwed = false
         // Reading, encoding and a filesystem write, on the main thread, from a debounced timer — so
@@ -626,8 +635,8 @@ final class ConfigFile: ObservableObject {
             writeToDisk()
             return
         }
-        // Landed with an ordinary write held for it. Read first, so whatever another Mac changed
-        // meanwhile is taken in, then write what changed here on top — the merge every write does.
+        // Apply cloud changes without replacing keys edited here during the download. The
+        // deferred write then publishes those local edits alongside the downloaded settings.
         let owesWrite = writeOwed
         writeOwed = false
         defer { if owesWrite { scheduleWrite() } }
@@ -647,7 +656,10 @@ final class ConfigFile: ObservableObject {
             }
             return
         }
-        guard data != lastSynced else { return }  // our own write coming back around
+        guard data != lastSynced else {
+            downloadBaseline = nil
+            return
+        }
         guard let payload = SettingsIO.decode(data) else {
             // Reported rather than swallowed: a config file with a stray comma otherwise looks
             // exactly like one the app is ignoring for no reason. `writeToDisk` refuses to write
@@ -664,11 +676,15 @@ final class ConfigFile: ObservableObject {
     /// has not been edited, and applying it anyway reverted any change made in Settings since the
     /// last write — the checkbox ticked a moment before the debounced write went out, or everything
     /// changed here while an in-place edit sat unseen. With nothing synced yet — at launch, or on
-    /// arriving at a different file — everything in it is new, and the file wins as a whole.
+    /// arriving at a different file — everything in it is new. Edits made here while a download
+    /// was pending are protected against both the first read and a write that beats the watcher.
     private func absorb(_ payload: [String: Any], read data: Data) {
         let base = lastSynced.flatMap(SettingsIO.decode)
         lastSynced = data
-        let changes = Self.changes(from: base, to: payload)
+        let changes = Self.changes(
+            from: base, to: payload, localBase: downloadBaseline,
+            local: SettingsIO.currentPayload(ignoring: Self.mirrorKeys))
+        downloadBaseline = nil
         guard !changes.isEmpty else { return }
         SettingsIO.apply(changes, ignoring: Self.mirrorKeys)
     }
@@ -678,11 +694,18 @@ final class ConfigFile: ObservableObject {
     /// arrives as `null` instead — see `filePayload` — which differs from any value and so is one.
     /// Pure, so the merge can be checked without a file.
     nonisolated static func changes(
-        from base: [String: Any]?, to payload: [String: Any]
+        from base: [String: Any]?, to payload: [String: Any],
+        localBase: [String: Any]? = nil, local: [String: Any] = [:]
     ) -> [String: Any] {
-        guard let base else { return payload }
         return payload.filter { key, value in
-            guard let before = base[key] else { return true }
+            if let localBase {
+                // Missing and null both mean the default in the file. A local reset removes its
+                // key, so it must be protected just as a newly recorded value is.
+                let before = localBase[key] ?? NSNull()
+                let now = local[key] ?? NSNull()
+                guard (before as AnyObject).isEqual(now) else { return false }
+            }
+            guard let before = base?[key] else { return true }
             return !(before as AnyObject).isEqual(value)
         }
     }

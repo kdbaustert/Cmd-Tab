@@ -2092,15 +2092,18 @@ enum WindowTiler {
     /// a window back hanging off the screen rather than where it was picked up. Keyboard chords
     /// move nothing first and pass none.
     ///
+    /// A nil arrangement moves to `destination` without applying a new tile.
+    ///
     /// `completion` runs after the window has been written, on the tiler's queue, and not at all
     /// when nothing was — the in-switcher display move raises and focuses the window once it has
     /// landed.
     static func apply(
-        _ arrangement: WindowArrangement, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
+        _ arrangement: WindowArrangement?, pid: pid_t, areas: [CGRect], cycleWidths: Bool,
         gap: CGFloat = 0, target: Target? = nil, destination: CGRect? = nil,
-        anchor: CGRect? = nil, warpsPointer: Bool = false, completion: (@Sendable () -> Void)? = nil
+        anchor: CGRect? = nil, warpsPointer: Bool = false, titleRules: [CompiledTitleRule] = [],
+        completion: (@Sendable () -> Void)? = nil
     ) {
-        guard !areas.isEmpty else { return }
+        guard !areas.isEmpty, arrangement != nil || destination != nil else { return }
         queue.async {
             guard let window = resolve(target, pid: pid), let current = AX.frame(window) else {
                 // Said, because the chord otherwise does nothing with no trace of why: an app that
@@ -2108,10 +2111,12 @@ enum WindowTiler {
                 Log.general.notice(
                     """
                     tiling: no window with a readable frame for pid \(pid, privacy: .public); \
-                    \(arrangement.rawValue, privacy: .public) not applied
+                    \(arrangement?.rawValue ?? "display move", privacy: .public) not applied
                     """)
                 return
             }
+            let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+            guard !titleRules.protectsFromTiling(window, bundleID: bundleID) else { return }
             let key = WindowKey(element: window)
 
             // The screen the window is mostly on, rather than the one it merely touches: a window
@@ -2143,7 +2148,15 @@ enum WindowTiler {
             var fitArea: CGRect?
             var fitGap: CGFloat = 0
             var remember: ((inout RestorePoint, [CGRect]) -> Void)?
-            if let step = arrangement.displayStep {
+            if arrangement == nil, let destination {
+                guard resolved != nil, destination != areas[home] else { return }
+                target = displayMoveTarget(
+                    current: current, from: areas[home], to: destination,
+                    slot: restorePoints[key], gap: gap)
+                (fitArea, fitGap, remember) = displayMoveBookkeeping(
+                    current: current, to: destination, slot: restorePoints[key], gap: gap)
+                cycle = nil
+            } else if let step = arrangement?.displayStep {
                 // A move, unlike a tile, is relative: without a display to count from there is no
                 // "next" one, and counting from the fallback would throw the window off a display it
                 // was never on.
@@ -2163,7 +2176,7 @@ enum WindowTiler {
                 // A move is not a tile: it must not consume the restore point, and the width cycle
                 // has to start over on the new display.
                 cycle = nil
-            } else if let index = arrangement.displayIndex {
+            } else if let index = arrangement?.displayIndex {
                 // Same arithmetic as the relative move, and deliberately the same `carried` call —
                 // a window thrown to display 2 has to land exactly where "next display" would have
                 // put it when display 2 is the next one along.
@@ -2212,6 +2225,7 @@ enum WindowTiler {
                 target = restoreTarget(
                     saved.frame, savedOn: saved.desk, desk: areas, fallback: area)
             } else {
+                guard let arrangement else { return }
                 let fraction = nextFraction(
                     for: arrangement, key: key, cycleWidths: cycleWidths, current: current,
                     area: area, gap: gap)
@@ -2253,7 +2267,7 @@ enum WindowTiler {
                 fitGap: fitGap, remember: remember)
             Log.general.notice(
                 """
-                tiling: \(arrangement.rawValue, privacy: .public) wrote \
+                tiling: \(arrangement?.rawValue ?? "display move", privacy: .public) wrote \
                 \(Int(target.width), privacy: .public)×\(Int(target.height), privacy: .public) \
                 for pid \(pid, privacy: .public)
                 """)
@@ -2270,7 +2284,7 @@ enum WindowTiler {
             // and its downward y with the Accessibility coordinates `target` is already in — so the
             // centre needs no flip. The same call, in the same space, that `DesktopMover` uses to
             // put the pointer on a window before it drags one.
-            if warpsPointer, arrangement.movesAcrossDisplays {
+            if warpsPointer, arrangement?.movesAcrossDisplays == true {
                 CGWarpMouseCursorPosition(CGPoint(x: target.midX, y: target.midY))
                 // Without this the pointer is *drawn* at the new place while the window server keeps
                 // feeding mouse deltas relative to the old one, so the next flick of the trackpad
@@ -2858,5 +2872,12 @@ extension Collection where Element == CompiledTitleRule {
     /// skips the read when this says no.
     func mayNeverTile(_ bundleID: String?) -> Bool {
         contains { $0.action == .neverTile && ($0.bundleID == nil || $0.bundleID == bundleID) }
+    }
+
+    func protectsFromTiling(_ window: AXUIElement, bundleID: String?) -> Bool {
+        guard mayNeverTile(bundleID) else { return false }
+        return CompiledTitleRule.matches(
+            Array(self), bundleID: bundleID, title: AX.copyString(window, kAXTitleAttribute) ?? "",
+            action: .neverTile)
     }
 }

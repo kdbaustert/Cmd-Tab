@@ -262,6 +262,45 @@ final class ConfigFileLocationTests: XCTestCase {
         XCTAssertEqual(ConfigFile.changes(from: nil, to: ["a": 1, "b": 2]).count, 2)
     }
 
+    func testADownloadKeepsLocalEditsAndAppliesUnchangedKeys() throws {
+        let suite = ThrowawayDefaults.suiteName(in: "configfile")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { ThrowawayDefaults.remove(suite) }
+        defaults.set(120, forKey: "iconSize")
+        defaults.set(false, forKey: "stickyMode")
+
+        let downloaded = try roundTrip(["iconSize": 88, "stickyMode": true])
+        let changes = ConfigFile.changes(
+            from: nil, to: downloaded,
+            localBase: ["iconSize": 88, "stickyMode": false],
+            local: ["iconSize": 120, "stickyMode": false])
+        SettingsIO.apply(changes, to: defaults)
+
+        XCTAssertEqual(defaults.integer(forKey: "iconSize"), 120)
+        XCTAssertEqual(defaults.bool(forKey: "stickyMode"), true)
+        let published = ConfigFile.filePayload(
+            defaults.persistentDomain(forName: suite) ?? [:], preserving: downloaded,
+            known: ["iconSize", "stickyMode"], clearable: ["iconSize", "stickyMode"])
+        XCTAssertEqual(published["iconSize"] as? Int, 120)
+        XCTAssertEqual(published["stickyMode"] as? Bool, true)
+    }
+
+    func testADownloadKeepsLocalResetsAndNewValues() {
+        let changes = ConfigFile.changes(
+            from: nil, to: ["iconSize": 100, "stickyMode": false, "maxColumns": 6],
+            localBase: ["iconSize": 88], local: ["stickyMode": true])
+        XCTAssertEqual(Set(changes.keys), ["maxColumns"])
+        XCTAssertEqual(changes["maxColumns"] as? Int, 6)
+    }
+
+    func testADownloadStillAppliesCloudEditsWhenLocalSettingsAreUnchanged() {
+        let changes = ConfigFile.changes(
+            from: ["iconSize": 88], to: ["iconSize": 100, "stickyMode": true],
+            localBase: ["iconSize": 88, "stickyMode": NSNull()], local: ["iconSize": 88])
+        XCTAssertEqual(changes["iconSize"] as? Int, 100)
+        XCTAssertEqual(changes["stickyMode"] as? Bool, true)
+    }
+
     /// Absent means "leave alone" here as everywhere else in the file's contract; deleting a line
     /// is not a reset.
     func testALineDeletedFromTheFileIsNotAChange() {

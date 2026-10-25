@@ -721,7 +721,7 @@ private struct AppOverrideControls: View {
     /// display gone — and `1...0` is not an empty range but a trap, which took the settings window
     /// and the whole app down with it.
     private var displayChoiceCount: Int {
-        max(1, NSScreen.screens.count, rules.rule(for: bundleID).launchDisplay ?? 0)
+        max(1, NSScreen.screens.count)
     }
 
     var body: some View {
@@ -748,6 +748,9 @@ private struct AppOverrideControls: View {
                     Text("Any display").tag(Int?.none)
                     ForEach(1...displayChoiceCount, id: \.self) { number in
                         Text("Display \(number)").tag(Int?.some(number))
+                    }
+                    if let saved = launchDisplay.wrappedValue, saved > displayChoiceCount {
+                        Text("Display \(saved)").tag(Int?.some(saved))
                     }
                 }
                 .labelsHidden()

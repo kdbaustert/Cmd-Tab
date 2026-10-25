@@ -61,7 +61,7 @@ final class LaunchArrangementWatcher {
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
             let bundleID = app.bundleIdentifier,
             let rule = appRules[bundleID],
-            let arrangement = rule.launchArrangement,
+            rule.launchArrangement != nil || rule.launchDisplay != nil,
             app.activationPolicy == .regular
         else { return }
         // `neverTile` is the stronger statement of the two, and a rule holding both is contradictory
@@ -75,8 +75,13 @@ final class LaunchArrangementWatcher {
         let pid = app.processIdentifier
         guard watching.insert(pid).inserted else { return }
         Log.general.notice(
-            "launch arrangement: watching \(bundleID, privacy: .public) for \(arrangement.rawValue, privacy: .public)")
-        poll(pid: pid, arrangement: arrangement, launchDisplay: rule.launchDisplay, remaining: Self.attempts)
+            """
+            launch arrangement: watching \(bundleID, privacy: .public) for \
+            \(rule.launchArrangement?.rawValue ?? "display move", privacy: .public)
+            """)
+        poll(
+            pid: pid, arrangement: rule.launchArrangement, launchDisplay: rule.launchDisplay,
+            remaining: Self.attempts)
     }
 
     /// Waits for the app to own a switchable window, then tiles it.
@@ -86,7 +91,7 @@ final class LaunchArrangementWatcher {
     /// replaced by the app between the poll and the tile (Electron hosts swap their first window
     /// out), and the tiler's `AX.frontWindow` re-read is what makes it the window on screen.
     private func poll(
-        pid: pid_t, arrangement: WindowArrangement, launchDisplay: Int?, remaining: Int
+        pid: pid_t, arrangement: WindowArrangement?, launchDisplay: Int?, remaining: Int
     ) {
         guard remaining > 0 else {
             watching.remove(pid)
@@ -126,7 +131,7 @@ final class LaunchArrangementWatcher {
 
     /// The readiness answer, back on the main thread: tile now, or wait out `delay` and ask again.
     private func resume(
-        pid: pid_t, arrangement: WindowArrangement, launchDisplay: Int?, remaining: Int,
+        pid: pid_t, arrangement: WindowArrangement?, launchDisplay: Int?, remaining: Int,
         isReady: Bool, isProtected: Bool
     ) {
         guard isReady else {
@@ -154,11 +159,11 @@ final class LaunchArrangementWatcher {
         // window's frame to find its new display. On hosts that apply Accessibility writes late the
         // move had not landed by then, and the window was tiled on the display it opened on.
         let destination = launchDisplay.flatMap { number in
-            areas.indices.contains(number - 1) ? areas[number - 1] : nil
+            number > 0 && number <= areas.count ? areas[number - 1] : nil
         }
         Log.general.notice(
             """
-            launch arrangement: applying \(arrangement.rawValue, privacy: .public) to pid \
+            launch arrangement: applying \(arrangement?.rawValue ?? "display move", privacy: .public) to pid \
             \(pid, privacy: .public) on \
             \(launchDisplay.map { "display \($0)" } ?? "its own display", privacy: .public)
             """)

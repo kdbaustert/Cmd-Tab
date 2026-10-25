@@ -230,7 +230,10 @@ enum WindowNavigator {
     ///
     /// `rules` is consulted for *both* windows: an app the user has told us never to tile must not
     /// be moved because something beside it was.
-    static func swap(_ direction: WindowDirection, from pid: pid_t, rules: [String: AppRule]) {
+    static func swap(
+        _ direction: WindowDirection, from pid: pid_t, rules: [String: AppRule],
+        titleRules: [CompiledTitleRule]
+    ) {
         let windows = onScreen()
         guard let (from, rest) = origin(pid: pid, in: windows) else {
             Log.tap.notice("swap \(direction.rawValue, privacy: .public): no window to move")
@@ -264,6 +267,11 @@ enum WindowNavigator {
                 Log.tap.notice("swap: could not resolve both windows over Accessibility")
                 return
             }
+            let sourceID = NSRunningApplication(processIdentifier: from.pid)?.bundleIdentifier
+            let targetID = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
+            guard !titleRules.protectsFromTiling(source, bundleID: sourceID),
+                !titleRules.protectsFromTiling(destination, bundleID: targetID)
+            else { return }
             AX.setFrame(source, target.frame, sizing: true, repositionAfterSizing: true)
             AX.setFrame(destination, from.frame, sizing: true, repositionAfterSizing: true)
         }

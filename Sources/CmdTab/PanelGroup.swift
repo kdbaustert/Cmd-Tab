@@ -55,7 +55,6 @@ final class PanelGroup {
     // highlight stops following the cursor. Polling is immune to that.
     private var hoverTimer: Timer?
     private var lastHoverLocation: NSPoint?
-    private var scrollMonitor: Any?
     /// Live only while the panels are up — see `startScreenTracking`.
     private var screenObserver: NSObjectProtocol?
     private var scrollAccumulator: CGFloat = 0
@@ -421,19 +420,11 @@ final class PanelGroup {
         timer.tolerance = 1.0 / 240.0
         RunLoop.main.add(timer, forMode: .common)
         hoverTimer = timer
-        // Scroll stays a global monitor — deltas can't be polled. It shares the frontmost-app
-        // limitation above, but scroll-to-move is secondary to the cursor highlight.
-        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) {
-            [weak self] event in
-            MainActor.assumeIsolated { self?.handleScroll(event) }
-        }
     }
 
     private func stopHoverTracking() {
         hoverTimer?.invalidate()
         hoverTimer = nil
-        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
-        scrollMonitor = nil
         scrollAccumulator = 0
         scrollGestureBegan = false
         lastHoverLocation = nil
@@ -552,9 +543,9 @@ final class PanelGroup {
 
     private func handleScroll(_ event: NSEvent) {
         // A trackpad flick goes on posting momentum deltas for a second or more after the fingers
-        // lift, and the global monitor hears them wherever they land. So a flick in Safari just
-        // before ⌘-Tab kept stepping the highlight off the app it opened on, and letting go
-        // switched to wherever the tail stopped. Momentum counts only when the gesture it carries
+        // lift. A flick in Safari just before ⌘-Tab can land its tail on a newly opened panel,
+        // moving the highlight before the user releases the trigger. Momentum counts only when
+        // the gesture it carries
         // on from began during this session. A notched wheel posts no phases at all, so it is
         // untouched, and so is a scroll the user is still making with their fingers down.
         if event.phase.contains(.began) { scrollGestureBegan = true }

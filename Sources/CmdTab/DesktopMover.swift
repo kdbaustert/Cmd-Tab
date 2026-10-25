@@ -118,7 +118,7 @@ enum DesktopMover {
     /// back ended the chain there with every move after it silently dropped.
     static func move(
         pid: pid_t, to destination: Destination, follow: Bool,
-        completion: (@Sendable () -> Void)? = nil
+        titleRules: [CompiledTitleRule] = [], completion: (@Sendable () -> Void)? = nil
     ) {
         if case .step(0) = destination {
             queue.async { completion?() }
@@ -133,7 +133,7 @@ enum DesktopMover {
             return
         }
         queue.async {
-            let landed = perform(pid: pid, to: destination, follow: follow)
+            let landed = perform(pid: pid, to: destination, follow: follow, titleRules: titleRules)
             // Dropped on a Desktop, the window sits behind whatever was already there. Raised here
             // rather than inside `perform`: its `defer` has to close Mission Control and put the
             // frame back first, and a raise while the overlay is up goes nowhere. Follow only —
@@ -172,8 +172,9 @@ enum DesktopMover {
     // MARK: - The gesture
 
     /// The window that landed on the destination, or nil for every other way this can end.
-    private static func perform(pid: pid_t, to destination: Destination, follow: Bool)
-        -> CGWindowID?
+    private static func perform(
+        pid: pid_t, to destination: Destination, follow: Bool, titleRules: [CompiledTitleRule]
+    ) -> CGWindowID?
     {
         guard let dockNotify else {
             Log.general.notice("desktop move: CoreDockSendNotification unavailable")
@@ -187,6 +188,8 @@ enum DesktopMover {
             return nil
         }
         guard let plan = plan(pid: pid, to: destination) else { return nil }
+        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        guard !titleRules.protectsFromTiling(plan.element, bundleID: bundleID) else { return nil }
         // Read here, the first time, so the string tables are not parsed while the button is down.
         _ = missionControlLabels
 
