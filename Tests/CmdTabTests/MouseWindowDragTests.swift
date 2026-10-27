@@ -559,6 +559,42 @@ final class WindowHitTestTests: XCTestCase {
     func testBareDesktopIsNoTarget() {
         XCTAssertNil(WindowHitTest.window(at: point, in: [], passingThrough: ours))
     }
+
+    // What pointing reaches. The hold-and-point gesture has no press to misroute, so it looks
+    // past everything above layer 0 to the frontmost ordinary window — the measured refusals were
+    // Notification Center's full-screen banner host, Droppy's parked shelf and the menu bar, each
+    // sitting over exactly the window the user meant.
+
+    /// The banner host covers the whole display at layer 21 while a notification is up.
+    func testPointingLooksPastAFullScreenOverlay() {
+        let list = [surface(9, pid: 8, layer: 21), surface(1)]
+        XCTAssertNil(WindowHitTest.window(at: point, in: list, passingThrough: ours))
+        XCTAssertEqual(WindowHitTest.frontmostWindow(at: point, in: list)?.id, 1)
+    }
+
+    /// A shelf parked over the top band of the screen covers only part of it.
+    func testPointingLooksPastAPartialOverlay() {
+        let shelf = surface(9, pid: 8, layer: 100,
+            bounds: CGRect(x: 400, y: 300, width: 900, height: 316))
+        XCTAssertEqual(WindowHitTest.frontmostWindow(at: point, in: [shelf, surface(1)])?.id, 1)
+    }
+
+    /// Of two ordinary windows, pointing picks the front one, same as a press.
+    func testPointingPicksTheFrontmostOrdinaryWindow() {
+        XCTAssertEqual(
+            WindowHitTest.frontmostWindow(at: point, in: [surface(1), surface(2)])?.id, 1)
+    }
+
+    /// Phantoms and fully transparent windows are no more pointable than pressable, and an
+    /// overlay over bare desktop still leaves nothing to act on.
+    func testPointingSkipsPhantomsAndFindsNothingOverBareDesktop() {
+        let list = [
+            surface(9, pid: 8, layer: 100),
+            surface(8, alpha: 0),
+            surface(7, bounds: CGRect(x: 500, y: 400, width: 1, height: 1)),
+        ]
+        XCTAssertNil(WindowHitTest.frontmostWindow(at: point, in: list))
+    }
 }
 
 /// Focus-follows-mouse's rest timer: one wake-up in flight, re-armed for whatever is left of the

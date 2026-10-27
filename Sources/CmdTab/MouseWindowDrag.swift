@@ -291,6 +291,23 @@ enum WindowHitTest {
         else { return nil }
         return top
     }
+
+    /// The frontmost ordinary window at `point`, looking past whatever is drawn above the windows.
+    ///
+    /// The strict walk above is for presses, where taking a press aimed at a floating surface
+    /// would grab the window hidden underneath it. The hold-and-point gesture has no press to
+    /// misroute: the chord is held on purpose, and the only question is which window the cursor
+    /// is over. The surfaces that refused it in the field — Notification Center's full-screen
+    /// banner host, Droppy's parked shelf, the menu bar — all sit above layer 0 over exactly the
+    /// window the user meant, so here they are looked past instead of counted. Over bare desktop
+    /// there is still nothing to act on.
+    static func frontmostWindow(at point: CGPoint, in surfaces: [Surface]) -> Surface? {
+        surfaces.first { surface in
+            surface.layer == 0 && surface.alpha > 0
+                && surface.bounds.width > 1 && surface.bounds.height > 1
+                && surface.bounds.contains(point)
+        }
+    }
 }
 
 // MARK: - The gesture
@@ -1103,6 +1120,14 @@ final class MouseWindowDrag: @unchecked Sendable {
         ).map { ($0.pid, $0.bounds) }
     }
 
+    /// The frontmost ordinary window under a screen point, looking past surfaces drawn above the
+    /// windows — the hold-and-point gesture's lookup, where there is no press to misroute. See
+    /// `WindowHitTest.frontmostWindow(at:in:)` for why pointing may look past what a press may not.
+    static func pointableWindow(at point: CGPoint) -> (pid: pid_t, bounds: CGRect)? {
+        WindowHitTest.frontmostWindow(at: point, in: WindowHitTest.onScreen())
+            .map { ($0.pid, $0.bounds) }
+    }
+
     /// The Accessibility element for the window whose frame matches `bounds`.
     ///
     /// Matched on frame rather than taken as the app's focused window: the gesture acts on the
@@ -1427,12 +1452,12 @@ final class ModifierTargetHighlight {
         guard let target = MainLoopMonitor.marking("point-gesture window lookup", {
             Self.windowUnderCursor(at: point)
         }) else {
-            // Said, because this is the one refusal the user sees as "the chord did nothing": the
-            // desktop, the menu bar, the Dock or some other app's surface drawn above the ordinary
-            // windows is under the cursor — see `MouseWindowDrag.window(at:)`. Which one is named,
-            // because the window list cannot be read back afterwards: a relaunching Dock held a
-            // layer-20 surface over the whole display and refused every point on it, and the line
-            // said only where the cursor was.
+            // Said, because this is the one refusal the user sees as "the chord did nothing": no
+            // ordinary window is under the cursor — bare desktop, or only the menu bar or the Dock
+            // with nothing beneath. What sits there instead is named, because the window list
+            // cannot be read back afterwards: a relaunching Dock held a layer-20 surface over the
+            // whole display and refused every point on it, and the line said only where the cursor
+            // was.
             Log.general.notice(
                 """
                 point gesture: no window to act on under the cursor at \
@@ -1625,12 +1650,14 @@ final class ModifierTargetHighlight {
     }
 
     /// The window under a Cocoa-space point, in the top-left space the overlays and the window list
-    /// both use.
+    /// both use. Looks past overlays to the frontmost ordinary window: a notification banner's
+    /// full-screen host window or a shelf app's parked panel over the top of the screen used to
+    /// refuse the chord, and the refusal read as the gesture being flaky.
     private static func windowUnderCursor(at point: CGPoint) -> (pid: pid_t, bounds: CGRect)? {
         guard let primary = NSScreen.primary
         else { return nil }
         let flipped = CGPoint(x: point.x, y: primary.frame.height - point.y)
-        return MouseWindowDrag.window(at: flipped)
+        return MouseWindowDrag.pointableWindow(at: flipped)
     }
 
     /// What is under a Cocoa-space point instead of an ordinary window, for the refusal's log line.
