@@ -744,6 +744,18 @@ extension SwitchTarget {
         }
     }
 
+    /// Whether activating the app can make macOS travel to its Desktop. False for Finder alone.
+    ///
+    /// Finder has never travelled on activation. Five picks of it from another Desktop on
+    /// 2026-11-21 each sat out both rounds of `settleBySystemSwitch`, about 1.4s, with Finder
+    /// frontmost and the Dock logging nothing, and reached the window only through the Window menu
+    /// press that follows a decline. Every other app picked in the same minutes travelled in the
+    /// first round. The desktop Finder owns on every Space is the likely reason, which is a guess;
+    /// the picks are the measurement.
+    static func travelsOnActivation(bundleID: String?) -> Bool {
+        bundleID != "com.apple.finder"
+    }
+
     /// The ordinary windows `pid` owns, front to back.
     ///
     /// Layer 0 only, and desktop elements excluded, so Finder's desktop — which it owns for the
@@ -888,22 +900,56 @@ extension SwitchTarget {
                 "front pid \(pid, privacy: .public): no on-screen window to front it by")
             return
         }
+        guard let waited = millisecondsUntilFrontmost(pid: pid) else {
+            Log.general.notice(
+                "front pid \(pid, privacy: .public): not active after 300ms, pressing anyway")
+            return
+        }
+        Log.general.notice(
+            """
+            front pid \(pid, privacy: .public): active after \
+            \(waited, privacy: .public)ms via window \(onScreen, privacy: .public)
+            """)
+    }
+
+    /// How long `pid` took to become the active app, polled every 20ms; nil when 300ms was not
+    /// enough. Blocking, on the terms `settleBySystemSwitch` sets out.
+    private static func millisecondsUntilFrontmost(pid: pid_t) -> Int? {
         for turn in 0..<15 {
             let front = DispatchQueue.main.sync {
                 NSWorkspace.shared.frontmostApplication?.processIdentifier
             }
-            if front == pid {
-                Log.general.notice(
-                    """
-                    front pid \(pid, privacy: .public): active after \
-                    \(turn * 20, privacy: .public)ms via window \(onScreen, privacy: .public)
-                    """)
-                return
-            }
+            if front == pid { return turn * 20 }
             usleep(20_000)
         }
+        return nil
+    }
+
+    /// Travels to the window's Desktop by pressing its entry in the app's Window menu, for an app
+    /// activation does not travel for. The activation here only makes the app frontmost, which the
+    /// press needs; nothing waits on a Space change it will not bring. False when the app refused
+    /// the press, and the pick goes on down its other routes.
+    private static func travelByWindowMenu(
+        _ item: AXUIElement, window id: CGWindowID, pid: pid_t, generation: UInt64
+    ) -> Bool {
+        activate(pid: pid)
+        let waited = millisecondsUntilFrontmost(pid: pid)
         Log.general.notice(
-            "front pid \(pid, privacy: .public): not active after 300ms, pressing anyway")
+            """
+            focus window \(id, privacy: .public): pid \(pid, privacy: .public) does not travel on \
+            activation, pressing its Window menu item \
+            (active after \(waited ?? -1, privacy: .public)ms)
+            """)
+        // The wait is long enough for a later pick to arrive, and that pick owns the screen.
+        guard isCurrent(generation) else { return true }
+        // Before the press, for the reason every other route reads it before its switch.
+        let changesBefore = spaceChanges.value
+        guard pressWindowMenuItem(item, window: id) else { return false }
+        settle(
+            window: id, pid: pid, attempts: 14, delay: 0.15, generation: generation,
+            actWhenUnreached: false, awaitingSpaceChange: changesBefore,
+            notBefore: .now() + spaceSettleDelay)
+        return true
     }
 
     /// The window's title as the window server reports it, falling back to Accessibility.
@@ -1222,6 +1268,19 @@ extension SwitchTarget {
                 SpaceMover.systemSwitchesSpaceOnActivate,
                 !hasWindowOnScreen(pid: pid, placement: placed)
             {
+                // Finder first, by the route its picks ended on anyway: asking macOS to travel for
+                // it costs both rounds below and has never worked. With no entry to press, or a
+                // press Finder refuses, the pick carries on as it did before.
+                let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+                if !travelsOnActivation(bundleID: bundleID) {
+                    menuItem = windowMenuItem(window: id, pid: pid, title: title)
+                    menuSearched = true
+                    if let menuItem,
+                        travelByWindowMenu(menuItem, window: id, pid: pid, generation: generation)
+                    {
+                        return
+                    }
+                }
                 switch settleBySystemSwitch(
                     window: id, pid: pid, state: state, generation: generation)
                 {

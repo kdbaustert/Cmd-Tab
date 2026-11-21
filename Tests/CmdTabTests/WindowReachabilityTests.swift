@@ -65,6 +65,14 @@ final class WindowReachabilityTests: XCTestCase {
         }
     }
 
+    /// Finder is the one app measured never to travel on activation, so its picks press the Window
+    /// menu first. An app that reports no bundle id is asked the ordinary way.
+    func testOnlyFinderSkipsTheActivationWait() {
+        XCTAssertFalse(SwitchTarget.travelsOnActivation(bundleID: "com.apple.finder"))
+        XCTAssertTrue(SwitchTarget.travelsOnActivation(bundleID: "com.mitchellh.ghostty"))
+        XCTAssertTrue(SwitchTarget.travelsOnActivation(bundleID: nil))
+    }
+
     // MARK: - Finding the window in its app's Window menu
 
     /// The caller's title is tried first, and a match there never asks for the fresh reading —
