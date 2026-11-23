@@ -40,4 +40,16 @@ final class MainLoopMonitorTests: XCTestCase {
         }
         XCTAssertEqual(MainLoopMonitor.suspect(since: turnStart), "app enumeration")
     }
+
+    /// A reconfiguration is named only for the turn it landed in. The external display flaps in
+    /// bursts, so a note that outlived its turn would pin every later stall on the window server.
+    func testADisplayReconfigurationIsNotedOnlyInsideItsTurn() {
+        let turnStart = DispatchTime.now().uptimeNanoseconds
+        MainLoopMonitor.noteDisplayReconfiguration()
+        XCTAssertEqual(
+            MainLoopMonitor.displayNote(since: turnStart), " while the displays were reconfiguring")
+
+        let laterTurnStart = DispatchTime.now().uptimeNanoseconds
+        XCTAssertEqual(MainLoopMonitor.displayNote(since: laterTurnStart), "")
+    }
 }

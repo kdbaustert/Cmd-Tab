@@ -1,4 +1,5 @@
 import CoreFoundation
+import CoreGraphics
 import Foundation
 
 /// Measures how long the main run loop stays busy between turns.
@@ -64,6 +65,15 @@ enum MainLoopMonitor {
     private static var lastMark: StaticString?
     private static var lastMarkAt: UInt64 = 0
 
+    /// When a display reconfiguration last reached this process, on the same clock as `wokeAt`.
+    ///
+    /// The label alone misread the two stalls of 2026-11-22, 454ms "during display cache refresh"
+    /// and 450ms "during trust poll". Both coincided with a `kCGSDisplayDidReconfigure2` while the
+    /// external display was flapping, and the 450ms turn spent 434ms of it with SkyLight logging
+    /// nothing on main in the middle of a reconfigure. The mark names whatever was running; this
+    /// says what the window server was doing at the time.
+    private static var lastReconfigurationAt: UInt64 = 0
+
     /// Labels a stretch of main-thread work, so a stall that happens inside it says so.
     ///
     /// Deliberately records the *start* rather than bracketing the call: the report is written at
@@ -107,6 +117,13 @@ enum MainLoopMonitor {
         // event tracking in that set, and a stall during a menu or a modal is still a stall.
         CFRunLoopAddObserver(CFRunLoopGetMain(), created, .commonModes)
         observer = created
+        CGDisplayRegisterReconfigurationCallback(
+            { _, _, _ in
+                // SkyLight delivers these from its display notification proc, measured on main.
+                // Checked anyway: `assumeIsolated` off main is a crash, and a missed note is not.
+                guard Thread.isMainThread else { return }
+                MainActor.assumeIsolated { MainLoopMonitor.noteDisplayReconfiguration() }
+            }, nil)
         Log.general.notice(
             "main loop monitor: watching, threshold \(Int(Self.threshold * 1000), privacy: .public)ms")
     }
@@ -118,9 +135,9 @@ enum MainLoopMonitor {
         Log.general.error(
             """
             main loop busy \(Int(duration * 1000), privacy: .public)ms in \
-            \(Self.currentMode(), privacy: .public) during \(Self.suspect(since: turnStart), privacy: .public) \
-            — the tap was unserviceable for that long (stall \(Self.stalls, privacy: .public), worst \
-            \(Int(Self.worst * 1000), privacy: .public)ms)
+            \(Self.currentMode(), privacy: .public) during \(Self.suspect(since: turnStart), privacy: .public)\
+            \(Self.displayNote(since: turnStart), privacy: .public) — the tap was unserviceable for that \
+            long (stall \(Self.stalls, privacy: .public), worst \(Int(Self.worst * 1000), privacy: .public)ms)
             """)
     }
 
@@ -137,6 +154,16 @@ enum MainLoopMonitor {
     static func suspect(since turnStart: UInt64) -> String {
         guard let lastMark, lastMarkAt >= turnStart else { return "unlabelled work" }
         return "\(lastMark)"
+    }
+
+    static func noteDisplayReconfiguration() {
+        lastReconfigurationAt = DispatchTime.now().uptimeNanoseconds
+    }
+
+    /// A clause for the stall line when a display reconfiguration reached us inside the turn, else
+    /// empty. The same timestamp rule as `suspect`, and internal for the same reason.
+    static func displayNote(since turnStart: UInt64) -> String {
+        lastReconfigurationAt >= turnStart ? " while the displays were reconfiguring" : ""
     }
 
     /// The run-loop mode the stalled turn was running in.
